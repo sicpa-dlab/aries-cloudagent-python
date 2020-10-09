@@ -1,4 +1,4 @@
-"""Manager for Mediation coordination"""
+"""Manager for Mediation coordination."""
 from typing import Sequence
 
 from ....config.injection_context import InjectionContext
@@ -23,6 +23,7 @@ class MediationManager:
     """Class for handling Mediation."""
 
     def __init__(self, context: InjectionContext):
+        """Initializer for Mediation Manager."""
         self.context = context
         if not context:
             raise MediationManagerError("Missing request context")
