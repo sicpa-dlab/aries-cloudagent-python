@@ -10,7 +10,12 @@ from .....messaging.models.base_record import BaseRecord, BaseRecordSchema
 
 
 class MediationRecord(BaseRecord):
-    """Class representing stored route information."""
+    """Class representing stored route information.
+
+    Args:
+        connection id: 
+        terms: 
+    """
 
     class Meta:
         """RouteRecord metadata."""
