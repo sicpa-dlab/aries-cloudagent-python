@@ -10,7 +10,12 @@ from .....messaging.models.base_record import BaseRecord, BaseRecordSchema
 
 
 class MediationRecord(BaseRecord):
-    """Class representing stored route information."""
+    """Class representing stored route information.
+
+    Args:
+        connection id: 
+        terms: 
+    """
 
     class Meta:
         """RouteRecord metadata."""
@@ -34,8 +39,15 @@ class MediationRecord(BaseRecord):
         terms: Sequence[str] = [],
         **kwargs
     ):
+
         """
         Initialize a MediationRecord instance.
+        
+        Args:
+            mediation_id: 
+            state:
+            connection_id: 
+            terms: 
         """
         super().__init__(
             mediation_id, state or self.STATE_REQUEST_RECEIVED, **kwargs

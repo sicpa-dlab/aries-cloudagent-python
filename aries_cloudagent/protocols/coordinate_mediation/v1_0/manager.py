@@ -1,4 +1,4 @@
-"""Manager for Mediation coordination"""
+"""Manager for Mediation coordination."""
 from typing import Sequence
 
 from ....config.injection_context import InjectionContext
@@ -23,6 +23,11 @@ class MediationManager:
     """Class for handling Mediation."""
 
     def __init__(self, context: InjectionContext):
+        """Initializer for Mediation Manager.
+        
+        Args:
+            context: The context for this manager
+        """
         self.context = context
         if not context:
             raise MediationManagerError("Missing request context")
@@ -40,8 +45,17 @@ class MediationManager:
         # Set state, prepare message
 
     async def deny_request(self, mediation: MediationRecord) -> MediationDeny:
-        """Deny a mediation request and prepare a deny message."""
-        # Set state, prepare message
+        """Deny a mediation request and prepare a deny message.
+        Args: 
+            mediation:
+        """
+        # Set state, 
+        mediation.state = MediationRecord.STATE_DENIED
+        await mediation.save(self.context, reason="Mediation Request Denied")
+        #prepare message
+        deny = MediationDeny("Mediation Request Denied") # TODO: update message
+        return deny
+
 
     async def update_keylist(
         self, updates: Sequence[KeylistUpdateRule]
