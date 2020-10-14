@@ -12,6 +12,7 @@ PROBLEM_REPORT = f"notification/1.0/problem-report"
 
 PROTOCOL_PACKAGE = "aries_cloudagent.protocols.problem_report.v1_0"
 
-MESSAGE_TYPES = DIDCommPrefix.qualify_all(
-    {PROBLEM_REPORT: f"{PROTOCOL_PACKAGE}.message.ProblemReport"}
-)
+MESSAGE_TYPES = {
+    pfx.qualify(PROBLEM_REPORT): f"{PROTOCOL_PACKAGE}.message.ProblemReport"
+    for pfx in DIDCommPrefix
+}

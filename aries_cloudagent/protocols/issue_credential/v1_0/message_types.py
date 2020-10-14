@@ -16,23 +16,38 @@ CREDENTIAL_ACK = f"issue-credential/1.0/ack"
 
 PROTOCOL_PACKAGE = "aries_cloudagent.protocols.issue_credential.v1_0"
 
-MESSAGE_TYPES = DIDCommPrefix.qualify_all(
-    {
-        CREDENTIAL_PROPOSAL: (
+MESSAGE_TYPES = {
+    **{
+        pfx.qualify(CREDENTIAL_PROPOSAL): (
             f"{PROTOCOL_PACKAGE}.messages.credential_proposal.CredentialProposal"
-        ),
-        CREDENTIAL_OFFER: (
+        )
+        for pfx in DIDCommPrefix
+    },
+    **{
+        pfx.qualify(CREDENTIAL_OFFER): (
             f"{PROTOCOL_PACKAGE}.messages.credential_offer.CredentialOffer"
-        ),
-        CREDENTIAL_REQUEST: (
+        )
+        for pfx in DIDCommPrefix
+    },
+    **{
+        pfx.qualify(CREDENTIAL_REQUEST): (
             f"{PROTOCOL_PACKAGE}.messages.credential_request.CredentialRequest"
-        ),
-        CREDENTIAL_ISSUE: (
+        )
+        for pfx in DIDCommPrefix
+    },
+    **{
+        pfx.qualify(CREDENTIAL_ISSUE): (
             f"{PROTOCOL_PACKAGE}.messages.credential_issue.CredentialIssue"
-        ),
-        CREDENTIAL_ACK: f"{PROTOCOL_PACKAGE}.messages.credential_ack.CredentialAck",
-    }
-)
+        )
+        for pfx in DIDCommPrefix
+    },
+    **{
+        pfx.qualify(CREDENTIAL_ACK): (
+            f"{PROTOCOL_PACKAGE}.messages.credential_ack.CredentialAck"
+        )
+        for pfx in DIDCommPrefix
+    },
+}
 
 # Inner object types
 CREDENTIAL_PREVIEW = f"issue-credential/1.0/credential-preview"

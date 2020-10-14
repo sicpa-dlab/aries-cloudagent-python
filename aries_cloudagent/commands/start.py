@@ -5,7 +5,7 @@ import functools
 import logging
 import os
 import signal
-from configargparse import ArgumentParser
+from argparse import ArgumentParser
 from typing import Coroutine, Sequence
 
 try:
@@ -40,7 +40,7 @@ def init_argument_parser(parser: ArgumentParser):
 
 def execute(argv: Sequence[str] = None):
     """Entrypoint."""
-    parser = arg.create_argument_parser()
+    parser = ArgumentParser()
     parser.prog += " start"
     get_settings = init_argument_parser(parser)
     args = parser.parse_args(argv)

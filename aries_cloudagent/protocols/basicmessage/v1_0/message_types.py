@@ -12,6 +12,7 @@ BASIC_MESSAGE = f"basicmessage/1.0/message"
 
 PROTOCOL_PACKAGE = "aries_cloudagent.protocols.basicmessage.v1_0"
 
-MESSAGE_TYPES = DIDCommPrefix.qualify_all(
-    {BASIC_MESSAGE: f"{PROTOCOL_PACKAGE}.messages.basicmessage.BasicMessage"}
-)
+MESSAGE_TYPES = {
+    pfx.qualify(BASIC_MESSAGE): f"{PROTOCOL_PACKAGE}.messages.basicmessage.BasicMessage"
+    for pfx in DIDCommPrefix
+}

@@ -11,20 +11,33 @@ ROUTE_UPDATE_RESPONSE = f"routing/1.0/route-update-response"
 
 PROTOCOL_PACKAGE = "aries_cloudagent.protocols.routing.v1_0"
 
-MESSAGE_TYPES = DIDCommPrefix.qualify_all(
-    {
-        FORWARD: f"{PROTOCOL_PACKAGE}.messages.forward.Forward",
-        ROUTE_QUERY_REQUEST: (
+MESSAGE_TYPES = {
+    **{
+        pfx.qualify(FORWARD): f"{PROTOCOL_PACKAGE}.messages.forward.Forward"
+        for pfx in DIDCommPrefix
+    },
+    **{
+        pfx.qualify(ROUTE_QUERY_REQUEST): (
             f"{PROTOCOL_PACKAGE}.messages.route_query_request.RouteQueryRequest"
-        ),
-        ROUTE_QUERY_RESPONSE: (
+        )
+        for pfx in DIDCommPrefix
+    },
+    **{
+        pfx.qualify(ROUTE_QUERY_RESPONSE): (
             f"{PROTOCOL_PACKAGE}.messages.route_query_response.RouteQueryResponse"
-        ),
-        ROUTE_UPDATE_REQUEST: (
+        )
+        for pfx in DIDCommPrefix
+    },
+    **{
+        pfx.qualify(ROUTE_UPDATE_REQUEST): (
             f"{PROTOCOL_PACKAGE}.messages.route_update_request.RouteUpdateRequest"
-        ),
-        ROUTE_UPDATE_RESPONSE: (
+        )
+        for pfx in DIDCommPrefix
+    },
+    **{
+        pfx.qualify(ROUTE_UPDATE_RESPONSE): (
             f"{PROTOCOL_PACKAGE}.messages.route_update_response.RouteUpdateResponse"
-        ),
-    }
-)
+        )
+        for pfx in DIDCommPrefix
+    },
+}

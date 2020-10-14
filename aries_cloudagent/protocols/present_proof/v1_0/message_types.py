@@ -15,20 +15,32 @@ PRESENTATION_ACK = f"present-proof/1.0/ack"
 
 PROTOCOL_PACKAGE = "aries_cloudagent.protocols.present_proof.v1_0"
 
-MESSAGE_TYPES = DIDCommPrefix.qualify_all(
-    {
-        PRESENTATION_PROPOSAL: (
+MESSAGE_TYPES = {
+    **{
+        pfx.qualify(PRESENTATION_PROPOSAL): (
             f"{PROTOCOL_PACKAGE}.messages.presentation_proposal.PresentationProposal"
-        ),
-        PRESENTATION_REQUEST: (
+        )
+        for pfx in DIDCommPrefix
+    },
+    **{
+        pfx.qualify(PRESENTATION_REQUEST): (
             f"{PROTOCOL_PACKAGE}.messages.presentation_request.PresentationRequest"
-        ),
-        PRESENTATION: f"{PROTOCOL_PACKAGE}.messages.presentation.Presentation",
-        PRESENTATION_ACK: (
+        )
+        for pfx in DIDCommPrefix
+    },
+    **{
+        pfx.qualify(PRESENTATION): (
+            f"{PROTOCOL_PACKAGE}.messages.presentation.Presentation"
+        )
+        for pfx in DIDCommPrefix
+    },
+    **{
+        pfx.qualify(PRESENTATION_ACK): (
             f"{PROTOCOL_PACKAGE}.messages.presentation_ack.PresentationAck"
-        ),
-    }
-)
+        )
+        for pfx in DIDCommPrefix
+    },
+}
 
 # Inner object types
 PRESENTATION_PREVIEW = f"present-proof/1.0/presentation-preview"
