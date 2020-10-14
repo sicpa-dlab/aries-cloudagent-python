@@ -760,6 +760,32 @@ class TransportGroup(ArgumentGroup):
         return settings
 
 
+@group(CAT_START)
+class MediationGroup(ArgumentGroup):
+    """Mediation settings."""
+
+    GROUP_NAME = "Mediation"
+
+    def add_arguments(self, parser: ArgumentParser):
+        """Add mediation command line arguments to the parser."""
+        parser.add_argument(
+            "--open-mediation",
+            metavar="<label>",
+            help="Enables didcomm mediation. After establishing a connection, if enabled, \
+                an agent may request message mediation, which will allow the mediator to \
+                forward messages on behalf of the recipient. See aries-rfc:0211."
+        )
+        # TODO: add flags for terms and queue
+
+    def get_settings(self, args: Namespace):
+        """Extract mediation settings."""
+        settings = {}
+        if args.mediation:
+            settings["mediation.open"] = True
+
+        return settings
+
+
 @group(CAT_PROVISION, CAT_START)
 class WalletGroup(ArgumentGroup):
     """Wallet settings."""
