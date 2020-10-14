@@ -31,10 +31,11 @@ class MediationManagerError(BaseError):
 
 class MediationManager:
     """Class for handling Mediation."""
+
     RECORD_TYPE = "routing_did"
 
     def __init__(self, context: InjectionContext):
-        """Initializer for Mediation Manager.
+        """Initialize Mediation Manager.
 
         Args:
             context: The context for this manager
@@ -45,7 +46,8 @@ class MediationManager:
         self.context = context
 
     async def _retrieve_routing_did(self) -> Optional[DIDInfo]:
-        """Get the routing DID out of the wallet if it exists"""
+        """Retrieve routing DID from the wallet."""
+
         storage: BaseStorage = await self.context.inject(BaseStorage)
         try:
             record = await storage.get_record(
