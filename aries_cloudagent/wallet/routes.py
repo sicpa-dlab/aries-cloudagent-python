@@ -73,6 +73,21 @@ class DIDEndpointWithTypeSchema(OpenAPISchema):
     )
 
 
+class DidCreateSchema(OpenAPISchema):
+    """Request schema to create a local DID."""
+
+    #TODO: add validation
+    seed = fields.Str(
+        description="seed to construct a did from.", required=False
+    )
+    did = fields.Str(description="vanity did.", required=False, **INDY_DID)
+    #TODO: add validation
+    did_doc = fields.Str(
+        description=( "json structure containing Metadata."),
+        required=False
+    )
+
+
 class DIDEndpointSchema(OpenAPISchema):
     """Request schema to set DID endpoint; response schema to get DID endpoint."""
 
@@ -212,6 +227,7 @@ async def wallet_did_list(request: web.BaseRequest):
 
 
 @docs(tags=["wallet"], summary="Create a local DID")
+@request_schema(DidCreateSchema)
 @response_schema(DIDResultSchema, 200)
 async def wallet_create_did(request: web.BaseRequest):
     """
@@ -228,8 +244,14 @@ async def wallet_create_did(request: web.BaseRequest):
     wallet: BaseWallet = await context.inject(BaseWallet, required=False)
     if not wallet:
         raise web.HTTPForbidden(reason="No wallet available")
+    
+    body = await request.json()
+    seed = body.get("alias")
+    did = body.get("did")
+    did_doc = body.get("did_doc")
+    
     try:
-        info = await wallet.create_local_did()
+        info = await wallet.create_local_did(seed,did,did_doc)
     except WalletError as err:
         raise web.HTTPBadRequest(reason=err.roll_up) from err
 
