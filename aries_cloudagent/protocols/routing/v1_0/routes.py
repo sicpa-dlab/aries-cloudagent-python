@@ -1,10 +1,23 @@
+""" routing routes for did_comm forwarding"""
+
+from aiohttp import web
+from aiohttp_apispec import (
+    docs,
+    match_info_schema,
+    querystring_schema,
+    request_schema,
+    response_schema,
+)
+
+from .message_types import SPEC_URI
+
 async def register(app: web.Application):
     """Register routes."""
 
     app.add_routes(
         [
-            web.get("/routess", list_keylists, allow_head=False),
-            web.update("/routes", update_keylists ),
+            #web.get("/routess", list_keylists, allow_head=False),
+            #web.update("/routes", update_keylists ),
             #web.delete("/routes", delete_keylist ),
         ]
     )
