@@ -15,8 +15,10 @@ from aiohttp_apispec import (
 from marshmallow import fields, validate, validates_schema
 
 from .models.mediation_record import MediationRecord, MediationRecordSchema
-from .messages.mediate_request import  MediationRequestSchema
-
+from .messages.mediate_request import MediationRequest,MediationRequestSchema
+from .messages.mediate_grant import  MediationGrantSchema
+from .messages.mediate_deny import  MediationDenySchema
+from .manager import MediationManager as M_Manager
 from ....messaging.models.base import BaseModelError
 from ....messaging.models.openapi import OpenAPISchema
 from ....messaging.valid import (
@@ -24,75 +26,39 @@ from ....messaging.valid import (
     INDY_DID,
     INDY_RAW_PUBLIC_KEY,
     UUIDFour,
+    UUID4
 )
+
+from ....connections.models.connection_record import ConnectionRecord
+from ...problem_report.v1_0 import internal_error
 from ....storage.error import StorageError, StorageNotFoundError
 from ....wallet.error import WalletError
+from ....utils.tracing import trace_event, get_timer, AdminAPIMessageTracingSchema
+
+from ...problem_report.v1_0 import internal_error
+from ...problem_report.v1_0.message import ProblemReport
 
 from .message_types import SPEC_URI
 
 from aries_cloudagent.protocols.routing.v1_0.models.route_record import RouteRecordSchema
 
 
-class MediationsListSchema(OpenAPISchema):
-    """Result schema for mediations."""
+class MediationListSchema(OpenAPISchema):
+    """Result schema for mediation list query."""
 
     results = fields.List(
-        fields.Nested(MediationRecordSchema()),
+        fields.Nested(MediationRecordSchema),
         description="List of mediation records",
     )
 
-
-class MediationRequestSchema(MediationRequestSchema):
-    """Request schema for Mediation request."""
-
-    @validates_schema
-    def validate_fields(self, data, **kwargs):
-        """Bypass middleware field validation."""
+MEDIATION_REQUEST_ID = {
+    "validate": UUIDFour(), 
+    "example": UUIDFour.EXAMPLE
+    } # TODO: is mediation req id a did?
 
 
-class MediationGrantSchema(OpenAPISchema):
-    """Result schema for a granted Mediation."""
-
-    # connection_id = fields.Str(
-    #     description="Connection identifier", example=UUIDFour.EXAMPLE
-    # )
-    # Mediation = fields.Nested(ConnectionMediationSchema())
-    # Mediation_url = fields.Str(
-    #     description="Mediation URL",
-    #     example="http://192.168.56.101:8020/invite?c_i=eyJAdHlwZSI6Li4ufQ==",
-    # )
-
-class MediationDenySchema(OpenAPISchema):
-    """Result schema for a denied Mediation."""
-
-    # connection_id = fields.Str(
-    #     description="Connection identifier", example=UUIDFour.EXAMPLE
-    # )
-    # Mediation = fields.Nested(ConnectionMediationSchema())
-    # Mediation_url = fields.Str(
-    #     description="Mediation URL",
-    #     example="http://192.168.56.101:8020/invite?c_i=eyJAdHlwZSI6Li4ufQ==",
-    # )
-
-class MediationsListQueryStringSchema(OpenAPISchema):
-    """Parameters and validators for mediation record list request query string."""
-
-    alias = fields.Str(
-        description="Alias",
-        required=False,
-        example="Barry",
-    )
-    initiator = fields.Str(
-        description="mediation initiator",
-        required=False,
-        validate=validate.OneOf(["self", "external"]),
-    )
-    Mediation_key = fields.Str(
-        description="Mediation key", required=False, **INDY_RAW_PUBLIC_KEY
-    )
-    #my_did = fields.Str(description="My DID", required=False, **INDY_DID)
-    state = fields.Str(
-        description="Mediation state",
+MEDIATION_STATE = fields.Str(
+        description="Mediation state (optional)",
         required=False,
         validate=validate.OneOf(
             [
@@ -101,57 +67,67 @@ class MediationsListQueryStringSchema(OpenAPISchema):
                 if m.startswith("STATE_")
             ]
         ),
+        example="'request_received',"
+            "'granted' or 'denied'", # TODO: make a dropdown in swagger ui
     )
-    their_did = fields.Str(description="Their DID", required=False, **INDY_DID)
-    # their_role = fields.Str(
-    #     description="Their assigned connection role",
-    #     required=False,
-    #     example="Point of contact",
-    # )
 
 
-class CreateMediationQueryStringSchema(OpenAPISchema):
+class MediationListQueryStringSchema(OpenAPISchema):
+    """Parameters and validators for mediation record list request query string."""
+    
+    conn_id = fields.UUID(
+        description="Connection identifier (optional)",
+        required=False,
+        example=UUIDFour.EXAMPLE,  # typically but not necessarily a UUID4
+    )
+    mediator_terms = fields.List(
+        fields.Str(
+            description="Indicate terms that the mediator "
+            "requires the recipient to agree to"
+        ),
+        required=False,
+        description="List of mediator rules for recipient",
+    )
+    recipient_terms = fields.List(
+        fields.Str(
+            description="Indicate terms that the recipient "
+            "requires the mediator to agree to"
+        ),
+        required=False,
+        description="List of mediator rules for recipient",
+    )
+    state = MEDIATION_STATE
+
+class MediationCreateSchema(OpenAPISchema):
     """Parameters and validators for create Mediation request query string."""
-
-    alias = fields.Str(
-        description="Alias",
+    
+    conn_id = fields.UUID(
+        description="Connection identifier",
+        required=True,
+        example=UUIDFour.EXAMPLE,  # typically but not necessarily a UUID4
+    )
+    mediation_id = fields.Str(
+        description="Mediation record identifier",
         required=False,
-        example="Barry",
+        **MEDIATION_REQUEST_ID,
     )
-    auto_accept = fields.Boolean(
-        description="Auto-accept connection (default as per configuration)",
+    state = MEDIATION_STATE
+    mediator_terms = fields.List(
+        fields.Str(
+            description="Indicate terms that the mediator "
+            "requires the recipient to agree to"
+        ),
         required=False,
+        description="List of mediator rules for recipient",
     )
-    public = fields.Boolean(
-        description="Create Mediation from public DID (default false)", required=False
-    )
-    multi_use = fields.Boolean(
-        description="Create Mediation for multiple use (default false)", required=False
-    )
-
-
-class ReceiveMediationQueryStringSchema(OpenAPISchema):
-    """Parameters and validators for receive Mediation request query string."""
-
-    alias = fields.Str(
-        description="Alias",
+    recipient_terms = fields.List(
+        fields.Str(
+            description="Indicate terms that the recipient "
+            "requires the mediator to agree to"
+        ),
         required=False,
-        example="Barry",
+        description="List of recipient rules for mediation",
     )
-    auto_accept = fields.Boolean(
-        description="Auto-accept connection (defaults to configuration)",
-        required=False,
-    )
-
-
-class AcceptMediationQueryStringSchema(OpenAPISchema):
-    """Parameters and validators for accept Mediation request query string."""
-
-    my_endpoint = fields.Str(description="My URL endpoint", required=False, **ENDPOINT)
-    my_label = fields.Str(
-        description="Label for connection", required=False, example="Broker"
-    )
-
 
 class AcceptRequestQueryStringSchema(OpenAPISchema):
     """Parameters and validators for accept conn-request web-request query string."""
@@ -170,7 +146,7 @@ class MediationIdSchema(OpenAPISchema):
 class MediationsSchema(OpenAPISchema):
     """Path parameters and validators for request taking connection and ref ids."""
 
-    connection_id = fields.Str(
+    conn_id = fields.Str(
         description="(Optional) Connection ID to retrieve mediation requests from.", 
         required=False,
         example=UUIDFour.EXAMPLE
@@ -199,12 +175,12 @@ def mediation_sort_key(mediation):
     return pfx + mediation["created_at"]
 
 @docs(
-    tags=["mediation"],
-    summary="Query mediation requests, returns all or filtered list by provided parameters.",
+    tags=["mediation-request"],
+    summary="Query mediation requests, returns list of all mediation records.",
 )
-@querystring_schema(MediationsSchema())
-@response_schema(MediationsListSchema(), 200)
-async def list_mediations_records(request: web.BaseRequest):
+@querystring_schema(MediationListQueryStringSchema())
+@response_schema(MediationListSchema(), 200)
+async def mediation_records_list(request: web.BaseRequest):
     """
     Request handler for searching mediation records.
 
@@ -216,48 +192,184 @@ async def list_mediations_records(request: web.BaseRequest):
 
     """
     context = request.app["request_context"]
-    # TODO: see of 'strict=True' in schema will do this for us.
     tag_filter = {}
-    for param_name in (
-        "mediation_id",
-        "connection_id",
-        "state"
-    ):
+    for param_name in ( "conn_id",
+                        "state"):
         if param_name in request.query and request.query[param_name] != "":
             tag_filter[param_name] = request.query[param_name]
-    post_filter = {} # TODO: find out what should be in positive negative filter
+    #post_filter = {} # TODO: find out what should be in positive negative filter, thread_id?
     try:
-        records = await MediationRecord.query(context, tag_filter, post_filter)
+        records = await MediationRecord.query(context, tag_filter)
         results = [record.serialize() for record in records]
         results.sort(key=mediation_sort_key)
     except (StorageError, BaseModelError) as err:
         raise web.HTTPBadRequest(reason=err.roll_up) from err
     return web.json_response({"results": results})
 
+class MediationIdMatchInfoSchema(OpenAPISchema):
+    """Path parameters and validators for request taking mediation request id."""
 
-@docs(tags=["mediation"], summary="send and receive mediation request")
-async def send_receive_mediations_request(request: web.BaseRequest):
+    mediation_id = fields.Str(
+        description="mediation request record identifier", required=True, **UUID4
+    )
+
+class ConnIdMatchInfoSchema(OpenAPISchema):
+    """Path parameters and validators for request taking connection id."""
+
+    conn_id = fields.Str(
+        description="Connection identifier", required=True, example=UUIDFour.EXAMPLE
+    )
+
+
+@docs(tags=["mediation-request"], summary="mediation request, returns a single mediation record.")
+@match_info_schema(MediationIdMatchInfoSchema())
+@response_schema(MediationRecordSchema(), 200)
+async def mediation_record_retrieve(request: web.BaseRequest):
     """
-    Request handler for send/receive a mediation record.
+    Request handler for fetching single mediation request record.
+
+    Args:
+        request: aiohttp request object
+
+    Returns:
+        The credential exchange record
+
+    """
+    context = request.app["request_context"]
+    outbound_handler = request.app["outbound_message_router"]
+
+    _id = request.match_info["mediation_id"]
+    _record = None
+    try:
+        _record = await MediationRequestSchema.retrieve_by_id(
+            context, _id
+        )
+        result = _record.serialize()
+    except StorageNotFoundError as err:
+        raise web.HTTPNotFound(reason=err.roll_up) from err
+    except (BaseModelError, StorageError) as err:
+        await internal_error(err, web.HTTPBadRequest, _record, outbound_handler)
+
+    return web.json_response(result)
+
+@docs(tags=["mediation-request"], summary="create mediation request record.")
+@match_info_schema(ConnIdMatchInfoSchema())
+@request_schema(MediationCreateSchema())
+@response_schema(MediationRecordSchema(), 201)
+async def mediation_record_create(request: web.BaseRequest):
+    """
+    Request handler for creating a mediation record from attr values.
+
+    The internal mediation record will be created without the request
+    being sent to any connection. This can be used in conjunction with
+    the `oob` protocols to bind messages to an out of band message.
+
+    Args:
+        request: aiohttp request object
+
+    Req_Args: 
+        conn_id: connection id for whom the mediation is for.
+        mediation_id: 
+        state:
+        mediator_terms:
+        recipient_terms:
+    """
+    r_time = get_timer()
+
+    context = request.app["request_context"]
+
+    body = await request.json()
+    # record parameters
+    conn_id = body.get("conn_id")
+    mediation_id = body.get("mediation_id")
+    state = body.get("state","granted")
+    mediator_terms = body.get("mediator_terms")
+    recipient_terms = body.get("recipient_terms")
+
+    try:
+        connection_record = await ConnectionRecord.retrieve_by_id(
+            context, conn_id
+        )
+        if not connection_record.is_ready: # TODO: is this the desired behavior for creating a new mediation?
+            raise web.HTTPBadRequest(reason="connection identifier must be from a valid connection.")
+        mediation_request = MediationRequest(
+            #conn_id = conn_id,
+            #state = state,
+            mediator_terms = mediator_terms,
+            recipient_terms = recipient_terms,
+            #**{t: body.get(t) for t in MEDIATION_REQUEST_TAGS if body.get(t)},
+        )
+
+        trace_event(
+            context.settings,
+            mediation_request,
+            outcome="mediation_record_create.START",
+        )
+
+        _manager = M_Manager(context)
+
+        _record, _message = await _manager.receive_request(
+            request = mediation_request
+        )
+    except (StorageError, BaseModelError) as err:
+        raise web.HTTPBadRequest(reason=err.roll_up) from err
+
+    trace_event(
+        context.settings,
+        _message,
+        outcome="mediation_record_create.END",
+        perf_counter=r_time,
+    )
+
+    return web.json_response(_record.serialize())
+
+
+@docs(tags=["mediation-request"], summary="send mediation request.")
+@match_info_schema(ConnIdMatchInfoSchema())
+@request_schema(MediationCreateSchema())
+@response_schema(MediationRecordSchema(), 201)
+async def mediation_record_send(request: web.BaseRequest):
+    """
+    Request handler for sending a mediation record.
 
     Args:
         request: aiohttp request object
     """
 
+@docs(tags=["mediation-request"], summary="send mediation request.")
+@match_info_schema(ConnIdMatchInfoSchema())
+@request_schema(MediationRequestSchema())
+@response_schema(MediationGrantSchema(), 201)
+#@response_schema(MediationDenySchema(), 200) # TODO: handle deny response
+async def mediation_record_store(request: web.BaseRequest):
+    ""
 
-@docs(tags=["mediation"], summary="grant or deny mediation request")
-async def grant_or_deny_mediations_request(request: web.BaseRequest):
+@docs(tags=["mediation-request"], summary="grant a stored mediation request")
+@match_info_schema(MediationIdMatchInfoSchema())
+@response_schema(MediationGrantSchema(), 201)
+async def mediation_record_grant(request: web.BaseRequest):
     """
-    Request handler for send/receive a mediation record.
+    Request handler for granting a stored mediation record.
 
     Args:
         request: aiohttp request object
     """
 
+@docs(tags=["mediation-request"], summary="deny a stored mediation request")
+@match_info_schema(MediationIdMatchInfoSchema())
+@response_schema(MediationDenySchema(), 201)
+async def mediation_record_deny(request: web.BaseRequest):
+    """
+    Request handler for denying a stored mediation record.
 
-@docs(tags=["mediation"], summary="Remove an existing mediation record")
+    Args:
+        request: aiohttp request object
+    """
+
+@docs(tags=["mediation-request"], summary="Remove an existing mediation record")
 @match_info_schema(MediationIdSchema())
-async def remove_mediations_record(request: web.BaseRequest):
+@response_schema(MediationRecordSchema(), 200)
+async def mediation_record_remove(request: web.BaseRequest):
     """
     Request handler for removing a mediation record.
 
@@ -281,16 +393,96 @@ async def remove_mediations_record(request: web.BaseRequest):
 
     return web.json_response({})
 
+class MediationCoordinationProblemReportRequestSchema(OpenAPISchema):
+    """Request schema for sending problem report."""
+
+    explain_ltxt = fields.Str(required=True)
+
+@docs(
+    tags=["mediation-request"], summary="Send a problem report for mediation coordination."
+)
+@match_info_schema(MediationIdSchema())
+@request_schema(MediationCoordinationProblemReportRequestSchema())
+async def mediation_record_problem_report(request: web.BaseRequest):
+    """
+    Request handler for sending problem report.
+
+    Args:
+        request: aiohttp request object
+
+    """
+    r_time = get_timer()
+
+    context = request.app["request_context"]
+    outbound_handler = request.app["outbound_message_router"]
+
+    _id = request.match_info["mediation_id"]
+    body = await request.json()
+
+    try:
+        _record = await MediationRecord.retrieve_by_id(
+            context, _id
+        )
+    except StorageNotFoundError as err:
+        raise web.HTTPNotFound(reason=err.roll_up) from err
+
+    error_result = ProblemReport(explain_ltxt=body["explain_ltxt"])
+    error_result.assign_thread_id(_record.thread_id)
+
+    await outbound_handler(error_result, connection_id=_record.connection_id)
+
+    trace_event(
+        context.settings,
+        error_result,
+        outcome="credential_exchange_problem_report.END",
+        perf_counter=r_time,
+    )
+
+    return web.json_response({})
+
 async def register(app: web.Application):
     """Register routes."""
 
     app.add_routes(
         [
-            web.get("/mediations", list_mediations_records, allow_head=False), # list records
-            #web.connect("/mediations", send_mediator_request), # send request to other mediator
-            web.post("/mediations", send_receive_mediations_request), # create mediations record
-            web.put("/mediations", grant_or_deny_mediations_request), # update
-            web.delete("/mediations", remove_mediations_record), # delete
+            web.get(
+                "/mediation-request/records", 
+                mediation_records_list,
+                allow_head=False
+                ), # -> fetch all mediation request records
+            web.get(
+                "/mediation-request/records/{mediation_id}", 
+                mediation_record_retrieve, 
+                allow_head=False
+                ), # . -> fetch a single mediation request record
+            web.post(
+                "/mediation-request/{conn_id}/create",
+                mediation_record_create
+                ),
+            web.post(
+                "/mediation-request/{conn_id}/send", 
+                mediation_record_send
+                ), # -> send mediation request
+            web.post(
+                "/mediation-request/{conn_id}/request", 
+                mediation_record_store
+                ), # -> store a mediation request
+            web.post(
+                "/mediation-request/records/{mediation_id}/grant",
+                mediation_record_grant
+                ), # -> grant
+            web.post(
+                "/mediation-request/records/{mediation_id}/deny", 
+                mediation_record_deny
+                ), # -> deny
+            web.post(
+                "/mediation-request/records/{mediation_id}/remove", 
+                mediation_record_remove
+                ), # -> remove record
+            web.post(
+                "/mediation-request/{mediation_id}/problem-report", 
+                mediation_record_problem_report
+                ),
         ]
     )
 
