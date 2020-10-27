@@ -29,12 +29,16 @@ class MediationRecord(BaseRecord):
     STATE_REQUEST_RECEIVED = "request_received"
     STATE_GRANTED = "granted"
     STATE_DENIED = "denied"
-
+    
+    ORIGINATION_INTERNAL = "internal"
+    ORIGINATION_EXTERNAL = "external"
+    
     def __init__(
         self,
         *,
         mediation_id: str = None,
         state: str = None,
+        origin: str = None,
         connection_id: str = None,
         mediator_terms: Sequence[str] = None,
         recipient_terms: Sequence[str] = None,

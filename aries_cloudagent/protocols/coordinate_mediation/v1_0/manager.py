@@ -75,16 +75,27 @@ class MediationManager:
         return info
 
     async def receive_request(self, request: MediationRequest) -> MediationRecord:
-        """Create a new mediation record to track this request."""
+        """Create a new mediation record to track external request."""
+        origin = MediationRecord.ORIGINATION_EXTERNAL
+        return self._store_request(MediationRequest, origin)
+    
+    async def prepare_request(self, request: MediationRequest) -> MediationRecord:
+        """Create a new mediation record to track internal request."""
+        origin = MediationRecord.ORIGINATION_INTERNAL
+        return self._store_request(MediationRequest, origin)
+    
+    async def _store_request( self, request: MediationRequest, _origin ) -> MediationRecord:
+        """Create a new mediation record to track a request."""
         # TODO: Determine if terms are acceptable
         record = MediationRecord(
+            origin = _origin,
             connection_id=self.context.connection_record.connection_id,
             mediator_terms=request.mediator_terms,
             recipient_terms=request.recipient_terms
         )
         await record.save(self.context, reason="New mediation request received")
         return record
-
+    
     async def grant_request(self, mediation: MediationRecord) -> MediationGrant:
         """Grant a mediation request and prepare grant message."""
         routing_did: DIDInfo = await self._retrieve_routing_did()
