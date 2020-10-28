@@ -30,15 +30,15 @@ class MediationRecord(BaseRecord):
     STATE_GRANTED = "granted"
     STATE_DENIED = "denied"
     
-    ORIGINATION_INTERNAL = "internal"
-    ORIGINATION_EXTERNAL = "external"
+    ROLE_CLIENT = "client"
+    ROLE_SERVER = "server"
     
     def __init__(
         self,
         *,
         mediation_id: str = None,
         state: str = None,
-        origin: str = None,
+        role: str = None,
         connection_id: str = None,
         mediator_terms: Sequence[str] = None,
         recipient_terms: Sequence[str] = None,

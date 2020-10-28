@@ -23,6 +23,7 @@ from .messages.inner.keylist_key import KeylistKey
 from .messages.keylist_update_response import KeylistUpdateResponse
 from .messages.keylist import Keylist
 from .models.mediation_record import MediationRecord
+from aries_cloudagent.connections.models.connection_record import ConnectionRecord
 
 
 class MediationManagerError(BaseError):
@@ -74,28 +75,42 @@ class MediationManager:
         await storage.add_record(record)
         return info
 
-    async def receive_request(self, request: MediationRequest) -> MediationRecord:
+    async def receive_request(self,
+                              conn_id: str,
+                              request: MediationRequest
+                              ) -> MediationRecord:
         """Create a new mediation record to track external request."""
-        origin = MediationRecord.ORIGINATION_EXTERNAL
-        return self._store_request(MediationRequest, origin)
-    
-    async def prepare_request(self, request: MediationRequest) -> MediationRecord:
+        role = MediationRecord.ROLE_SERVER
+        record = await self._store_request(request, conn_id, role)
+        return record
+
+    async def prepare_request(self,
+                              conn_id: str,
+                              request: MediationRequest
+                              ) -> MediationRecord:
         """Create a new mediation record to track internal request."""
-        origin = MediationRecord.ORIGINATION_INTERNAL
-        return self._store_request(MediationRequest, origin)
-    
-    async def _store_request( self, request: MediationRequest, _origin ) -> MediationRecord:
+        role = MediationRecord.ROLE_CLIENT
+        return self._store_request(request, conn_id, role)
+
+    async def _store_request(self,
+                             request: MediationRequest,
+                             _conn_id: str,
+                             _role: str
+                             ) -> MediationRecord:
         """Create a new mediation record to track a request."""
         # TODO: Determine if terms are acceptable
+        connection_record = await ConnectionRecord.retrieve_by_id(
+            self.context, _conn_id
+        )
         record = MediationRecord(
-            origin = _origin,
-            connection_id=self.context.connection_record.connection_id,
+            role=_role,
+            connection_id=connection_record.connection_id,
             mediator_terms=request.mediator_terms,
             recipient_terms=request.recipient_terms
         )
         await record.save(self.context, reason="New mediation request received")
         return record
-    
+
     async def grant_request(self, mediation: MediationRecord) -> MediationGrant:
         """Grant a mediation request and prepare grant message."""
         routing_did: DIDInfo = await self._retrieve_routing_did()
