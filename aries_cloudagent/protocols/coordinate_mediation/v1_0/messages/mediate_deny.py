@@ -9,7 +9,7 @@ from ..message_types import MEDIATE_DENY, PROTOCOL_PACKAGE
 
 HANDLER_CLASS = (
     f"{PROTOCOL_PACKAGE}.handlers"
-    ".mediation_deny_handler.MediationDenyHandler"
+    ".mediation_denied_handler.MediationDenyHandler"
 )
 
 

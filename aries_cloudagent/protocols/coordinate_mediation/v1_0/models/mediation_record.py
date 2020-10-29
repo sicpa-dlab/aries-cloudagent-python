@@ -2,11 +2,13 @@
 
 from typing import Sequence
 
-from marshmallow import EXCLUDE, fields
+from marshmallow import EXCLUDE, fields, validate
 
 from .....config.injection_context import InjectionContext
 
 from .....messaging.models.base_record import BaseRecord, BaseRecordSchema
+from .....messaging.models.openapi import OpenAPISchema
+from .....messaging.valid import UUIDFour
 
 
 class MediationRecord(BaseRecord):
@@ -29,10 +31,10 @@ class MediationRecord(BaseRecord):
     STATE_REQUEST_RECEIVED = "request_received"
     STATE_GRANTED = "granted"
     STATE_DENIED = "denied"
-    
+
     ROLE_CLIENT = "client"
     ROLE_SERVER = "server"
-    
+
     def __init__(
         self,
         *,
@@ -88,3 +90,77 @@ class MediationRecordSchema(BaseRecordSchema):
     connection_id = fields.Str(required=True)
     mediator_terms = fields.List(fields.Str(), required=False)
     recipient_terms = fields.List(fields.Str(), required=False)
+
+
+MEDIATION_STATE_SCHEMA = fields.Str(
+    description="Mediation state (optional)",
+    required=False,
+    validate=validate.OneOf(
+        [
+                getattr(MediationRecord, m)
+                for m in vars(MediationRecord)
+                if m.startswith("STATE_")
+        ]
+    ),
+    example="'request_received',"
+    "'granted' or 'denied'",
+)
+
+
+MEDIATION_ID_SCHEMA = {
+    "validate": UUIDFour(),
+    "example": UUIDFour.EXAMPLE
+}  # TODO: is mediation req id a did?
+
+
+CONNECTION_ID_SCHEMA = fields.UUID(  # TODO: move this into connections.
+    description="Connection identifier (optional)",
+    required=False,
+    example=UUIDFour.EXAMPLE,  # typically but not necessarily a UUID4
+)
+
+
+MEDIATOR_TERMS_SCHEMA = fields.List(
+    fields.Str(
+        description="Indicate terms that the mediator "
+        "requires the recipient to agree to"
+    ),
+    required=False,
+    description="List of mediator rules for recipient",
+)
+
+
+RECIPIENT_TERMS_SCHEMA = fields.List(
+    fields.Str(
+        description="Indicate terms that the recipient "
+        "requires the mediator to agree to"
+    ),
+    required=False,
+    description="List of recipient rules for mediation",
+)
+
+
+ENDPOINT_SCHEMA = fields.Str(
+    description="endpoint on which messages destined "
+    "for the recipient are received.",
+    example="http://192.168.56.102:8020/"
+)
+
+
+ROUTING_KEYS_SCHEMA = fields.List(
+    fields.Str(
+        description="Keys to use for forward message packaging"
+    ),
+    required=False,
+)
+
+
+class MediationRecordReportSchema(OpenAPISchema):
+    """MediationRecordSchema schema."""
+
+    mediation_id = MEDIATION_ID_SCHEMA
+    conn_id = CONNECTION_ID_SCHEMA
+    mediator_terms = MEDIATOR_TERMS_SCHEMA
+    recipient_terms = RECIPIENT_TERMS_SCHEMA
+    endpoint = ENDPOINT_SCHEMA
+    routing_keys = ROUTING_KEYS_SCHEMA

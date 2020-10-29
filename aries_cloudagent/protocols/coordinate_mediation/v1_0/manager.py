@@ -125,8 +125,11 @@ class MediationManager:
             routing_keys=[routing_did.verkey]
         )
         return grant
-    
-    async def granted_request(self, mediation: MediationRecord,  routing_did_verkey :Sequence[str]) -> MediationRecord:
+
+    async def granted_request(self, mediation: MediationRecord,
+                              endpoint,
+                              routing_did_verkey: Sequence[str]
+                              ) -> MediationRecord:
         """update Mediation state to granted."""
         routing_did: DIDInfo = await self._retrieve_routing_did()
         if not routing_did:
@@ -134,9 +137,9 @@ class MediationManager:
 
         mediation.state = MediationRecord.STATE_GRANTED
         await mediation.save(self.context, reason="Mediation request granted")
-        # TODO: update keylists from parameters
+        # TODO: update endpoint/keylists from parameters
         return mediation
-    
+
     async def deny_request(
         self,
         mediation: MediationRecord,

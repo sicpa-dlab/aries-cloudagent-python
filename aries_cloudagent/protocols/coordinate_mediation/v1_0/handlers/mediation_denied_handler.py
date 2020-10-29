@@ -1,4 +1,4 @@
-"""Handler for incoming route-update-request messages."""
+"""Handler for incoming mediation-deny-request messages."""
 
 from .....messaging.base_handler import (
     BaseHandler,
@@ -9,10 +9,11 @@ from .....messaging.base_handler import (
 
 from ..manager import MediationManager
 from ..messages.mediate_grant import MediationGrant
+from ..models.mediation_record import MediationRecord
 
 
-class MediationGrantHandler(BaseHandler):
-    """Handler for incoming mediation grant messages."""
+class MediationDenyHandler(BaseHandler):
+    """Handler for incoming mediation denied messages."""
 
     async def handle(self, context: RequestContext, responder: BaseResponder):
         """Message handler implementation."""
@@ -25,10 +26,11 @@ class MediationGrantHandler(BaseHandler):
             raise HandlerException("Invalid mediation request: no active connection")
         # TODO: Check if mediation record exists
         mgr = MediationManager(context)
-        record = await mgr.receive_request(
-            context.connection_record.connection_id,
-            context.message
-            )
-        if context.settings.get("mediation.open", False):
-            grant = await mgr.grant_request(record)
-            await responder.send_reply(grant)
+        _record = await MediationRecord.retrieve_by_id(
+            context, context.mediation_id
+        )
+        await mgr.deny_request(
+            mediation=_record,
+            mediator_terms=context.mediator_terms,
+            recipient_terms=context.recipient_terms
+        )

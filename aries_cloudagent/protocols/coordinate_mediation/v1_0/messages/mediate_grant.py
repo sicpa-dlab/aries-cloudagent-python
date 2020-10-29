@@ -9,7 +9,7 @@ from ..message_types import MEDIATE_GRANT, PROTOCOL_PACKAGE
 
 HANDLER_CLASS = (
     f"{PROTOCOL_PACKAGE}.handlers"
-    ".mediation_grant_handler.MediationGrantHandler"
+    ".mediation_granted_handler.MediationGrantHandler"
 )
 
 
