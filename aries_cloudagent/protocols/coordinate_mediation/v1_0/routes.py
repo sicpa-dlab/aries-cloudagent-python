@@ -62,7 +62,7 @@ MEDIATION_STATE = fields.Str(
         ]
     ),
     example="'request_received',"
-    "'granted' or 'denied'",  # TODO: make a dropdown in swagger ui
+    "'granted' or 'denied'",
 )
 
 
@@ -96,17 +96,17 @@ class MediationListQueryStringSchema(OpenAPISchema):
 class MediationCreateSchema(OpenAPISchema):
     """Parameters and validators for create Mediation request query string."""
 
-    conn_id = fields.UUID(
-        description="Connection identifier",
-        required=True,
-        example=UUIDFour.EXAMPLE,  # typically but not necessarily a UUID4
-    )
-    mediation_id = fields.Str(
-        description="Mediation record identifier",
-        required=False,
-        **MEDIATION_REQUEST_ID,
-    )
-    state = MEDIATION_STATE
+    # conn_id = fields.UUID(
+    #     description="Connection identifier",
+    #     required=True,
+    #     example=UUIDFour.EXAMPLE,  # typically but not necessarily a UUID4
+    # )
+    # mediation_id = fields.Str(
+    #     description="Mediation record identifier",
+    #     required=False,
+    #     **MEDIATION_REQUEST_ID,
+    # )
+    # state = MEDIATION_STATE
     mediator_terms = fields.List(
         fields.Str(
             description="Indicate terms that the mediator "
@@ -166,7 +166,7 @@ def mediation_sort_key(mediation):
     """Get the sorting key for a particular mediation."""
     if mediation["state"] == MediationRecord.STATE_DENIED:
         pfx = "2"
-    elif mediation["state"] == MediationRecord.STATE_REQUESTED:
+    elif mediation["state"] == MediationRecord.STATE_REQUEST_RECEIVED:
         pfx = "1"
     else:  # GRANTED
         pfx = "0"
@@ -281,7 +281,7 @@ async def mediation_record_create(request: web.BaseRequest):
 
     body = await request.json()
     # record parameters
-    conn_id = body.get("conn_id")
+    conn_id = request.match_info["conn_id"]
     # mediation_id = body.get("mediation_id")
     # state = body.get("state", "granted")
     mediator_terms = body.get("mediator_terms")
@@ -356,7 +356,7 @@ async def mediation_record_send_create(request: web.BaseRequest):
 
     body = await request.json()
     # record parameters
-    conn_id = body.get("conn_id")
+    conn_id = request.match_info["conn_id"]
     # mediation_id = body.get("mediation_id")
     # state = body.get("state", "granted")
     mediator_terms = body.get("mediator_terms")
@@ -386,6 +386,7 @@ async def mediation_record_send_create(request: web.BaseRequest):
         _manager = M_Manager(context)
 
         _record = await _manager.prepare_request(
+            conn_id=conn_id,
             request=mediation_request
         )
         result = _record.serialize()
@@ -461,7 +462,7 @@ async def mediation_record_send(request: web.BaseRequest):
     return web.json_response(_record.serialize())
 
 
-@docs(tags=["mediation"], summary="send mediation request.")
+@docs(tags=["mediation"], summary="receive mediation request.")
 @match_info_schema(ConnIdMatchInfoSchema())
 @request_schema(MediationRequestSchema())
 @response_schema(MediationGrantSchema(), 201)
@@ -487,7 +488,7 @@ async def mediation_record_store(request: web.BaseRequest):
 
     body = await request.json()
     # record parameters
-    conn_id = body.get("conn_id")
+    conn_id = request.match_info["conn_id"]
     # mediation_id = body.get("mediation_id")
     # state = body.get("state", "granted")
     mediator_terms = body.get("mediator_terms")
@@ -517,6 +518,7 @@ async def mediation_record_store(request: web.BaseRequest):
         _manager = M_Manager(context)
 
         _record = await _manager.receive_request(
+            conn_id=conn_id,
             request=mediation_request
         )
         mediation_granted = await _manager.grant_request(
@@ -572,7 +574,7 @@ async def mediation_record_grant(request: web.BaseRequest):
         _manager = M_Manager(context)
 
         _message = await _manager.grant_request(
-            mediation_record=_record
+            mediation=_record
         )
         result = _message.serialize()
     except (StorageError, BaseModelError) as err:
@@ -650,84 +652,6 @@ async def mediation_record_deny(request: web.BaseRequest):
     )
     return web.json_response(result)
 
-
-@docs(tags=["mediation"], summary="Remove an existing mediation record")
-@match_info_schema(MediationIdSchema())
-@response_schema(MediationRecordSchema(), 200)
-async def mediation_record_remove(request: web.BaseRequest):
-    """
-    Request handler for removing a mediation record.
-
-    Args:
-        request: aiohttp request object
-    """
-    context = request.app["request_context"]
-    mediation_id = request.match_info["mediation_id"]
-
-    try:
-        mediation = await MediationRecord.retrieve_by_id(context, mediation_id)
-        await mediation.delete_record(context)
-        # TODO: delete routes keylist for this mediation
-        # route_id = # where do we get this id from?
-        # route = RouteRecord.retrieve_by_id(context, mediation_id)
-        # await route.delete_record(context)
-    except StorageNotFoundError as err:
-        raise web.HTTPNotFound(reason=err.roll_up) from err
-    except StorageError as err:
-        raise web.HTTPBadRequest(reason=err.roll_up) from err
-
-    return web.json_response({})
-
-
-class MediationCoordinationProblemReportRequestSchema(OpenAPISchema):
-    """Request schema for sending problem report."""
-
-    explain_ltxt = fields.Str(required=True)
-
-
-@docs(
-    tags=["mediation"], summary="Send a problem report for mediation coordination."
-)
-@match_info_schema(MediationIdSchema())
-@request_schema(MediationCoordinationProblemReportRequestSchema())
-async def mediation_record_problem_report(request: web.BaseRequest):
-    """
-    Request handler for sending problem report.
-
-    Args:
-        request: aiohttp request object
-
-    """
-    r_time = get_timer()
-
-    context = request.app["request_context"]
-    outbound_handler = request.app["outbound_message_router"]
-
-    _id = request.match_info["mediation_id"]
-    body = await request.json()
-
-    try:
-        _record = await MediationRecord.retrieve_by_id(
-            context, _id
-        )
-    except StorageNotFoundError as err:
-        raise web.HTTPNotFound(reason=err.roll_up) from err
-
-    error_result = ProblemReport(explain_ltxt=body["explain_ltxt"])
-    error_result.assign_thread_id(_record.thread_id)
-
-    await outbound_handler(error_result, connection_id=_record.connection_id)
-
-    trace_event(
-        context.settings,
-        error_result,
-        outcome="mediation_coordination_problem_report.END",
-        perf_counter=r_time,
-    )
-
-    return web.json_response({})
-
-
 async def register(app: web.Application):
     """Register routes.
 
@@ -771,14 +695,6 @@ async def register(app: web.Application):
                 "/mediation/records/{mediation_id}/deny",
                 mediation_record_deny
             ),  # -> deny
-            web.post(
-                "/mediation/records/{mediation_id}/remove",
-                mediation_record_remove
-            ),  # -> remove record
-            web.post(
-                "/mediation/{mediation_id}/problem-report",
-                mediation_record_problem_report
-            ),
         ]
     )
 

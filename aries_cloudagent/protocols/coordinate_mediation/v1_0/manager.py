@@ -90,7 +90,8 @@ class MediationManager:
                               ) -> MediationRecord:
         """Create a new mediation record to track internal request."""
         role = MediationRecord.ROLE_CLIENT
-        return self._store_request(request, conn_id, role)
+        record = await self._store_request(request, conn_id, role)
+        return record
 
     async def _store_request(self,
                              request: MediationRequest,
@@ -124,7 +125,18 @@ class MediationManager:
             routing_keys=[routing_did.verkey]
         )
         return grant
+    
+    async def granted_request(self, mediation: MediationRecord,  routing_did_verkey :Sequence[str]) -> MediationRecord:
+        """update Mediation state to granted."""
+        routing_did: DIDInfo = await self._retrieve_routing_did()
+        if not routing_did:
+            routing_did = await self._create_routing_did()
 
+        mediation.state = MediationRecord.STATE_GRANTED
+        await mediation.save(self.context, reason="Mediation request granted")
+        # TODO: update keylists from parameters
+        return mediation
+    
     async def deny_request(
         self,
         mediation: MediationRecord,
