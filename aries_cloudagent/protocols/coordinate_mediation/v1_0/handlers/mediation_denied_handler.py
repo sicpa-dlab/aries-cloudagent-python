@@ -10,6 +10,7 @@ from .....messaging.base_handler import (
 from ..manager import MediationManager
 from ..messages.mediate_grant import MediationGrant
 from ..models.mediation_record import MediationRecord
+from aries_cloudagent.storage.error import StorageNotFoundError
 
 
 class MediationDenyHandler(BaseHandler):
@@ -24,13 +25,18 @@ class MediationDenyHandler(BaseHandler):
 
         if not context.connection_ready:
             raise HandlerException("Invalid mediation request: no active connection")
-        # TODO: Check if mediation record exists
-        mgr = MediationManager(context)
-        _record = await MediationRecord.retrieve_by_id(
-            context, context.mediation_id
-        )
-        await mgr.deny_request(
-            mediation=_record,
-            mediator_terms=context.mediator_terms,
-            recipient_terms=context.recipient_terms
-        )
+        try:
+            mgr = MediationManager(context)
+            _record = await MediationRecord.retrieve_by_id(
+                context, context.mediation_id
+            )
+            await mgr.deny_request(
+                mediation=_record,
+                mediator_terms=context.mediator_terms,
+                recipient_terms=context.recipient_terms
+            )
+        except StorageNotFoundError as err:
+            pass
+        else:
+            pass  # if not existing record, do nothing
+            # TODO: ?create if not existing?

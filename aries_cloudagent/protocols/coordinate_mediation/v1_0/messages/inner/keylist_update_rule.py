@@ -39,7 +39,7 @@ class KeylistUpdateRule(BaseModel):
 
 
 class KeylistUpdateRuleSchema(BaseModelSchema):
-    """Keylist update specifiation schema."""
+    """Keylist update specification schema."""
 
     class Meta:
         """Keylist update schema metadata."""

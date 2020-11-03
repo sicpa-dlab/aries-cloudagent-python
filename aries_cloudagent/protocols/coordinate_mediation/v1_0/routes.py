@@ -27,6 +27,8 @@ from .messages.mediate_request import MediationRequest, MediationRequestSchema
 from .messages.mediate_grant import MediationGrantSchema
 from .messages.mediate_deny import MediationDenySchema
 from .manager import MediationManager as M_Manager
+from .keylist_routes import (send_keylists_request, list_all_records,
+                             send_update_keylists, update_keylists)
 from ....messaging.models.base import BaseModelError
 from ....messaging.models.openapi import OpenAPISchema
 
@@ -67,6 +69,16 @@ class MediationCreateSchema(OpenAPISchema):
     recipient_terms = RECIPIENT_TERMS_SCHEMA
 
 
+class AdminMediationDenySchema(OpenAPISchema):
+    """Parameters and validators for Mediation deny admin request query string."""
+
+    # conn_id = CONNECTION_ID_SCHEMA
+    # mediation_id = MEDIATION_ID_SCHEMA
+    # state = MEDIATION_STATE_SCHEMA
+    mediator_terms = MEDIATOR_TERMS_SCHEMA
+    recipient_terms = RECIPIENT_TERMS_SCHEMA
+
+
 class MediationIdSchema(OpenAPISchema):
     """Path parameters and validators for request taking mediation id."""
 
@@ -88,11 +100,16 @@ async def _prepare_handler(request: web.BaseRequest):
     # TODO: check that request origination point
     r_time = get_timer()
     context = request.app["request_context"]
-    outbound_handler = request.app["outbound_message_router"],
-    body = await request.json()
-    # record parameters
-    conn_id = request.match_info["conn_id"]
-    mediation_id = body.get("mediation_id")
+    outbound_handler = request.app["outbound_message_router"]
+    body = {}
+    if request.body_exists:
+        body = await request.json()
+    if 'match_info' in request.keys():
+        mediation_id = request.match_info.get("mediation_id") or body.get("mediation_id")
+        conn_id = request.match_info.get("conn_id") or body.get("conn_id")
+    else:
+        mediation_id = body.get("mediation_id")
+        conn_id = body.get("conn_id")
     state = body.get("state", "granted")
     mediator_terms = body.get("mediator_terms")
     recipient_terms = body.get("recipient_terms")
@@ -128,10 +145,11 @@ async def mediation_records_list(request: web.BaseRequest):
     """
     context = request.app["request_context"]
     tag_filter = {}
-    for param_name in ("conn_id",
-                       "state"):
+    # "hack the main frame!"
+    parameters = {"conn_id": "connection_id", "state": "state"}
+    for param_name in parameters.keys():
         if param_name in request.query and request.query[param_name] != "":
-            tag_filter[param_name] = request.query[param_name]
+            tag_filter[parameters[param_name]] = request.query[param_name]
     try:
         records = await MediationRecord.query(context, tag_filter)
         results = [record.serialize() for record in records]
@@ -332,12 +350,12 @@ async def mediation_record_send(request: web.BaseRequest):
     return web.json_response(_record.serialize(), status=201)
 
 
-@docs(tags=["mediation"], summary="receive mediation request.")
+@docs(tags=["mediation"], summary="send mediation request.")
 @match_info_schema(ConnIdMatchInfoSchema())
 @request_schema(MediationRequestSchema())
 @response_schema(MediationGrantSchema(), 201)
 @response_schema(MediationDenySchema(), 200)  # TODO: handle deny response
-async def mediation_record_store(request: web.BaseRequest):
+async def send_mediation_request(request: web.BaseRequest):
     """
         handler for mediation request.
 
@@ -398,8 +416,7 @@ async def mediation_record_grant(request: web.BaseRequest):
     Args:
         request: aiohttp request object
     """
-    args = ['r_time', 'context', 'outbound_handler',
-            'mediation_id']
+    args = ['r_time', 'context', 'outbound_handler', 'mediation_id']
     (r_time, context, outbound_handler,
      _id) = itemgetter(*args)(await _prepare_handler(request))
     # TODO: check that request origination point
@@ -420,7 +437,8 @@ async def mediation_record_grant(request: web.BaseRequest):
     except (StorageError, BaseModelError) as err:
         raise web.HTTPBadRequest(reason=err.roll_up) from err
     await outbound_handler(
-        _message, connection_id=_record.connection_id
+        _message,
+        connection_id=_record.connection_id
     )
     trace_event(
         context.settings,
@@ -433,7 +451,7 @@ async def mediation_record_grant(request: web.BaseRequest):
 
 @docs(tags=["mediation"], summary="deny a stored mediation request")
 @match_info_schema(MediationIdMatchInfoSchema())
-@request_schema(MediationDenySchema())
+@request_schema(AdminMediationDenySchema())
 @response_schema(MediationDenySchema(), 201)
 async def mediation_record_deny(request: web.BaseRequest):
     """
@@ -503,7 +521,7 @@ async def register(app: web.Application):
             ),
             web.post(
                 "/mediation/request/{conn_id}/request",
-                mediation_record_store
+                send_mediation_request
             ),  # -> store a mediation request
             web.post(
                 "/mediation/records/{mediation_id}/send",
@@ -517,6 +535,25 @@ async def register(app: web.Application):
                 "/mediation/records/{mediation_id}/deny",
                 mediation_record_deny
             ),  # -> deny
+            # ======
+            web.get("/keylists/records",
+                    list_all_records,
+                    allow_head=False),
+            # web.get("/keylists/records/pagination",
+            #     list_all_records_paging,
+            #     allow_head=False),
+            # web.get("/keylists/records/{record_id}",
+            #     keylist,
+            #     allow_head=False),
+            # web.get("/keylists/records/{record_id}/pagination",
+            #     keylist,
+            #     allow_head=False),
+            web.post("/keylists/records/{mediation_id}/update",
+                     update_keylists),
+            web.post("/keylists/request/{mediation_id}/update",
+                     send_update_keylists),
+            web.post("/keylists/request/{mediation_id}",
+                     send_keylists_request),
         ]
     )
 

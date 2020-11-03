@@ -131,10 +131,7 @@ class MediationManager:
                               routing_did_verkey: Sequence[str]
                               ) -> MediationRecord:
         """update Mediation state to granted."""
-        routing_did: DIDInfo = await self._retrieve_routing_did()
-        if not routing_did:
-            routing_did = await self._create_routing_did()
-
+        # TODO: ?create if not existing?
         mediation.state = MediationRecord.STATE_GRANTED
         await mediation.save(self.context, reason="Mediation request granted")
         # TODO: update endpoint/keylists from parameters
@@ -191,6 +188,11 @@ class MediationManager:
         """Retrieve routes for connection."""
         route_mgr = RoutingManager(self.context)
         return await route_mgr.get_routes(record.connection_id)
+
+    async def create_keylist(self, record: MediationRecord, did: DIDInfo) -> RouteRecord:
+        """Retrieve routes for connection."""
+        route_mgr = RoutingManager(self.context)
+        return await route_mgr.create_route_record(record.connection_id, did.verkey)
 
     async def create_keylist_query_response(
         self, keylist: Sequence[RouteRecord]
