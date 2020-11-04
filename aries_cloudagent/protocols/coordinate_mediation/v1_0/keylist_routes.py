@@ -5,6 +5,7 @@ from aiohttp_apispec import (
     docs,
     match_info_schema,
     response_schema,
+    request_schema,
 )
 
 from .manager import MediationManager as Manager
@@ -14,7 +15,7 @@ from .models.mediation_record import (MEDIATION_ID_SCHEMA,
 
 from ....messaging.models.openapi import OpenAPISchema
 from .message_types import SPEC_URI
-from marshmallow import fields
+from marshmallow import fields, validate
 from aries_cloudagent.storage.error import StorageError
 from aries_cloudagent.messaging.models.base import BaseModelError
 from aries_cloudagent.utils.tracing import get_timer, trace_event
@@ -22,6 +23,7 @@ from ....protocols.routing.v1_0.models.route_record import (RouteRecord,
                                                             RouteRecordSchema)
 from .messages.keylist_query import KeylistQuery
 from .messages.keylist_update_response import KeylistUpdateResponseSchema
+from aries_cloudagent.protocols.coordinate_mediation.v1_0.messages.inner.keylist_update_rule import KeylistUpdateRule
 
 # class AllKeyListRecordsPagingSchema(OpenAPISchema):
 #     """Parameters and validators for keylist record list query string."""
@@ -45,6 +47,37 @@ class KeyListRecordListSchema(OpenAPISchema):
     results = fields.List(  # TODO: order matters, should match sequence?
         fields.Nested(RouteRecordSchema),
         description="List of keylist records",
+    )
+
+
+class _RouteKeySchema(OpenAPISchema):
+    """Routing key schema."""
+
+    key = fields.Str(
+        description = "Key used for routing."
+    )
+
+
+class KeylistUpdateRequestSchema(OpenAPISchema):
+    """keylist update request schema"""
+
+    recipient_key = fields.List(
+        fields.Nested(_RouteKeySchema(),
+            description = "Keys to be added"
+            " or removed."
+        )
+    )
+    action = fields.Str(
+        description="update actions",
+        required=True,
+        validate=validate.OneOf(
+            [
+                    getattr(KeylistUpdateRule, m)
+                    for m in vars(KeylistUpdateRule)
+                    if m.startswith("RULE_")
+            ]
+        ),
+        example="'add' or 'remove'",
     )
 
 
@@ -169,6 +202,7 @@ async def update_keylists(request: web.BaseRequest):
 
 @docs(tags=["keylist"], summary="update keylist.")
 @match_info_schema(MediationIdMatchInfoSchema())
+@request_schema(KeylistUpdateRequestSchema())
 @response_schema(KeylistUpdateResponseSchema(), 201)
 async def send_update_keylists(request: web.BaseRequest):
     """
@@ -183,7 +217,8 @@ async def send_update_keylists(request: web.BaseRequest):
     context = request.app["request_context"]
     mediation_id = request.match_info["mediation_id"]
     body = await request.json()
-    updates = body.get("updates")
+    recipient_key = body.get("recipient_key")
+    action = body.get("action")
     record = None
     try:
         trace_event(
