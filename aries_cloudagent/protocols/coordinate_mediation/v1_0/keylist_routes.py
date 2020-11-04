@@ -6,11 +6,12 @@ from aiohttp_apispec import (
     match_info_schema,
     response_schema,
     request_schema,
+    querystring_schema
 )
 
-from .manager import MediationManager as Manager
+from .manager import MediationManager
 from .models.mediation_record import (MEDIATION_ID_SCHEMA,
-                                      MediationRecord as _Record,
+                                      MediationRecord,
                                       )
 
 from ....messaging.models.openapi import OpenAPISchema
@@ -24,6 +25,7 @@ from ....protocols.routing.v1_0.models.route_record import (RouteRecord,
 from .messages.keylist_query import KeylistQuery
 from .messages.keylist_update_response import KeylistUpdateResponseSchema
 from aries_cloudagent.protocols.coordinate_mediation.v1_0.messages.inner.keylist_update_rule import KeylistUpdateRule
+import json
 
 # class AllKeyListRecordsPagingSchema(OpenAPISchema):
 #     """Parameters and validators for keylist record list query string."""
@@ -50,23 +52,9 @@ class KeyListRecordListSchema(OpenAPISchema):
     )
 
 
-class _RouteKeySchema(OpenAPISchema):
+class KeylistUpdateSchema(OpenAPISchema):
     """Routing key schema."""
 
-    key = fields.Str(
-        description = "Key used for routing."
-    )
-
-
-class KeylistUpdateRequestSchema(OpenAPISchema):
-    """keylist update request schema"""
-
-    recipient_key = fields.List(
-        fields.Nested(_RouteKeySchema(),
-            description = "Keys to be added"
-            " or removed."
-        )
-    )
     action = fields.Str(
         description="update actions",
         required=True,
@@ -78,6 +66,19 @@ class KeylistUpdateRequestSchema(OpenAPISchema):
             ]
         ),
         example="'add' or 'remove'",
+    )
+    key = fields.Str(
+        description = "Key to be acted on.",
+        required=True,
+    )
+
+
+class KeylistUpdateRequestSchema(OpenAPISchema):
+    """keylist update request schema"""
+    updates = fields.List(
+        fields.Nested(
+            KeylistUpdateSchema()
+        )
     )
 
 
@@ -139,7 +140,7 @@ async def send_keylists_request(request: web.BaseRequest):
     # body = await request.json()
     record = None
     try:
-        record = await _Record.retrieve_by_id(
+        record = await MediationRecord.retrieve_by_id(
             context, mediation_id
         )
         # TODO: add pagination to request
@@ -161,6 +162,7 @@ async def send_keylists_request(request: web.BaseRequest):
 
 @docs(tags=["keylist"], summary="update keylist.")
 @match_info_schema(MediationIdMatchInfoSchema())
+@request_schema(KeylistUpdateRequestSchema())
 @response_schema(KeylistUpdateResponseSchema(), 201)
 async def update_keylists(request: web.BaseRequest):
     """
@@ -180,12 +182,12 @@ async def update_keylists(request: web.BaseRequest):
             context.settings, record,
             outcome="keylist_update.START",
         )
-        record = await _Record.retrieve_by_id(
+        record = await MediationRecord.retrieve_by_id(
             context, mediation_id
         )
-        if record.state != _Record.STATE_GRANTED:
+        if record.state != MediationRecord.STATE_GRANTED:
             raise web.HTTPBadRequest(reason=("mediation is not granted."))
-        mgr = Manager(context)
+        mgr = MediationManager(context)
         response = await mgr.update_keylist(
             record, updates=updates
         )
@@ -202,6 +204,7 @@ async def update_keylists(request: web.BaseRequest):
 
 @docs(tags=["keylist"], summary="update keylist.")
 @match_info_schema(MediationIdMatchInfoSchema())
+#@querystring_schema(KeylistUpdateRequestSchema())
 @request_schema(KeylistUpdateRequestSchema())
 @response_schema(KeylistUpdateResponseSchema(), 201)
 async def send_update_keylists(request: web.BaseRequest):
@@ -214,38 +217,30 @@ async def send_update_keylists(request: web.BaseRequest):
     r_time = get_timer()
     context = request.app["request_context"]
     outbound_handler = request.app["outbound_message_router"]
-    context = request.app["request_context"]
     mediation_id = request.match_info["mediation_id"]
     body = await request.json()
-    recipient_key = body.get("recipient_key")
-    action = body.get("action")
+    updates = body.get("updates")
+    updates =[KeylistUpdateRule(
+        recipient_key=update.get("key"),
+        action=update.get("action")) for update in updates]
     record = None
     try:
-        trace_event(
-            context.settings, record,
-            outcome="keylist_update_request.START",
-        )
-        record = await _Record.retrieve_by_id(
+        record = await MediationRecord.retrieve_by_id(
             context, mediation_id
         )
-        if record.state != _Record.STATE_GRANTED:
+        if record.state != MediationRecord.STATE_GRANTED:
             raise web.HTTPBadRequest(reason=("mediation is not granted."))
-        mgr = Manager(context)
-        request = await mgr.update_keylist(
-            record, updates=updates
+        manager = MediationManager(context)
+        request = await manager.update_keylist(
+            record=record, updates=updates
         )
+        results = request.serialize() 
     except (StorageError, BaseModelError) as err:
         raise web.HTTPBadRequest(reason=err.roll_up) from err
     await outbound_handler(
         request, connection_id=record.connection_id
     )
-    trace_event(
-        context.settings,
-        request,
-        outcome="keylist_update_request.END",
-        perf_counter=r_time,
-    )
-    return web.json_response(request, status=201)
+    return web.json_response(results, status=201)
 
 
 async def register(app: web.Application):

@@ -203,6 +203,20 @@ async def mediation_record_retrieve(request: web.BaseRequest):
     return web.json_response(result)
 
 
+async def check_mediation_record(context, conn_id):
+    try: 
+        record = await MediationRecord.retrieve_by_connection_id(
+            context, conn_id
+        )
+    except StorageError as err:
+        pass # no mediation record found will raise a storage error.
+        # which is the desired state
+    else:
+        raise web.HTTPBadRequest(
+            reason=f"connection already has mediation"
+            f"({record.mediation_id}) record associated.")
+        
+        
 @docs(tags=["mediation"], summary="create mediation request record.")
 @match_info_schema(ConnIdMatchInfoSchema())
 @request_schema(MediationCreateSchema())
@@ -226,9 +240,10 @@ async def mediation_record_create(request: web.BaseRequest):
         connection_record = await ConnectionRecord.retrieve_by_id(
             context, conn_id
         )
-        if not connection_record.is_ready:  # TODO: is this the desired behavior?
+        if not connection_record.is_ready:
             raise web.HTTPBadRequest(
                 reason="connection identifier must be from a valid connection.")
+        await check_mediation_record(context, conn_id)
         mediation_request = MediationRequest(
             # conn_id = conn_id, state = state,
             mediator_terms=mediator_terms,
@@ -279,6 +294,7 @@ async def mediation_record_send_create(request: web.BaseRequest):
         if not connection_record.is_ready:  # TODO: is this the desired behavior?
             raise web.HTTPBadRequest(
                 reason="connection identifier must be from a valid connection.")
+        await check_mediation_record(context, conn_id)
         mediation_request = MediationRequest(
             # conn_id = conn_id,state = state,
             mediator_terms=mediator_terms,
