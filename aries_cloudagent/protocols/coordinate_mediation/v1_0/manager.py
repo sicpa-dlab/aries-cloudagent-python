@@ -190,7 +190,7 @@ class MediationManager:
         return await route_mgr.get_routes(record.connection_id)
 
     async def create_keylist(self, record: MediationRecord, did: DIDInfo) -> RouteRecord:
-        """Retrieve routes for connection."""
+        """Create and store a new RouteRecord."""
         route_mgr = RoutingManager(self.context)
         return await route_mgr.create_route_record(record.connection_id, did.verkey)
 
