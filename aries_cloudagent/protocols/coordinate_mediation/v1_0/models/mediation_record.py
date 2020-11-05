@@ -75,7 +75,19 @@ class MediationRecord(BaseRecord):
         tag_filter = {"connection_id": connection_id}
         # TODO post filter out our mediation requests?
         return await cls.retrieve_by_tag_filter(context, tag_filter)
-
+    
+    # @property
+    # def record_value(self) -> dict:
+    #     """Accessor for JSON record value."""
+    #     return {
+    #         prop: getattr(self, prop)
+    #         for prop in (
+    #             "connection_id",
+    #             "state",
+    #             "mediator_terms",
+    #             "recipient_terms"
+    #         )
+    #     }
 
 class MediationRecordSchema(BaseRecordSchema):
     """MediationRecordSchema schema."""
