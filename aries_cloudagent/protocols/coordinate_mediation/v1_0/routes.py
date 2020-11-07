@@ -37,8 +37,6 @@ from ....utils.tracing import trace_event, get_timer
 
 from .message_types import SPEC_URI
 from operator import itemgetter
-from .keylist_routes import (send_keylists_request, list_all_records,
-                             send_update_keylists, update_keylists)
 from aries_cloudagent.protocols.coordinate_mediation.v1_0.messages.inner.keylist_update_rule import KeylistUpdateRule
 from aries_cloudagent.protocols.coordinate_mediation.v1_0.manager import MediationManager
 from aries_cloudagent.protocols.coordinate_mediation.v1_0.messages.keylist_query import KeylistQuery
