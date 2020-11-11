@@ -31,7 +31,7 @@ class MediationGrantHandler(BaseHandler):
             _record.state = MediationRecord.STATE_GRANTED
             _record.routing_keys = context.message.routing_keys
             _record.endpoint = context.message.endpoint
-            await _record.save(self.context, 
+            await _record.save(context, 
                                 reason="Mediation request granted",
                                 webhook=True)
         except StorageNotFoundError as err:

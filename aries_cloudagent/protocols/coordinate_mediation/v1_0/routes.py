@@ -111,7 +111,8 @@ async def _prepare_handler(request: web.BaseRequest):
     body = {}
     if request.body_exists:
         body = await request.json()
-    if 'match_info' in request.keys():
+    request_attributes = request.keys()
+    if request.match_info:
         mediation_id = request.match_info.get("mediation_id") or body.get("mediation_id")
         conn_id = request.match_info.get("conn_id") or body.get("conn_id")
     else:
