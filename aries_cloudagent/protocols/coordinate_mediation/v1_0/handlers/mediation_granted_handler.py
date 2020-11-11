@@ -25,19 +25,15 @@ class MediationGrantHandler(BaseHandler):
         if not context.connection_ready:
             raise HandlerException("Invalid mediation request: no active connection")
         try:
-            mgr = MediationManager(context)
             _record = await MediationRecord.retrieve_by_connection_id(
                 context, context.connection_record.connection_id
             )
-            endpoint = context.message.endpoint
-            routing_keys = context.message.routing_keys
-            await mgr.granted_request(
-                mediation=_record,
-                endpoint=endpoint,
-                routing_did_verkey=routing_keys
-            )
+            _record.state = MediationRecord.STATE_GRANTED
+            _record.routing_keys = context.message.routing_keys
+            _record.endpoint = context.message.endpoint
+            await _record.save(self.context, 
+                                reason="Mediation request granted",
+                                webhook=True)
         except StorageNotFoundError as err:
-            pass
-        else:
-            pass  # if not existing record, do nothing
-            # TODO: ?create if not existing?
+            raise HandlerException("Invalid mediation granting:"
+                                   " no active record")

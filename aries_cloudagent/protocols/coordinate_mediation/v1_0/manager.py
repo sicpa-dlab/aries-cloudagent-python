@@ -128,18 +128,6 @@ class MediationManager:
         )
         return grant
 
-    async def granted_request(self, mediation: MediationRecord,
-                              endpoint,
-                              routing_did_verkey: Sequence[str]
-                              ) -> MediationRecord:
-        """update Mediation state to granted."""
-        # TODO: ?create if not existing?
-        mediation.state = MediationRecord.STATE_GRANTED
-        await mediation.save(self.context, reason="Mediation request granted",
-                             webhook=True)
-        # TODO: update endpoint/keylists from parameters
-        return mediation
-
     async def deny_request(
         self,
         mediation: MediationRecord,

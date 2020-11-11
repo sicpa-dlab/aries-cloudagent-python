@@ -26,11 +26,13 @@ from .models.mediation_record import (MediationRecord,
 from .messages.mediate_request import MediationRequest, MediationRequestSchema
 from .messages.mediate_grant import MediationGrantSchema
 from .messages.mediate_deny import MediationDenySchema
+from .messages.keylist_update import KeylistUpdate
 from .manager import MediationManager as M_Manager
 from ....messaging.models.base import BaseModelError
 from ....messaging.models.openapi import OpenAPISchema
 
 from ....connections.models.connection_record import ConnectionRecord
+from ...connections.v1_0.routes import InvitationResultSchema , CreateInvitationQueryStringSchema
 from ...problem_report.v1_0 import internal_error
 from ....storage.error import StorageError, StorageNotFoundError
 from ....utils.tracing import trace_event, get_timer
@@ -42,6 +44,8 @@ from aries_cloudagent.protocols.coordinate_mediation.v1_0.manager import Mediati
 from aries_cloudagent.protocols.coordinate_mediation.v1_0.messages.keylist_query import KeylistQuery
 from aries_cloudagent.protocols.routing.v1_0.models.route_record import RouteRecord, RouteRecordSchema
 from .messages.keylist_update_response import KeylistUpdateResponseSchema
+from aries_cloudagent.protocols.connections.v1_0.routes import connections_create_invitation
+from aries_cloudagent.messaging.responder import BaseResponder
 
 
 class MediationListSchema(OpenAPISchema):
@@ -257,7 +261,7 @@ async def mediation_record_create(request: web.BaseRequest):
             outcome="mediation_record_create.START",
         )
         _manager = M_Manager(context)
-        _record = await _manager.receive_request(
+        _record = await _manager.receive_request(  # TODO: update role correctly
             conn_id=conn_id, request=mediation_request
         )
         result = _record.serialize()
@@ -424,6 +428,34 @@ async def send_mediation_request(request: web.BaseRequest):
     )
     return web.json_response(result, status=201)
 
+@docs(tags=["mediation"], summary="send mediation request, and create invitation from granted result.")
+@match_info_schema(ConnIdMatchInfoSchema())
+@querystring_schema(CreateInvitationQueryStringSchema())
+@request_schema(MediationRequestSchema())
+@response_schema(InvitationResultSchema(), 200)
+async def mediation_invitation(request: web.BaseRequest):
+    """
+       Handler that creates a mediation request record,
+       sends the request and creates a did_comm connection
+       invitation with the mediator endpoint and routing did's verkey.
+    """
+    args = ['r_time', 'context', 'outbound_handler',
+            'conn_id', 'mediator_terms', 'recipient_terms']
+    (r_time, context, outbound_handler, conn_id, mediator_terms,
+     recipient_terms) = itemgetter(*args)(await _prepare_handler(request))
+    try:
+        await mediation_record_send_create(request)
+        # retrieve record for the new rooting keys
+        # WARNING: race condition...
+        _record = await MediationRecord.retrieve_by_connection_id(
+            context, conn_id
+        )
+            #update request data
+        invitation = connections_create_invitation(request)
+    except (StorageError, BaseModelError) as err:
+        raise web.HTTPBadRequest(reason=err.roll_up) from err
+        # TODO: clean up failures
+    return invitation        
 
 @docs(tags=["mediation"], summary="grant a stored mediation request")
 @match_info_schema(MediationIdMatchInfoSchema())
@@ -713,10 +745,7 @@ async def send_update_keylists(request: web.BaseRequest):
         )
         if record.state != MediationRecord.STATE_GRANTED:
             raise web.HTTPBadRequest(reason=("mediation is not granted."))
-        manager = MediationManager(context)
-        request = await manager.update_keylist(
-            record=record, updates=updates
-        )
+        request = KeylistUpdate(updates=updates)
         results = request.serialize() 
     except (StorageError, BaseModelError) as err:
         raise web.HTTPBadRequest(reason=err.roll_up) from err
@@ -754,9 +783,9 @@ async def register(app: web.Application):
                 mediation_record_send_create
             ),
             web.post(
-                "/mediation/request/{conn_id}/request",
-                send_mediation_request
-            ),  # -> store a mediation request
+                "/mediation/records/{conn_id}/create-did-conn-invitation",
+                mediation_invitation
+            ),
             web.post(
                 "/mediation/records/{mediation_id}/send",
                 mediation_record_send

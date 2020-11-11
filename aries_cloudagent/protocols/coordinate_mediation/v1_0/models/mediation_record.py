@@ -44,6 +44,8 @@ class MediationRecord(BaseRecord):
         connection_id: str = None,
         mediator_terms: Sequence[str] = None,
         recipient_terms: Sequence[str] = None,
+        routing_keys: Sequence[str] = None,
+        endpoint: str = None,
         **kwargs
     ):
         """
@@ -66,7 +68,27 @@ class MediationRecord(BaseRecord):
     def mediation_id(self) -> str:
         """Get Mediation ID."""
         return self._id
-
+    
+    @property
+    def state(self) -> str:
+        """Get Mediation state."""
+        return self._state
+    
+    @state.setter
+    def state(self, state):
+        """Setter for state."""
+        if state not in [MediationRecord.STATE_DENIED ,
+                         MediationRecord.STATE_GRANTED ,
+                         MediationRecord.STATE_REQUEST_RECEIVED]:
+            raise ValueError(
+                f"{state} is not a valid state, "
+                f"must be one of ("
+                f"{MediationRecord.STATE_DENIED}, "
+                f"{MediationRecord.STATE_GRANTED}, "
+                f"{MediationRecord.STATE_REQUEST_RECEIVED}"
+            )
+        self._state = state
+        
     @classmethod
     async def retrieve_by_connection_id(
         cls, context: InjectionContext, connection_id: str
@@ -85,7 +107,9 @@ class MediationRecord(BaseRecord):
     #             "connection_id",
     #             "state",
     #             "mediator_terms",
-    #             "recipient_terms"
+    #             "recipient_terms",
+    #             "routing_keys",
+    #             "endpoint",
     #         )
     #     }
 
