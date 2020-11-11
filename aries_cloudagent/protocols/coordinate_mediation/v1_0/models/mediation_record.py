@@ -7,8 +7,12 @@ from marshmallow import EXCLUDE, fields, validate
 from .....config.injection_context import InjectionContext
 
 from .....messaging.models.base_record import BaseRecord, BaseRecordSchema
+<<<<<<< HEAD
 from .....messaging.models.openapi import OpenAPISchema
 from .....messaging.valid import UUIDFour
+=======
+from .....storage.base import StorageNotFoundError, StorageDuplicateError
+>>>>>>> a6f50fcf65384ca907c7b06bb05ca99fcb055e70
 
 
 class MediationRecord(BaseRecord):
@@ -26,7 +30,7 @@ class MediationRecord(BaseRecord):
 
     RECORD_TYPE = "mediation_requests"
     RECORD_ID_NAME = "mediation_id"
-    TAG_NAMES = {"state", "connection_id"}
+    TAG_NAMES = {"state",  "role", "connection_id"}
 
     STATE_REQUEST_RECEIVED = "request_received"
     STATE_GRANTED = "granted"
@@ -96,8 +100,8 @@ class MediationRecord(BaseRecord):
     ):
         """Retrieve a route record by recipient key."""
         tag_filter = {"connection_id": connection_id}
-        # TODO post filter out our mediation requests?
         return await cls.retrieve_by_tag_filter(context, tag_filter)
+<<<<<<< HEAD
     
     # @property
     # def record_value(self) -> dict:
@@ -113,6 +117,24 @@ class MediationRecord(BaseRecord):
     #             "endpoint",
     #         )
     #     }
+=======
+
+    @classmethod
+    async def exists_for_connection_id(
+        cls, context: InjectionContext, connection_id: str
+    ) -> bool:
+        """Return whether a mediation record exists for the given connection."""
+        tag_filter = {"connection_id": connection_id}
+        try:
+            record = await cls.retrieve_by_tag_filter(context, tag_filter)
+        except StorageNotFoundError:
+            return False
+        except StorageDuplicateError:
+            return True
+
+        return bool(record)
+
+>>>>>>> a6f50fcf65384ca907c7b06bb05ca99fcb055e70
 
 class MediationRecordSchema(BaseRecordSchema):
     """MediationRecordSchema schema."""
@@ -124,6 +146,7 @@ class MediationRecordSchema(BaseRecordSchema):
         unknown = EXCLUDE
 
     mediation_id = fields.Str(required=False)
+    role = fields.Str(required=True)
     connection_id = fields.Str(required=True)
     mediator_terms = fields.List(fields.Str(), required=False)
     recipient_terms = fields.List(fields.Str(), required=False)

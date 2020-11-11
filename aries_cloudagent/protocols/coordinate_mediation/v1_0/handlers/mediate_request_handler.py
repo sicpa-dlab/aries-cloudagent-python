@@ -1,4 +1,4 @@
-"""Handler for incoming route-update-request messages."""
+"""Handler for incoming mediation request messages."""
 
 from .....messaging.base_handler import (
     BaseHandler,
@@ -7,8 +7,9 @@ from .....messaging.base_handler import (
     RequestContext,
 )
 
-from ..manager import MediationManager
+from ..manager import MediationManager, MediationManagerError
 from ..messages.mediate_request import MediationRequest
+from ....problem_report.v1_0.message import ProblemReport
 
 
 class MediationRequestHandler(BaseHandler):
@@ -25,6 +26,7 @@ class MediationRequestHandler(BaseHandler):
             raise HandlerException("Invalid mediation request: no active connection")
 
         mgr = MediationManager(context)
+<<<<<<< HEAD
         record = await mgr.receive_request(
             context.connection_record.connection_id,
             context.message
@@ -32,3 +34,16 @@ class MediationRequestHandler(BaseHandler):
         if context.settings.get("mediation.open", False):
             grant = await mgr.grant_request(record)
             await responder.send_reply(grant)
+=======
+        try:
+            record = await mgr.receive_request(context.message)
+            if context.settings.get("mediation.open", False):
+                grant = await mgr.grant_request(record)
+                await responder.send_reply(grant)
+        except MediationManagerError:
+            await responder.send_reply(
+                ProblemReport(
+                    explain_ltxt="Mediation request already exists from this connection."
+                )
+            )
+>>>>>>> a6f50fcf65384ca907c7b06bb05ca99fcb055e70
