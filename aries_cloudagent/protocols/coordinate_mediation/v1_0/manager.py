@@ -78,44 +78,21 @@ class MediationManager:
         return info
 
     async def receive_request(self,
-                              conn_id: str,
                               request: MediationRequest
                               ) -> MediationRecord:
         """Create a new mediation record to track external request."""
-        if await MediationRecord.exists_for_connection_id(
-            self.context, self.context.connection_record.connection_id
-        ):
+        conn_id = self.context.connection_record.connection_id
+        if await MediationRecord.exists_for_connection_id( self.context, conn_id):
             raise MediationManagerError('Mediation Record already exists for connection')
         role = MediationRecord.ROLE_SERVER
-        record = await self._store_request(request, conn_id, role)
-        return record
-
-    async def prepare_request(self,
-                              conn_id: str,
-                              request: MediationRequest
-                              ) -> MediationRecord:
-        """Create a new mediation record to track internal request."""
-        role = MediationRecord.ROLE_CLIENT
-        record = await self._store_request(request, conn_id, role)
-        return record
-
-    async def _store_request(self,
-                             request: MediationRequest,
-                             _conn_id: str,
-                             _role: str
-                             ) -> MediationRecord:
-        """Create a new mediation record to track a request."""
         # TODO: Determine if terms are acceptable
-        connection_record = await ConnectionRecord.retrieve_by_id(
-            self.context, _conn_id
-        )
         record = MediationRecord(
-            role=_role,
-            connection_id=connection_record.connection_id,
+            role=role,
+            connection_id=conn_id,
             mediator_terms=request.mediator_terms,
             recipient_terms=request.recipient_terms
         )
-        await record.save(self.context, reason="New mediation request received",
+        record = await record.save(self.context, reason="New mediation request received",
                           webhook=True)
         return record
 
@@ -137,17 +114,14 @@ class MediationManager:
     async def deny_request(
         self,
         mediation: MediationRecord,
-        *,
-        mediator_terms: Sequence[str] = None,
-        recipient_terms: Sequence[str] = None
     ) -> MediationDeny:
         """Deny a mediation request and prepare a deny message."""
         mediation.state = MediationRecord.STATE_DENIED
         await mediation.save(self.context, reason="Mediation request denied",
                              webhook=True)
         deny = MediationDeny(
-            mediator_terms=mediator_terms,
-            recipient_terms=recipient_terms
+            mediator_terms=mediation.mediator_terms,
+            recipient_terms=mediation.recipient_terms
         )
         return deny
 
@@ -210,7 +184,7 @@ class MediationManager:
         connection_id: str,
         mediator_terms: Sequence[str] = None,
         recipient_terms: Sequence[str] = None
-    ):
+    ) -> MediationRequest:
         """Prepare a MediationRequest Message, saving a new mediation record."""
         record = MediationRecord(
             role=MediationRecord.ROLE_CLIENT,
@@ -218,7 +192,7 @@ class MediationManager:
             mediator_terms=mediator_terms,
             recipient_terms=recipient_terms
         )
-        await record.save(self.context, reason="Creating new mediation request.")
+        await record.save(self.context, reason="Creating new mediation request.", webhook=True)
         return MediationRequest(
             mediator_terms=mediator_terms,
             recipient_terms=recipient_terms
@@ -230,16 +204,16 @@ class MediationManager:
     ):
         """Process mediation grant message."""
         record.state = MediationRecord.STATE_GRANTED
-        await record.save(self.context, reason="Mediation request granted.")
+        await record.save(self.context, reason="Mediation request granted.", webhook=True)
         # TODO Store endpoint and routing key for later use.
 
     async def request_denied(
         self,
         record: MediationRecord
     ):
-        """Process mediatino denied message."""
+        """Process mediation denied message."""
         record.state = MediationRecord.STATE_DENIED
-        await record.save(self.context, reason="Mediation request denied.")
+        await record.save(self.context, reason="Mediation request denied.", webhook=True)
         # TODO Remove endpoint and routing key.
 
     async def prepare_keylist_query(

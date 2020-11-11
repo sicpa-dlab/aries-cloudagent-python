@@ -15,11 +15,13 @@ from marshmallow import fields, validate
 
 from .models.mediation_record import (MediationRecord,
                                       MediationRecordSchema,
-                                      CONNECTION_ID_SCHEMA,
+                                      )
+from .models.mediation_schemas import (CONNECTION_ID_SCHEMA,
                                       MEDIATION_ID_SCHEMA,
                                       MEDIATION_STATE_SCHEMA,
                                       MEDIATOR_TERMS_SCHEMA,
                                       RECIPIENT_TERMS_SCHEMA,
+                                      ROLE_SCHEMA
                                       # ENDPOINT_SCHEMA,
                                       # ROUTING_KEYS_SCHEMA
                                       )
@@ -40,7 +42,7 @@ from ....utils.tracing import trace_event, get_timer
 from .message_types import SPEC_URI
 from operator import itemgetter
 from aries_cloudagent.protocols.coordinate_mediation.v1_0.messages.inner.keylist_update_rule import KeylistUpdateRule
-from aries_cloudagent.protocols.coordinate_mediation.v1_0.manager import MediationManager
+from aries_cloudagent.protocols.coordinate_mediation.v1_0.manager import MediationManager, MediationManagerError
 from aries_cloudagent.protocols.coordinate_mediation.v1_0.messages.keylist_query import KeylistQuery
 from aries_cloudagent.protocols.routing.v1_0.models.route_record import RouteRecord, RouteRecordSchema
 from .messages.keylist_update_response import KeylistUpdateResponseSchema
@@ -72,6 +74,7 @@ class MediationCreateSchema(OpenAPISchema):
     # conn_id = CONNECTION_ID_SCHEMA
     # mediation_id = MEDIATION_ID_SCHEMA
     # state = MEDIATION_STATE_SCHEMA
+    role = ROLE_SCHEMA
     mediator_terms = MEDIATOR_TERMS_SCHEMA
     recipient_terms = RECIPIENT_TERMS_SCHEMA
 
@@ -103,6 +106,26 @@ def mediation_sort_key(mediation):
     return pfx + mediation["created_at"]
 
 
+async def _receive_request(self,
+                    role,
+                    conn_id,
+                    mediator_terms,
+                    recipient_terms
+                    ) -> MediationRecord:
+    if await MediationRecord.exists_for_connection_id( self.context, conn_id):
+        raise MediationManagerError('Mediation Record already exists for connection')
+    # TODO: Determine if terms are acceptable
+    record = MediationRecord(
+        role=role,
+        connection_id=conn_id,
+        mediator_terms=mediator_terms,
+        recipient_terms=recipient_terms
+    )
+    record = await record.save(self.context, reason="New mediation request record",
+                        webhook=True)
+    return record
+   
+
 async def _prepare_handler(request: web.BaseRequest):
     # TODO: check that request origination point
     r_time = get_timer()
@@ -121,6 +144,7 @@ async def _prepare_handler(request: web.BaseRequest):
     state = body.get("state", "granted")
     mediator_terms = body.get("mediator_terms")
     recipient_terms = body.get("recipient_terms")
+    role = body.get("role")
     results = {
         'r_time': r_time,
         'context': context,
@@ -130,6 +154,7 @@ async def _prepare_handler(request: web.BaseRequest):
         'state': state,
         'mediator_terms': mediator_terms,
         'recipient_terms': recipient_terms,
+        'role': role,
     }
     return results
 
@@ -241,9 +266,9 @@ async def mediation_record_create(request: web.BaseRequest):
         request: aiohttp request object
 
     """
-    args = ['r_time', 'context', 'conn_id', 'mediator_terms', 'recipient_terms']
+    args = ['r_time', 'context', 'conn_id', 'mediator_terms', 'recipient_terms','role']
     (r_time, context, conn_id, mediator_terms,
-     recipient_terms) = itemgetter(*args)(await _prepare_handler(request))
+     recipient_terms, role) = itemgetter(*args)(await _prepare_handler(request))
     try:
         connection_record = await ConnectionRecord.retrieve_by_id(
             context, conn_id
@@ -252,27 +277,15 @@ async def mediation_record_create(request: web.BaseRequest):
             raise web.HTTPBadRequest(
                 reason="connection identifier must be from a valid connection.")
         await check_mediation_record(context, conn_id)
-        mediation_request = MediationRequest(
-            # conn_id = conn_id, state = state,
+        _record = await _receive_request(
+            role=role,
+            conn_id=conn_id,
             mediator_terms=mediator_terms,
             recipient_terms=recipient_terms,
-        )
-        trace_event(
-            context.settings, mediation_request,
-            outcome="mediation_record_create.START",
-        )
-        _manager = M_Manager(context)
-        _record = await _manager.receive_request(  # TODO: update role correctly
-            conn_id=conn_id, request=mediation_request
         )
         result = _record.serialize()
     except (StorageError, BaseModelError) as err:
         raise web.HTTPBadRequest(reason=err.roll_up) from err
-    trace_event(
-        context.settings, mediation_request,
-        outcome="mediation_record_create.END",
-        perf_counter=r_time,
-    )
     return web.json_response(result, status=201)
 
 
@@ -299,35 +312,21 @@ async def mediation_record_send_create(request: web.BaseRequest):
         connection_record = await ConnectionRecord.retrieve_by_id(
             context, conn_id
         )
-        if not connection_record.is_ready:  # TODO: is this the desired behavior?
+        if not connection_record.is_ready:
             raise web.HTTPBadRequest(
                 reason="connection identifier must be from a valid connection.")
         await check_mediation_record(context, conn_id)
-        mediation_request = MediationRequest(
-            # conn_id = conn_id,state = state,
+        _manager = M_Manager(context)
+        mediation_request = await _manager.prepare_request(
+            conn_id=conn_id,
             mediator_terms=mediator_terms,
             recipient_terms=recipient_terms,
         )
-        trace_event(
-            context.settings,
-            mediation_request,
-            outcome="mediation_record_create.START",
-        )
-        _manager = M_Manager(context)
-        _record = await _manager.prepare_request(
-            conn_id=conn_id,
-            request=mediation_request
-        )
-        result = _record.serialize()
+        result = mediation_request.serialize()
     except (StorageError, BaseModelError) as err:
         raise web.HTTPBadRequest(reason=err.roll_up) from err
     await outbound_handler(
-        mediation_request, connection_id=_record.connection_id
-    )
-    trace_event(
-        context.settings, mediation_request,
-        outcome="mediation_record_create.END",
-        perf_counter=r_time,
+        mediation_request, connection_id=conn_id.connection_id
     )
     return web.json_response(result, status=201)
 
@@ -350,10 +349,6 @@ async def mediation_record_send(request: web.BaseRequest):
      recipient_terms) = itemgetter(*args)(await _prepare_handler(request))
     _record = None
     try:
-        trace_event(
-            context.settings, _record,
-            outcome="mediation_send.START",
-        )
         _record = await MediationRecord.retrieve_by_id(
             context, _id
         )
@@ -364,70 +359,8 @@ async def mediation_record_send(request: web.BaseRequest):
     await outbound_handler(
         _message, connection_id=_record.connection_id
     )
-    trace_event(
-        context.settings,
-        _message,
-        outcome="mediation_record_send.END",
-        perf_counter=r_time,
-    )
-    # should this return the response form outbound_message_router
     return web.json_response(_record.serialize(), status=201)
 
-
-@docs(tags=["mediation"], summary="send mediation request.")
-@match_info_schema(ConnIdMatchInfoSchema())
-@request_schema(MediationRequestSchema())
-@response_schema(MediationGrantSchema(), 201)
-@response_schema(MediationDenySchema(), 200)  # TODO: handle deny response
-async def send_mediation_request(request: web.BaseRequest):
-    """
-        handler for mediation request.
-
-    Args:
-        request: aiohttp request object
-
-    """
-    args = ['r_time', 'context', 'outbound_handler',
-            'conn_id', 'mediator_terms', 'recipient_terms']
-    (r_time, context, outbound_handler, conn_id, mediator_terms,
-     recipient_terms) = itemgetter(*args)(await _prepare_handler(request))
-    try:
-        connection_record = await ConnectionRecord.retrieve_by_id(
-            context, conn_id
-        )
-        if not connection_record.is_ready:  # TODO: is this the desired behavior?
-            raise web.HTTPBadRequest(
-                reason="connection identifier must be from a valid connection.")
-        mediation_request = MediationRequest(
-            # conn_id = conn_id,state = state,
-            mediator_terms=mediator_terms,
-            recipient_terms=recipient_terms,
-        )
-        trace_event(
-            context.settings,
-            mediation_request,
-            outcome="mediation_record_store.START",
-        )
-        _manager = M_Manager(context)
-        _record = await _manager.receive_request(
-            conn_id=conn_id,
-            request=mediation_request
-        )
-        mediation_granted = await _manager.grant_request(
-            mediation=_record
-        )
-        result = mediation_granted.serialize()
-    except (StorageError, BaseModelError) as err:
-        raise web.HTTPBadRequest(reason=err.roll_up) from err
-    await outbound_handler(
-        mediation_granted, connection_id=_record.connection_id
-    )
-    trace_event(
-        context.settings, mediation_request,
-        outcome="mediation_record_strore.END",
-        perf_counter=r_time,
-    )
-    return web.json_response(result, status=201)
 
 @docs(tags=["mediation"], summary="send mediation request, and create invitation from granted result.")
 @match_info_schema(ConnIdMatchInfoSchema())
@@ -451,7 +384,8 @@ async def mediation_invitation(request: web.BaseRequest):
         _record = await MediationRecord.retrieve_by_connection_id(
             context, conn_id
         )
-            #update request data
+        # create new did for recipient keys
+        #update request data with routing/recipient keys and endpoint
         invitation = connections_create_invitation(request)
     except (StorageError, BaseModelError) as err:
         raise web.HTTPBadRequest(reason=err.roll_up) from err
@@ -474,10 +408,6 @@ async def mediation_record_grant(request: web.BaseRequest):
     # TODO: check that request origination point
     _record = None
     try:
-        trace_event(
-            context.settings, _record,
-            outcome="mediation_grant.START",
-        )
         _record = await MediationRecord.retrieve_by_id(
             context, _id
         )
@@ -491,12 +421,6 @@ async def mediation_record_grant(request: web.BaseRequest):
     await outbound_handler(
         _message,
         connection_id=_record.connection_id
-    )
-    trace_event(
-        context.settings,
-        _message,
-        outcome="mediation_record_grant.END",
-        perf_counter=r_time,
     )
     return web.json_response(result, status=201)
 
@@ -527,11 +451,7 @@ async def mediation_record_deny(request: web.BaseRequest):
             context, _id
         )
         _manager = M_Manager(context)
-        _message = await _manager.deny_request(
-            mediation=_record,
-            mediator_terms=mediator_terms,
-            recipient_terms=recipient_terms
-        )
+        _message = await _manager.deny_request(mediation=_record)
         result = _message.serialize()
     except (StorageError, BaseModelError) as err:
         raise web.HTTPBadRequest(reason=err.roll_up) from err

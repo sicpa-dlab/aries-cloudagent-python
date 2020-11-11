@@ -11,6 +11,7 @@ from ..manager import MediationManager
 from ..messages.mediate_grant import MediationGrant
 from ..models.mediation_record import MediationRecord
 from aries_cloudagent.storage.error import StorageNotFoundError
+from aries_cloudagent.protocols.problem_report.v1_0.message import ProblemReport
 
 
 class MediationDenyHandler(BaseHandler):
@@ -24,19 +25,24 @@ class MediationDenyHandler(BaseHandler):
         assert isinstance(context.message, MediationGrant)
 
         if not context.connection_ready:
-            raise HandlerException("Invalid mediation request: no active connection")
+            raise HandlerException("Invalid client mediation denied response: no active connection")
         try:
-            mgr = MediationManager(context)
-            _record = await MediationRecord.retrieve_by_id(
-                context, context.mediation_id
+            _record = await MediationRecord.retrieve_by_connection_id(
+                context, context.connection_record.connection_id
             )
-            await mgr.deny_request(
-                mediation=_record,
-                mediator_terms=context.mediator_terms,
-                recipient_terms=context.recipient_terms
-            )
+            _record.state = MediationRecord.STATE_DENIED
+            _record.mediator_terms = context.message.mediator_terms
+            _record.recipient_terms = context.message.recipient_terms
+            await _record.save(context, 
+                                reason="Mediation request denied",
+                                webhook=True)
         except StorageNotFoundError as err:
-            pass
-        else:
-            pass  # if not existing record, do nothing
-            # TODO: ?create if not existing?
+            await responder.send_reply(
+                ProblemReport(
+                    explain_ltxt="Invalid client mediation denied"
+                    "response: no mediation requested"
+                )
+            )
+            raise HandlerException("Invalid client mediation denied"
+                                   " response: no mediation requested")
+

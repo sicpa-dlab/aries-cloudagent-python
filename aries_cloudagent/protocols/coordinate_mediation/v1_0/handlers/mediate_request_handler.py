@@ -13,7 +13,7 @@ from ....problem_report.v1_0.message import ProblemReport
 
 
 class MediationRequestHandler(BaseHandler):
-    """Handler for incoming route-update-request messages."""
+    """Handler for incoming mediation request messages."""
 
     async def handle(self, context: RequestContext, responder: BaseResponder):
         """Message handler implementation."""
@@ -26,15 +26,6 @@ class MediationRequestHandler(BaseHandler):
             raise HandlerException("Invalid mediation request: no active connection")
 
         mgr = MediationManager(context)
-<<<<<<< HEAD
-        record = await mgr.receive_request(
-            context.connection_record.connection_id,
-            context.message
-            )
-        if context.settings.get("mediation.open", False):
-            grant = await mgr.grant_request(record)
-            await responder.send_reply(grant)
-=======
         try:
             record = await mgr.receive_request(context.message)
             if context.settings.get("mediation.open", False):
@@ -46,4 +37,3 @@ class MediationRequestHandler(BaseHandler):
                     explain_ltxt="Mediation request already exists from this connection."
                 )
             )
->>>>>>> a6f50fcf65384ca907c7b06bb05ca99fcb055e70
