@@ -60,6 +60,7 @@ class MediationRecord(BaseRecord):
         super().__init__(
             mediation_id, state or self.STATE_REQUEST_RECEIVED, **kwargs
         )
+        self.role = role if role else self.ROLE_SERVER
         self.connection_id = connection_id
         self.mediator_terms = list(mediator_terms) if mediator_terms else []
         self.recipient_terms = list(recipient_terms) if recipient_terms else []
