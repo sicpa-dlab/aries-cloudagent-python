@@ -184,7 +184,7 @@ class MediationManager:
         connection_id: str,
         mediator_terms: Sequence[str] = None,
         recipient_terms: Sequence[str] = None
-    ) -> MediationRequest:
+    ) -> (MediationRecord, MediationRequest):
         """Prepare a MediationRequest Message, saving a new mediation record."""
         record = MediationRecord(
             role=MediationRecord.ROLE_CLIENT,
@@ -193,10 +193,10 @@ class MediationManager:
             recipient_terms=recipient_terms
         )
         await record.save(self.context, reason="Creating new mediation request.", webhook=True)
-        return MediationRequest(
+        return (record, MediationRequest(
             mediator_terms=mediator_terms,
             recipient_terms=recipient_terms
-        )
+        ))
 
     async def request_granted(
         self,

@@ -317,16 +317,16 @@ async def mediation_record_send_create(request: web.BaseRequest):
                 reason="connection identifier must be from a valid connection.")
         await check_mediation_record(context, conn_id)
         _manager = M_Manager(context)
-        mediation_request = await _manager.prepare_request(
-            conn_id=conn_id,
+        record, mediation_request = await _manager.prepare_request(
+            connection_id=conn_id,
             mediator_terms=mediator_terms,
             recipient_terms=recipient_terms,
         )
-        result = mediation_request.serialize()
+        result = record.serialize()
     except (StorageError, BaseModelError) as err:
         raise web.HTTPBadRequest(reason=err.roll_up) from err
     await outbound_handler(
-        mediation_request, connection_id=conn_id.connection_id
+        mediation_request, connection_id=conn_id
     )
     return web.json_response(result, status=201)
 
