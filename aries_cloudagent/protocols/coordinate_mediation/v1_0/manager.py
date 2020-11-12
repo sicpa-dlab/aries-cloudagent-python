@@ -92,7 +92,7 @@ class MediationManager:
             mediator_terms=request.mediator_terms,
             recipient_terms=request.recipient_terms
         )
-        record = await record.save(self.context, reason="New mediation request received",
+        await record.save(self.context, reason="New mediation request received",
                           webhook=True)
         return record
 
