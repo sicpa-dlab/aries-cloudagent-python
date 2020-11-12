@@ -7,11 +7,10 @@ from .....messaging.base_handler import (
     RequestContext,
 )
 
-from ..manager import MediationManager
 from ..messages.mediate_grant import MediationGrant
 from ..models.mediation_record import MediationRecord
 from aries_cloudagent.storage.error import StorageNotFoundError
-from aries_cloudagent.protocols.connections.v1_0.messages.problem_report import ProblemReport
+from ....connections.v1_0.messages.problem_report import ProblemReport
 
 
 class MediationGrantHandler(BaseHandler):
@@ -24,7 +23,8 @@ class MediationGrantHandler(BaseHandler):
         )
         assert isinstance(context.message, MediationGrant)
         if not context.connection_ready:
-            raise HandlerException("Invalid client mediation grant response: no active connection")
+            raise HandlerException(
+                "Invalid client mediation grant response: no active connection")
         try:
             _record = await MediationRecord.retrieve_by_connection_id(
                 context, context.connection_record.connection_id
@@ -32,13 +32,14 @@ class MediationGrantHandler(BaseHandler):
             _record.state = MediationRecord.STATE_GRANTED
             _record.routing_keys = context.message.routing_keys
             _record.endpoint = context.message.endpoint
-            await _record.save(context, 
-                                reason="Mediation request granted",
-                                webhook=True)
-        except StorageNotFoundError as err:
+            await _record.save(context,
+                               reason="Mediation request granted",
+                               webhook=True)
+        except StorageNotFoundError:
             await responder.send_reply(
                 ProblemReport(
-                    explain_ltxt="Invalid client mediation grant response: no mediation requested"
+                    explain_ltxt="Invalid client mediation grant"
+                    " response: no mediation requested"
                 )
             )
             raise HandlerException("Invalid client mediation grant response:"

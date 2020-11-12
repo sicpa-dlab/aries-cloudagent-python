@@ -23,7 +23,6 @@ from .messages.mediate_deny import MediationDeny
 from .messages.mediate_grant import MediationGrant
 from .messages.mediate_request import MediationRequest
 from .models.mediation_record import MediationRecord
-from aries_cloudagent.connections.models.connection_record import ConnectionRecord
 
 
 class MediationManagerError(BaseError):
@@ -82,7 +81,7 @@ class MediationManager:
                               ) -> MediationRecord:
         """Create a new mediation record to track external request."""
         conn_id = self.context.connection_record.connection_id
-        if await MediationRecord.exists_for_connection_id( self.context, conn_id):
+        if await MediationRecord.exists_for_connection_id(self.context, conn_id):
             raise MediationManagerError('Mediation Record already exists for connection')
         role = MediationRecord.ROLE_SERVER
         # TODO: Determine if terms are acceptable
@@ -96,8 +95,10 @@ class MediationManager:
                           webhook=True)
         return record
 
-    async def grant_request(self, mediation: MediationRecord) -> (MediationRecord, MediationGrant):
-        """Grant a mediation request and prepare grant message."""
+    async def grant_request(self, mediation: MediationRecord) -> (
+            MediationRecord, MediationGrant):
+        """Grant mediation request, prepare grant message."""
+
         routing_did: DIDInfo = await self._retrieve_routing_did()
         if not routing_did:
             routing_did = await self._create_routing_did()
@@ -192,7 +193,9 @@ class MediationManager:
             mediator_terms=mediator_terms,
             recipient_terms=recipient_terms
         )
-        await record.save(self.context, reason="Creating new mediation request.", webhook=True)
+        await record.save(self.context,
+                          reason="Creating new mediation request.",
+                          webhook=True)
         return (record, MediationRequest(
             mediator_terms=mediator_terms,
             recipient_terms=recipient_terms

@@ -17,6 +17,8 @@ from ..manager import MediationManager, MediationManagerError
 from ..messages.mediate_request import MediationRequest
 from ..messages.inner.keylist_update_rule import KeylistUpdateRule
 from ..messages.inner.keylist_updated import KeylistUpdated
+from aries_cloudagent.protocols.coordinate_mediation.v1_0.messages.mediate_deny import MediationDeny
+from aries_cloudagent.protocols.coordinate_mediation.v1_0.messages.mediate_grant import MediationGrant
 
 TEST_CONN_ID = "conn-id"
 TEST_VERKEY = "3Dn1SJNPaCXcvvJvSbsFWP2xaCjMom3can8CQNhWrTRx"
@@ -58,7 +60,10 @@ class TestMediationManager(AsyncTestCase):
         request = MediationRequest()
         record = await self.manager.receive_request(request)
         assert record.connection_id == TEST_CONN_ID
-        grant = await self.manager.grant_request(record)
+        updated_record, grant = await self.manager.grant_request(record)
+        assert type(updated_record) == MediationRecord
+        assert type(grant) == MediationGrant
+        # self.assertNotEqual(updated_record, record) FIXME:
         assert grant.endpoint == self.context.settings.get("default_endpoint")
         assert grant.routing_keys == [(await self.manager._retrieve_routing_did()).verkey]
 
@@ -66,7 +71,10 @@ class TestMediationManager(AsyncTestCase):
         request = MediationRequest()
         record = await self.manager.receive_request(request)
         assert record.connection_id == TEST_CONN_ID
-        deny = await self.manager.deny_request(record)
+        updated_record, deny = await self.manager.deny_request(record)
+        assert type(updated_record) == MediationRecord
+        assert type(deny) == MediationDeny
+        # self.assertNotEqual(updated_record, record) FIXME:
         assert deny.mediator_terms == []
         assert deny.recipient_terms == []
 

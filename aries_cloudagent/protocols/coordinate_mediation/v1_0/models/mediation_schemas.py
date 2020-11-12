@@ -1,4 +1,6 @@
-from marshmallow import EXCLUDE, fields, validate
+"""Admin API mediation schemas for parater validation."""
+
+from marshmallow import fields, validate
 from .....messaging.models.openapi import OpenAPISchema
 from .....messaging.valid import UUIDFour
 from .mediation_record import MediationRecord
@@ -53,7 +55,7 @@ RECIPIENT_TERMS_SCHEMA = fields.List(
 
 ROLE_SCHEMA = fields.Str(
     description="Role of the mediator request record.",
-        validate=validate.OneOf(
+    validate=validate.OneOf(
         [
                 getattr(MediationRecord, m)
                 for m in vars(MediationRecord)

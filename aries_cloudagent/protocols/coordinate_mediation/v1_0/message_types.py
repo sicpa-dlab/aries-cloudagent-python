@@ -22,7 +22,7 @@ KEYLIST = f"{BASE}/keylist"
 
 PROTOCOL_PACKAGE = "aries_cloudagent.protocols.coordinate_mediation.v1_0"
 
-MESSAGE_TYPES =  DIDCommPrefix.qualify_all(
+MESSAGE_TYPES = DIDCommPrefix.qualify_all(
     {
         KEYLIST: f"{PROTOCOL_PACKAGE}.messages.keylist.Keylist",
         KEYLIST_QUERY: f"{PROTOCOL_PACKAGE}."

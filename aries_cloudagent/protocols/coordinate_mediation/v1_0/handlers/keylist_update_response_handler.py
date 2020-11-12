@@ -1,4 +1,4 @@
-"""Handler for incoming medation grant messages."""
+"""Handler for incoming mediation keylist update response messages."""
 
 from .....messaging.base_handler import (
     BaseHandler,
@@ -7,8 +7,6 @@ from .....messaging.base_handler import (
     RequestContext,
 )
 
-from ..models.mediation_record import MediationRecord
-from ..manager import MediationManager
 from ..messages.keylist_update_response import KeylistUpdateResponse
 from ..messages.inner.keylist_updated import KeylistUpdated
 from ..messages.inner.keylist_update_rule import KeylistUpdateRule

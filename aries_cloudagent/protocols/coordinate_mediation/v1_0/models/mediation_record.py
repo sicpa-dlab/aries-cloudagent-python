@@ -70,17 +70,17 @@ class MediationRecord(BaseRecord):
     def mediation_id(self) -> str:
         """Get Mediation ID."""
         return self._id
-    
+
     @property
     def state(self) -> str:
         """Get Mediation state."""
         return self._state
-    
+
     @state.setter
     def state(self, state):
         """Setter for state."""
-        if state not in [MediationRecord.STATE_DENIED ,
-                         MediationRecord.STATE_GRANTED ,
+        if state not in [MediationRecord.STATE_DENIED,
+                         MediationRecord.STATE_GRANTED,
                          MediationRecord.STATE_REQUEST_RECEIVED]:
             raise ValueError(
                 f"{state} is not a valid state, "
@@ -90,7 +90,7 @@ class MediationRecord(BaseRecord):
                 f"{MediationRecord.STATE_REQUEST_RECEIVED}"
             )
         self._state = state
-        
+
     @classmethod
     async def retrieve_by_connection_id(
         cls, context: InjectionContext, connection_id: str
@@ -98,7 +98,7 @@ class MediationRecord(BaseRecord):
         """Retrieve a route record by recipient key."""
         tag_filter = {"connection_id": connection_id}
         return await cls.retrieve_by_tag_filter(context, tag_filter)
-    
+
     # @property
     # def record_value(self) -> dict:
     #     """Accessor for JSON record value."""
