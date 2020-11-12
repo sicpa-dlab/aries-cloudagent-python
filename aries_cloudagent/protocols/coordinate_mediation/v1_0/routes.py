@@ -106,13 +106,13 @@ def mediation_sort_key(mediation):
     return pfx + mediation["created_at"]
 
 
-async def _receive_request(self,
+async def _receive_request( context,
                     role,
                     conn_id,
                     mediator_terms,
                     recipient_terms
                     ) -> MediationRecord:
-    if await MediationRecord.exists_for_connection_id( self.context, conn_id):
+    if await MediationRecord.exists_for_connection_id( context, conn_id):
         raise MediationManagerError('Mediation Record already exists for connection')
     # TODO: Determine if terms are acceptable
     record = MediationRecord(
@@ -121,7 +121,7 @@ async def _receive_request(self,
         mediator_terms=mediator_terms,
         recipient_terms=recipient_terms
     )
-    record = await record.save(self.context, reason="New mediation request record",
+    await record.save(context, reason="New mediation request record",
                         webhook=True)
     return record
    
@@ -278,6 +278,7 @@ async def mediation_record_create(request: web.BaseRequest):
                 reason="connection identifier must be from a valid connection.")
         await check_mediation_record(context, conn_id)
         _record = await _receive_request(
+            context = context,
             role=role,
             conn_id=conn_id,
             mediator_terms=mediator_terms,
@@ -412,10 +413,10 @@ async def mediation_record_grant(request: web.BaseRequest):
             context, _id
         )
         _manager = M_Manager(context)
-        _message = await _manager.grant_request(
+        _record, _message = await _manager.grant_request(
             mediation=_record
         )
-        result = _message.serialize()
+        result = _record.serialize()
     except (StorageError, BaseModelError) as err:
         raise web.HTTPBadRequest(reason=err.roll_up) from err
     await outbound_handler(
@@ -451,7 +452,7 @@ async def mediation_record_deny(request: web.BaseRequest):
             context, _id
         )
         _manager = M_Manager(context)
-        _message = await _manager.deny_request(mediation=_record)
+        _record, _message = await _manager.deny_request(mediation=_record)
         result = _message.serialize()
     except (StorageError, BaseModelError) as err:
         raise web.HTTPBadRequest(reason=err.roll_up) from err
@@ -544,13 +545,11 @@ async def list_all_records(request: web.BaseRequest):
     """
     context = request.app["request_context"]
     try:
-        # TODO: use new keylist models
         records = await RouteRecord.query(context)
         results = [record.serialize() for record in records]
     except (StorageError, BaseModelError) as err:
         raise web.HTTPBadRequest(reason=err.roll_up) from err
-    return web.json_response({"results": results})
-
+    return web.json_response(results, status=200)
 
 @docs(
     tags=["keylist"],
@@ -574,27 +573,20 @@ async def send_keylists_request(request: web.BaseRequest):
     context = request.app["request_context"]
     outbound_handler = request.app["outbound_message_router"],
     mediation_id = request.match_info["mediation_id"]
-    # body = await request.json()
     record = None
+    # TODO: add pagination to request
     try:
         record = await MediationRecord.retrieve_by_id(
             context, mediation_id
         )
-        # TODO: add pagination to request
-        request = KeylistQuery()
+        _manager = M_Manager(context)
+        request = _manager.prepare_keylist_query()
     except (StorageError, BaseModelError) as err:
         raise web.HTTPBadRequest(reason=err.roll_up) from err
-
     await outbound_handler(
         request, connection_id=record.connection_id
     )
-    trace_event(
-        context.settings,
-        request,
-        outcome="keylist_update_request.END",
-        perf_counter=r_time,
-    )
-    return web.json_response({"results": request})
+    return web.json_response(request, status=200)
 
 
 @docs(tags=["keylist"], summary="update keylist.")
@@ -615,10 +607,6 @@ async def update_keylists(request: web.BaseRequest):
     updates = body.get("updates")
     record = None
     try:
-        trace_event(
-            context.settings, record,
-            outcome="keylist_update.START",
-        )
         record = await MediationRecord.retrieve_by_id(
             context, mediation_id
         )
@@ -630,12 +618,7 @@ async def update_keylists(request: web.BaseRequest):
         )
     except (StorageError, BaseModelError) as err:
         raise web.HTTPBadRequest(reason=err.roll_up) from err
-    trace_event(
-        context.settings,
-        response,
-        outcome="keylist_update.END",
-        perf_counter=r_time,
-    )
+    # TODO: return updated record with update rules
     return web.json_response(response, status=201)
 
 
@@ -657,6 +640,7 @@ async def send_update_keylists(request: web.BaseRequest):
     mediation_id = request.match_info["mediation_id"]
     body = await request.json()
     updates = body.get("updates")
+    # TODO: move this logic into controller.
     updates =[KeylistUpdateRule(
         recipient_key=update.get("key"),
         action=update.get("action")) for update in updates]

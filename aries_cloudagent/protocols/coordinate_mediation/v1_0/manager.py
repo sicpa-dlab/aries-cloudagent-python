@@ -96,7 +96,7 @@ class MediationManager:
                           webhook=True)
         return record
 
-    async def grant_request(self, mediation: MediationRecord) -> MediationGrant:
+    async def grant_request(self, mediation: MediationRecord) -> (MediationRecord, MediationGrant):
         """Grant a mediation request and prepare grant message."""
         routing_did: DIDInfo = await self._retrieve_routing_did()
         if not routing_did:
@@ -109,12 +109,12 @@ class MediationManager:
             endpoint=self.context.settings.get("default_endpoint"),
             routing_keys=[routing_did.verkey]
         )
-        return grant
+        return (mediation, grant)
 
     async def deny_request(
         self,
         mediation: MediationRecord,
-    ) -> MediationDeny:
+    ) -> (MediationRecord, MediationDeny):
         """Deny a mediation request and prepare a deny message."""
         mediation.state = MediationRecord.STATE_DENIED
         await mediation.save(self.context, reason="Mediation request denied",
@@ -123,7 +123,7 @@ class MediationManager:
             mediator_terms=mediation.mediator_terms,
             recipient_terms=mediation.recipient_terms
         )
-        return deny
+        return (mediation, deny)
 
     async def update_keylist(
         self, record: MediationRecord, updates: Sequence[KeylistUpdateRule]
