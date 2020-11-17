@@ -28,7 +28,7 @@ class MediationRequestHandler(BaseHandler):
         mgr = MediationManager(context)
         try:
             record = await mgr.receive_request(context.message)
-            grant = await mgr.grant_request(record)
+            record, grant = await mgr.grant_request(record)
             await responder.send_reply(grant)
         except MediationManagerError:
             await responder.send_reply(

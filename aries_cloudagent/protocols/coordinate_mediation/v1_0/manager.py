@@ -224,7 +224,7 @@ class MediationManager:
         filter_: dict = None,
         paginate_limit: int = -1,
         paginate_offset: int = 0
-    ):
+    ) -> KeylistQuery:
         """Prepare keylist query message."""
         message = KeylistQuery(
             filter=filter_,

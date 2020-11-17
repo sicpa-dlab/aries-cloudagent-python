@@ -33,12 +33,11 @@ from .manager import MediationManager as M_Manager
 from ....messaging.models.base import BaseModelError
 from ....messaging.models.openapi import OpenAPISchema
 
-from ....connections.models.connection_record import ConnectionRecord
 from ...connections.v1_0.routes import (InvitationResultSchema,
                                         CreateInvitationQueryStringSchema)
 from ...problem_report.v1_0 import internal_error
 from ....storage.error import StorageError, StorageNotFoundError
-from ....utils.tracing import trace_event, get_timer
+from ....utils.tracing import get_timer
 
 from .message_types import SPEC_URI
 from operator import itemgetter
@@ -47,6 +46,7 @@ from .manager import MediationManager, MediationManagerError
 from ...routing.v1_0.models.route_record import RouteRecord, RouteRecordSchema
 from .messages.keylist_update_response import KeylistUpdateResponseSchema
 from ...connections.v1_0.routes import connections_create_invitation
+from aries_cloudagent.connections.models.conn_record import ConnRecord as ConnectionRecord
 
 
 class MediationListSchema(OpenAPISchema):
@@ -444,10 +444,6 @@ async def mediation_record_deny(request: web.BaseRequest):
     # TODO: check that request origination point
     _record = None
     try:
-        trace_event(
-            context.settings, _record,
-            outcome="mediation_deny.START",
-        )
         _record = await MediationRecord.retrieve_by_id(
             context, _id
         )
@@ -459,9 +455,6 @@ async def mediation_record_deny(request: web.BaseRequest):
     await outbound_handler(
         _message, connection_id=_record.connection_id
     )
-    trace_event(context.settings, _message,
-                outcome="mediation_deny.END", perf_counter=r_time,
-                )
     return web.json_response(result, status=201)
 
 
@@ -498,9 +491,9 @@ class KeylistUpdateSchema(OpenAPISchema):
         required=True,
         validate=validate.OneOf(
             [
-                    getattr(KeylistUpdateRule, m)
-                    for m in vars(KeylistUpdateRule)
-                    if m.startswith("RULE_")
+                getattr(KeylistUpdateRule, m)
+                for m in vars(KeylistUpdateRule)
+                if m.startswith("RULE_")
             ]
         ),
         example="'add' or 'remove'",
@@ -546,7 +539,7 @@ async def list_all_records(request: web.BaseRequest):
     """
     context = request.app["request_context"]
     try:
-        records = await RouteRecord.query(context)
+        records = await RouteRecord.query(context,{})
         results = [record.serialize() for record in records]
     except (StorageError, BaseModelError) as err:
         raise web.HTTPBadRequest(reason=err.roll_up) from err
@@ -574,18 +567,18 @@ async def send_keylists_request(request: web.BaseRequest):
     context = request.app["request_context"]
     outbound_handler = request.app["outbound_message_router"],
     mediation_id = request.match_info["mediation_id"]
-    record = None
     # TODO: add pagination to request
     try:
         record = await MediationRecord.retrieve_by_id(
             context, mediation_id
         )
         _manager = M_Manager(context)
-        request = _manager.prepare_keylist_query()
+        request = await _manager.prepare_keylist_query()
     except (StorageError, BaseModelError) as err:
         raise web.HTTPBadRequest(reason=err.roll_up) from err
+    conn_id = record.connection_id
     await outbound_handler(
-        request, connection_id=record.connection_id
+        request, connection_id = conn_id
     )
     return web.json_response(request, status=200)
 
@@ -605,7 +598,10 @@ async def update_keylists(request: web.BaseRequest):
     mediation_id = request.match_info["mediation_id"]
     body = await request.json()
     updates = body.get("updates")
-    record = None
+    # TODO: move this logic into controller.
+    updates = [KeylistUpdateRule(
+        recipient_key=update.get("key"),
+        action=update.get("action")) for update in updates]
     try:
         record = await MediationRecord.retrieve_by_id(
             context, mediation_id
@@ -619,7 +615,7 @@ async def update_keylists(request: web.BaseRequest):
     except (StorageError, BaseModelError) as err:
         raise web.HTTPBadRequest(reason=err.roll_up) from err
     # TODO: return updated record with update rules
-    return web.json_response(response, status=201)
+    return web.json_response(response.serialize(), status=201)
 
 
 @docs(tags=["keylist"], summary="update keylist.")
@@ -669,41 +665,41 @@ async def register(app: web.Application):
     app.add_routes(
         [
             web.get(
-                "/mediation/records",
+                "/mediation/requests",
                 mediation_records_list,
                 allow_head=False
             ),  # -> fetch all mediation request records
             web.get(
-                "/mediation/records/{mediation_id}",
+                "/mediation/requests/{mediation_id}",
                 mediation_record_retrieve,
                 allow_head=False
             ),  # . -> fetch a single mediation request record
             web.post(
-                "/mediation/records/{conn_id}/create",
+                "/mediation/requests/{conn_id}/create",
                 mediation_record_create
             ),
             web.post(
-                "/mediation/records/{conn_id}/create-send",
+                "/mediation/requests/client/{conn_id}/create-send",
                 mediation_record_send_create
             ),
             web.post(
-                "/mediation/records/{conn_id}/create-did-conn-invitation",
+                "/mediation/requests/client/{conn_id}/create-did-conn-invitation",
                 mediation_invitation
             ),
             web.post(
-                "/mediation/records/{mediation_id}/send",
+                "/mediation/requests/client/{mediation_id}/send",
                 mediation_record_send
             ),  # -> send mediation request
             web.post(
-                "/mediation/records/{mediation_id}/grant",
+                "/mediation/requests/broker/{mediation_id}/grant",
                 mediation_record_grant
             ),  # -> grant
             web.post(
-                "/mediation/records/{mediation_id}/deny",
+                "/mediation/requests/broker/{mediation_id}/deny",
                 mediation_record_deny
             ),  # -> deny
             # ======
-            web.get("/keylists/records",
+            web.get("/mediation/keylists/broker",
                     list_all_records,
                     allow_head=False),
             # web.get("/keylists/records/pagination",
@@ -715,11 +711,11 @@ async def register(app: web.Application):
             # web.get("/keylists/records/{record_id}/pagination",
             #     keylist,
             #     allow_head=False),
-            web.post("/keylists/records/{mediation_id}/update",
+            web.post("/mediation/keylists/broker/{mediation_id}/update",
                      update_keylists),
-            web.post("/keylists/request/{mediation_id}/update",
+            web.post("/mediation/keylists/client/{mediation_id}/update",
                      send_update_keylists),
-            web.post("/keylists/request/{mediation_id}",
+            web.post("/mediation/keylists/client/{mediation_id}",
                      send_keylists_request),
         ]
     )

@@ -36,7 +36,8 @@ class KeylistUpdateResponseHandler(BaseHandler):
                     recipient_key=updated.recipient_key,
                     connection_id=context.connection_record.connection_id
                 )
-                await record.save(context, reason="Route successfully added.")
+                # TODO: log success
+                # await record.save(context, reason="Route successfully added.")
             if updated.action == KeylistUpdateRule.RULE_REMOVE:
                 try:
                     records = await RouteRecord.query(
@@ -53,5 +54,5 @@ class KeylistUpdateResponseHandler(BaseHandler):
                 if len(records) > 1:
                     raise HandlerException('More than one route record found.')
 
-                record = records[0]
-                await record.delete_record(context)
+                # record = records[0]
+                # await record.delete_record(context)
