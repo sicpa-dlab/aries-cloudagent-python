@@ -33,8 +33,7 @@ from .manager import MediationManager as M_Manager
 from ....messaging.models.base import BaseModelError
 from ....messaging.models.openapi import OpenAPISchema
 
-from ...connections.v1_0.routes import (InvitationResultSchema,
-                                        CreateInvitationQueryStringSchema)
+from ...connections.v1_0.routes import (InvitationResultSchema)
 from ...problem_report.v1_0 import internal_error
 from ....storage.error import StorageError, StorageNotFoundError
 from ....utils.tracing import get_timer
@@ -47,7 +46,26 @@ from ...routing.v1_0.models.route_record import RouteRecord, RouteRecordSchema
 from .messages.keylist_update_response import KeylistUpdateResponseSchema
 from ...connections.v1_0.routes import connections_create_invitation
 from aries_cloudagent.connections.models.conn_record import ConnRecord as ConnectionRecord
+import asyncio
+from aries_cloudagent.wallet.base import BaseWallet
+import json
+from aries_cloudagent.protocols.connections.v1_0.manager import ConnectionManager, ConnectionManagerError
 
+class CreateMediationInvitationQueryStringSchema(OpenAPISchema):
+    """Parameters and validators for create invitation request query string."""
+
+    alias = fields.Str(
+        description="Alias",
+        required=False,
+        example="Barry",
+    )
+    auto_accept = fields.Boolean(
+        description="Auto-accept connection (default as per configuration)",
+        required=False,
+    )
+    multi_use = fields.Boolean(
+        description="Create invitation for multiple use (default false)", required=False
+    )
 
 class MediationListSchema(OpenAPISchema):
     """Result schema for mediation list query."""
@@ -220,7 +238,6 @@ async def mediation_record_retrieve(request: web.BaseRequest):
     outbound_handler = request.app["outbound_message_router"]
 
     _id = request.match_info["mediation_id"]
-    _record = None
     try:
         _record = await MediationRecord.retrieve_by_id(
             context, _id
@@ -362,35 +379,58 @@ async def mediation_record_send(request: web.BaseRequest):
     return web.json_response(_record.serialize(), status=201)
 
 
-@docs(tags=["mediation"], summary="send mediation request,"
-      " and create invitation from granted result.")
-@match_info_schema(ConnIdMatchInfoSchema())
-@querystring_schema(CreateInvitationQueryStringSchema())
-@request_schema(MediationRequestSchema())
+@docs(tags=["mediation"], summary="create invitation"
+    "from mediation record.")
+@match_info_schema(MediationIdMatchInfoSchema())
+@querystring_schema(CreateMediationInvitationQueryStringSchema())
 @response_schema(InvitationResultSchema(), 200)
 async def mediation_invitation(request: web.BaseRequest):
-    """Handler."""
+    """
+    Request handler for creating a new connection invitation.
+
+    Args:
+        request: aiohttp request object
+
+    Returns:
+        The connection invitation details
+
+    """
+    context = request.app["request_context"]
+    auto_accept = json.loads(request.query.get("auto_accept", "null"))
+    alias = request.query.get("alias")
+    multi_use = json.loads(request.query.get("multi_use", "false"))
+    base_url = context.settings.get("invite_base_url")
     
-    args = ['r_time', 'context', 'outbound_handler',
-            'conn_id', 'mediator_terms', 'recipient_terms']
-    (r_time, context, outbound_handler, conn_id, mediator_terms,
-     recipient_terms) = itemgetter(*args)(await _prepare_handler(request))
+    args = ['context', 'outbound_handler',
+        'mediation_id']
+    (context, outbound_handler
+        ,_id) = itemgetter(*args)(await _prepare_handler(request))
+    connection_mgr = ConnectionManager(context)
     try:
-        await mediation_record_send_create(request)
-        # retrieve record for the new rooting keys
-        # WARNING: race condition...
-        # _record =
-        await MediationRecord.retrieve_by_connection_id(
-            context, conn_id
+        _record = await MediationRecord.retrieve_by_id(
+            context, _id
         )
-        # create new did for recipient keys
-        # endpoint = _record.endpoint
-        # update request data with routing/recipient keys and endpoint
-        invitation = connections_create_invitation(request)
-    except (StorageError, BaseModelError) as err:
+        (connection, invitation) = await connection_mgr.create_invitation(
+            auto_accept=auto_accept,
+            multi_use=multi_use,
+            alias=alias,
+            recipient_keys=_record.recipient_keys,
+            my_endpoint=_record.endpoint,
+            routing_keys=_record.routing_keys,
+        )
+
+        result = {
+            "connection_id": connection and connection.connection_id,
+            "invitation": invitation.serialize(),
+            "invitation_url": invitation.to_url(base_url),
+        }
+    except (ConnectionManagerError, BaseModelError) as err:
         raise web.HTTPBadRequest(reason=err.roll_up) from err
-        # TODO: clean up failures
-    return invitation
+
+    if connection and connection.alias:
+        result["alias"] = connection.alias
+
+    return web.json_response(result)
 
 
 @docs(tags=["mediation"], summary="grant received mediation")
@@ -683,7 +723,7 @@ async def register(app: web.Application):
                 mediation_record_send_create
             ),
             web.post(
-                "/mediation/requests/client/{conn_id}/create-did-conn-invitation",
+                "/mediation/requests/client/{mediation_id}/generate-invitation",
                 mediation_invitation
             ),
             web.post(

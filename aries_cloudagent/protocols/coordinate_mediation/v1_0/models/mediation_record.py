@@ -44,6 +44,7 @@ class MediationRecord(BaseRecord):
         connection_id: str = None,
         mediator_terms: Sequence[str] = None,
         recipient_terms: Sequence[str] = None,
+        recipient_keys: Sequence[str] = None,
         routing_keys: Sequence[str] = None,
         endpoint: str = None,
         **kwargs
@@ -64,6 +65,8 @@ class MediationRecord(BaseRecord):
         self.connection_id = connection_id
         self.mediator_terms = list(mediator_terms) if mediator_terms else []
         self.recipient_terms = list(recipient_terms) if recipient_terms else []
+        self.routing_keys = list(routing_keys) if routing_keys else []
+        self.recipient_keys = list(recipient_keys) if recipient_keys else []
         self.endpoint = endpoint
 
     @property
@@ -99,20 +102,21 @@ class MediationRecord(BaseRecord):
         tag_filter = {"connection_id": connection_id}
         return await cls.retrieve_by_tag_filter(context, tag_filter)
 
-    # @property
-    # def record_value(self) -> dict:
-    #     """Accessor for JSON record value."""
-    #     return {
-    #         prop: getattr(self, prop)
-    #         for prop in (
-    #             "connection_id",
-    #             "state",
-    #             "mediator_terms",
-    #             "recipient_terms",
-    #             "routing_keys",
-    #             "endpoint",
-    #         )
-    #     }
+    @property
+    def record_value(self) -> dict:
+        """Accessor for JSON record value."""
+        return {
+            prop: getattr(self, prop)
+            for prop in (
+                "connection_id",
+                "state",
+                "mediator_terms",
+                "recipient_terms",
+                "recipient_keys",
+                "routing_keys",
+                "endpoint",
+            )
+        }
 
     @classmethod
     async def exists_for_connection_id(
@@ -143,6 +147,7 @@ class MediationRecordSchema(BaseRecordSchema):
     role = fields.Str(required=True)
     endpoint = fields.Str(required=False)
     routing_keys = fields.List(fields.Str(), required=False)
+    recipient_keys = fields.List(fields.Str(), required=False)
     connection_id = fields.Str(required=True)
     mediator_terms = fields.List(fields.Str(), required=False)
     recipient_terms = fields.List(fields.Str(), required=False)
