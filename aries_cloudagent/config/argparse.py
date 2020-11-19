@@ -872,6 +872,14 @@ class MediationGroup(ArgumentGroup):
                 ". Default: false.",
         )
         parser.add_argument(
+            "--automate-mediation-request-on-discovery",
+            action="store_true",
+            env_var="ACAPY_AUTOMATE_MEDIATION_REQUEST_ON_DISCOVERY",
+            help="When enabled, connection completion will trigger a feature discovery"
+            " request over the connection, if mediation is supported a mediation request"
+            " will be sent. Default: false.",
+        )
+        parser.add_argument(
             "--auto-respond-mediation-grant",
             action="store_true",
             env_var="ACAPY_AUTO_RESPOND_MEDIATION_GRANT",
@@ -890,6 +898,7 @@ class MediationGroup(ArgumentGroup):
     def get_settings(self, args: Namespace):
         """Extract mediation settings."""
         settings = {}
+        settings["mediation.auto_mediation_request_on_discovery"] = True if args.auto_mediation_request_on_discovery else False
         if args.open_mediation:
             settings["mediation.open"] = True
             if args.automate_mediation:
@@ -897,8 +906,11 @@ class MediationGroup(ArgumentGroup):
                 settings["mediation.auto_respond_mediation_grant"] = True 
                 settings["mediation.auto_respond_keylist_update_response"] = True
             else:
-                settings["mediation.auto_respond_mediation_grant"] = True if args.auto_respond_messages else False
-                settings["mediation.auto_respond_keylist_update_response"] = True if args.auto_respond_messages else False
+                settings["mediation.auto_respond_mediation_grant"] = True if args.auto_respond_mediation_grant else False
+                if args.auto_respond_keylist_update_response:
+                    settings["mediation.auto_respond_keylist_update_response"] = True 
+                else:
+                    settings["mediation.auto_respond_keylist_update_response"] = False
         return settings
 
 
