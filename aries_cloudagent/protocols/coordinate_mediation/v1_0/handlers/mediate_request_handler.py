@@ -30,6 +30,11 @@ class MediationRequestHandler(BaseHandler):
             record = await mgr.receive_request(context.message)
             record, grant = await mgr.grant_request(record)
             await responder.send_reply(grant)
+            record.routing_keys = grant.routing_keys
+            record.endpoint = grant.endpoint
+            await record.save(context,
+                reason="Mediation request granted",
+                webhook=True)
         except MediationManagerError:
             await responder.send_reply(
                 ProblemReport(

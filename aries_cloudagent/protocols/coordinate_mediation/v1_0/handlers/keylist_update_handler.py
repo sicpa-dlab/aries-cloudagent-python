@@ -14,6 +14,8 @@ from ..manager import MediationManager
 from ..messages.keylist_update import KeylistUpdate
 # from ..messages.keylist_update_response import KeylistUpdateResponse
 from ..models.mediation_record import MediationRecord
+from ..messages.inner.keylist_updated import KeylistUpdated
+from ..messages.inner.keylist_update_rule import KeylistUpdateRule
 
 
 class KeylistUpdateHandler(BaseHandler):
@@ -46,7 +48,19 @@ class KeylistUpdateHandler(BaseHandler):
             record, updates=context.message.updates
         )
         await responder.send_reply(response)
-
+        for updated in response.updated:
+            if updated.result != KeylistUpdated.RESULT_SUCCESS:
+                continue
+            if updated.action == KeylistUpdateRule.RULE_ADD:
+                record.recipient_keys.append(updated.recipient_key)
+            if updated.action == KeylistUpdateRule.RULE_REMOVE:
+                record.recipient_keys.remove(updated.recipient_key)
+        await record.save(
+            context,
+            reason="keylist update response stored in mediation record",
+            webhook=True
+        )
+        
     async def reject(self, responder: BaseResponder):
         """Send problem report."""
         await responder.send_reply(
