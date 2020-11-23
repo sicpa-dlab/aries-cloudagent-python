@@ -9,7 +9,7 @@ from urllib.parse import urlparse
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))  # noqa
 
-from runners.support.agent import DemoAgent, default_genesis_txns
+from runners.support.agent import DemoAgent, default_genesis_txns, start_mediator_agent
 from runners.support.utils import (
     log_json,
     log_msg,
@@ -26,13 +26,18 @@ LOGGER = logging.getLogger(__name__)
 
 class AliceAgent(DemoAgent):
     def __init__(
-        self, http_port: int, admin_port: int, no_auto: bool = False, **kwargs
+        self, http_port: int,
+        admin_port: int,
+        no_auto: bool = False,
+        mediation: bool = False,
+        **kwargs
     ):
         super().__init__(
             "Alice.Agent",
             http_port,
             admin_port,
             prefix="Alice",
+            mediation=mediation,
             extra_args=[]
             if no_auto
             else [
@@ -212,7 +217,12 @@ async def input_invitation(agent):
         await agent.detect_connection()
 
 
-async def main(start_port: int, no_auto: bool = False, show_timing: bool = False):
+async def main(
+    start_port: int,
+    no_auto: bool = False,
+    show_timing: bool = False,
+    mediation: bool = False,
+):
 
     genesis = await default_genesis_txns()
     if not genesis:
@@ -229,6 +239,7 @@ async def main(start_port: int, no_auto: bool = False, show_timing: bool = False
             genesis_data=genesis,
             no_auto=no_auto,
             timing=show_timing,
+            mediation=mediation,
         )
         await agent.listen_webhooks(start_port + 2)
 
@@ -236,6 +247,11 @@ async def main(start_port: int, no_auto: bool = False, show_timing: bool = False
             await agent.start_process()
         log_msg("Admin URL is at:", agent.admin_url)
         log_msg("Endpoint URL is at:", agent.endpoint)
+
+        if mediation:
+            mediator_agent = await start_mediator_agent(start_port+4, genesis, agent)
+        else:
+            mediator_agent = None
 
         log_status("#9 Input faber.py invitation details")
         await input_invitation(agent)
@@ -272,6 +288,8 @@ async def main(start_port: int, no_auto: bool = False, show_timing: bool = False
     finally:
         terminated = True
         try:
+            if mediator_agent:
+                await mediator_agent.terminate()
             if agent:
                 await agent.terminate()
         except Exception:
@@ -299,6 +317,9 @@ if __name__ == "__main__":
     )
     parser.add_argument(
         "--timing", action="store_true", help="Enable timing information"
+    )
+    parser.add_argument(
+        "--mediation", action="store_true", help="Enable mediation functionality"
     )
     args = parser.parse_args()
 
@@ -333,7 +354,12 @@ if __name__ == "__main__":
 
     try:
         asyncio.get_event_loop().run_until_complete(
-            main(args.port, args.no_auto, args.timing)
+            main(
+                args.port,
+                args.no_auto,
+                args.timing,
+                args.mediation,
+            )
         )
     except KeyboardInterrupt:
         os._exit(1)
