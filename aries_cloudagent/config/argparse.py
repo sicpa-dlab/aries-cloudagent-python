@@ -819,6 +819,31 @@ class TransportGroup(ArgumentGroup):
             option will require additional memory to store messages in the queue.",
         )
         parser.add_argument(
+            "--enable-kafka-queue",
+            action="store_true",
+            dest="enable_kafka_queue",
+            env_var="ACAPY_ENABLE_KAFKA_QUEUE",
+            help="Enable the inbound/outbound undelivered kafka queue. This"
+            "agent to send messages where the endpoint is not available to a kafka"
+            " service."
+        )
+        parser.add_argument(
+            "--kafka-producer-endpoint",
+            type=str,
+            nargs="+",
+            metavar="<endpoint>",
+            env_var="ACAPY_KAFKA_PRODUCER_ENDPOINT",
+            help=""
+        )
+        parser.add_argument(
+            "--kafka-consumer-endpoint",
+            type=str,
+            nargs="+",
+            metavar="<endpoint>",
+            env_var="ACAPY_KAFKA_CONSUMER_ENDPOINT",
+            help=""
+        )
+        parser.add_argument(
             "--max-outbound-retry",
             default=4,
             type=ByteSize(min_size=1),
@@ -840,7 +865,17 @@ class TransportGroup(ArgumentGroup):
         else:
             raise ArgsParseError("-ot/--outbound-transport is required")
         settings["transport.enable_undelivered_queue"] = args.enable_undelivered_queue
-
+        settings["transport.enable_kafka_queue"] = args.enable_kafka_queue
+        
+        if args.enable_kafka_queue:
+            if not args.kafka_producer_endpoint or not args.kafka_consumer_endpoint:
+                raise ArgsParseError(
+                    "Parameters --kafka-producer-endpoint and --kafka-consumer-endpoint must be provided"
+                    + " for kafka queue."
+                )
+        settings["transport.kafka_producer_endpoint"] = args.kafka_producer_endpoint
+        settings["transport.kafka_consumer_endpoint"] = args.kafka_consumer_endpoint
+        
         if args.label:
             settings["default_label"] = args.label
         if args.max_message_size:

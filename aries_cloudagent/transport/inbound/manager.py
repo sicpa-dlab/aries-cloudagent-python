@@ -21,6 +21,7 @@ from .base import (
 from .delivery_queue import DeliveryQueue
 from .message import InboundMessage
 from .session import InboundSession
+from kafka import KafkaProducer
 
 LOGGER = logging.getLogger(__name__)
 MODULE_BASE_PATH = "aries_cloudagent.transport.inbound"
@@ -46,6 +47,7 @@ class InboundTransportManager:
         self.session_limit: asyncio.Semaphore = None
         self.task_queue = TaskQueue()
         self.undelivered_queue: DeliveryQueue = None
+        self.kafka_producer = None
 
     async def setup(self):
         """Perform setup operations."""
@@ -65,7 +67,10 @@ class InboundTransportManager:
         # Setup queue for undelivered messages
         if self.context.settings.get("transport.enable_undelivered_queue"):
             self.undelivered_queue = DeliveryQueue()
-
+        if self.context.settings.get("transport.enable_kafka_queue"):
+            bootstrap_server = self.context.settings.get("transport.kafka_producer_endpoint")
+            self.kafka_producer = KafkaProducer(bootstrap_servers=bootstrap_server)
+    
         # self.session_limit = asyncio.Semaphore(50)
 
     def register(self, config: InboundTransportConfiguration) -> str:
@@ -230,6 +235,9 @@ class InboundTransportManager:
         if self.undelivered_queue:
             self.undelivered_queue.add_message(outbound)
             return True
+        if self.kafka_producer:
+            self.kafka_producer.send("undeliverable_inbound",outbound)
+            
         return False
 
     def process_undelivered(self, session: InboundSession):

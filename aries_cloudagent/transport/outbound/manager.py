@@ -24,6 +24,7 @@ from .base import (
     OutboundTransportRegistrationError,
 )
 from .message import OutboundMessage
+from kafka import KafkaProducer
 
 LOGGER = logging.getLogger(__name__)
 MODULE_BASE_PATH = "aries_cloudagent.transport.outbound"
@@ -89,6 +90,7 @@ class OutboundTransportManager:
         self._process_task: asyncio.Task = None
         if self.context.settings.get("transport.max_outbound_retry"):
             self.MAX_RETRY_COUNT = self.context.settings["transport.max_outbound_retry"]
+        self.kafka_producer = None
 
     async def setup(self):
         """Perform setup operations."""
@@ -97,7 +99,9 @@ class OutboundTransportManager:
         )
         for outbound_transport in outbound_transports:
             self.register(outbound_transport)
-
+        if self.context.settings.get("transport.enable_kafka_queue"):
+            bootstrap_server = self.context.settings.get("transport.kafka_producer_endpoint")
+            self.kafka_producer = KafkaProducer(bootstrap_servers=bootstrap_server)
     def register(self, module: str) -> str:
         """
         Register a new outbound transport by module path.
@@ -473,6 +477,8 @@ class OutboundTransportManager:
                     ">>> Outbound message failed to deliver, NOT Re-queued.",
                     exc_info=queued.error,
                 )
+                if self.kafka_producer:
+                    self.kafka_producer.send("undeliverable_outbound",queued)
                 queued.state = QueuedOutboundMessage.STATE_DONE
         else:
             queued.error = None
