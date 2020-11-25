@@ -255,9 +255,7 @@ class ConnectionManager:
 
         if connection.accept == ConnRecord.ACCEPT_AUTO:
             request = await self.create_request(connection)
-            responder: BaseResponder = await self._context.inject(
-                BaseResponder, required=False
-            )
+            responder: BaseResponder = await self._context.inject(BaseResponder, required=False)
             if responder:
                 await responder.send(request, connection_id=connection.connection_id)
                 # refetch connection for accurate state
@@ -266,7 +264,7 @@ class ConnectionManager:
                 )
         else:
             self._logger.debug("Connection invitation will await acceptance")
-
+        
         return connection
 
     async def create_request(
@@ -568,7 +566,7 @@ class ConnectionManager:
         ):
             raise ConnectionManagerError(
                 f"Cannot accept connection response for connection"
-                " in state: {connection.state}"
+                f" in state: {connection.state}"
             )
 
         their_did = response.connection.did

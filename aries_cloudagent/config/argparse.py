@@ -872,6 +872,17 @@ class MediationGroup(ArgumentGroup):
                 ". Default: false.",
         )
         parser.add_argument(
+            "--mediation-invitation",
+            type=str,
+            dest="mediation_invitation",
+            #metavar="<mediation-invitation>",
+            env_var="ACAPY_MEDIATION_INVITATION",
+            help='Specifies a connection invitation to connect to\
+            a mediation agent for mediation service. The invitation is provided as JSON string\
+            e.g. \'{{ "@type": "did:sov:BzCbsNYhMrjHiqZDTUASHg;spec/connections/1.0/invitation",\
+            "serviceEndpoint": "http://192.168.1.13:3005",...',
+        )
+        parser.add_argument(
             "--auto-mediation-request-on-discovery",
             action="store_true",
             env_var="ACAPY_AUTOMATE_MEDIATION_REQUEST_ON_DISCOVERY",
@@ -899,6 +910,7 @@ class MediationGroup(ArgumentGroup):
         """Extract mediation settings."""
         settings = {}
         settings["mediation.auto_mediation_request_on_discovery"] = True if args.auto_mediation_request_on_discovery else False
+        settings["mediation_invitation"] = True if args.mediation_invitation else False
         if args.open_mediation:
             settings["mediation.open"] = True
             if args.automate_mediation:
