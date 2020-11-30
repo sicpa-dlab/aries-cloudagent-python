@@ -60,7 +60,7 @@ class KeylistUpdateHandler(BaseHandler):
             reason="keylist update response stored in mediation record",
             webhook=True
         )
-        
+
     async def reject(self, responder: BaseResponder):
         """Send problem report."""
         await responder.send_reply(

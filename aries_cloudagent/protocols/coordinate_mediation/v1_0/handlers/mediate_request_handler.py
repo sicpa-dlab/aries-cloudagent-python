@@ -33,8 +33,8 @@ class MediationRequestHandler(BaseHandler):
             record.routing_keys = grant.routing_keys
             record.endpoint = grant.endpoint
             await record.save(context,
-                reason="Mediation request granted",
-                webhook=True)
+                              reason="Mediation request granted",
+                              webhook=True)
         except MediationManagerError:
             await responder.send_reply(
                 ProblemReport(

@@ -68,7 +68,7 @@ class RouteRecord(BaseRecord):
                 "recipient_key",
             )
         }
-    
+
     @classmethod
     async def retrieve_by_connection_id(
         cls, context: InjectionContext, connection_id: str

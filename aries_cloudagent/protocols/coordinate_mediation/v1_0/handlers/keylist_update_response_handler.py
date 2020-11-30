@@ -10,9 +10,9 @@ from .....messaging.base_handler import (
 from ..messages.keylist_update_response import KeylistUpdateResponse
 from ..messages.inner.keylist_updated import KeylistUpdated
 from ..messages.inner.keylist_update_rule import KeylistUpdateRule
-from ....routing.v1_0.models.route_record import RouteRecord
+# from ....routing.v1_0.models.route_record import RouteRecord
 from .....storage.base import StorageNotFoundError
-from aries_cloudagent.protocols.problem_report.v1_0.message import ProblemReport
+# from aries_cloudagent.protocols.problem_report.v1_0.message import ProblemReport
 from ..models.mediation_record import MediationRecord
 
 
@@ -31,8 +31,8 @@ class KeylistUpdateResponseHandler(BaseHandler):
         mediation_record = None
         try:
             mediation_record = await MediationRecord.retrieve_by_connection_id(
-                    context, context.connection_record.connection_id
-                )
+                context, context.connection_record.connection_id
+            )
         except StorageNotFoundError as err:
             raise HandlerException('No mediation found for keylist.') from err
         for updated in context.message.updated:

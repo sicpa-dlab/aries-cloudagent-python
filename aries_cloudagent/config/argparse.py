@@ -868,19 +868,19 @@ class MediationGroup(ArgumentGroup):
             "--automate-mediation",
             action="store_true",
             env_var="ACAPY_AUTO_MEDIATION",
-            help="automate all steps of mediation."
-                ". Default: false.",
+            help="automate all steps of mediation. Default: false.",
         )
         parser.add_argument(
             "--mediation-invitation",
             type=str,
             dest="mediation_invitation",
-            #metavar="<mediation-invitation>",
+            # metavar="<mediation-invitation>",
             env_var="ACAPY_MEDIATION_INVITATION",
-            help='Specifies a connection invitation to connect to\
-            a mediation agent for mediation service. The invitation is provided as JSON string\
-            e.g. \'{{ "@type": "did:sov:BzCbsNYhMrjHiqZDTUASHg;spec/connections/1.0/invitation",\
-            "serviceEndpoint": "http://192.168.1.13:3005",...',
+            help="Specifies a connection invitation to connect to"
+            "a mediation agent for mediation service. The invitation is provided as"
+            " JSON string e.g. "
+            "{{ @type: did:sov:BzCbsNYhMrjHiqZDTUASHg;spec/connections/1.0/invitation"
+            ", serviceEndpoint: http://192.168.1.13:3005,...",
         )
         parser.add_argument(
             "--auto-mediation-request-on-discovery",
@@ -895,8 +895,8 @@ class MediationGroup(ArgumentGroup):
             action="store_true",
             env_var="ACAPY_AUTO_RESPOND_MEDIATION_GRANT",
             help="Automatically respond to mediation grant message with a keylist update"
-                "message containing a newly created did verkey for use as a recipient key"
-                ". Default: false.",
+            "message containing a newly created did verkey for use as a recipient key"
+            ". Default: false.",
         )
         parser.add_argument(
             "--auto-respond-keylist-update-response",
@@ -909,18 +909,24 @@ class MediationGroup(ArgumentGroup):
     def get_settings(self, args: Namespace):
         """Extract mediation settings."""
         settings = {}
-        settings["mediation.auto_mediation_request_on_discovery"] = True if args.auto_mediation_request_on_discovery else False
+        if args.auto_mediation_request_on_discovery:
+            settings["mediation.auto_mediation_request_on_discovery"] = True
+        else:
+            settings["mediation.auto_mediation_request_on_discovery"] = False
         settings["mediation_invitation"] = True if args.mediation_invitation else False
         if args.open_mediation:
             settings["mediation.open"] = True
             if args.automate_mediation:
                 settings["mediation.automate_mediation"] = True
-                settings["mediation.auto_respond_mediation_grant"] = True 
+                settings["mediation.auto_respond_mediation_grant"] = True
                 settings["mediation.auto_respond_keylist_update_response"] = True
             else:
-                settings["mediation.auto_respond_mediation_grant"] = True if args.auto_respond_mediation_grant else False
+                if args.auto_respond_mediation_grant:
+                    settings["mediation.auto_respond_mediation_grant"] = True
+                else:
+                    settings["mediation.auto_respond_mediation_grant"] = False
                 if args.auto_respond_keylist_update_response:
-                    settings["mediation.auto_respond_keylist_update_response"] = True 
+                    settings["mediation.auto_respond_keylist_update_response"] = True
                 else:
                     settings["mediation.auto_respond_keylist_update_response"] = False
         return settings
