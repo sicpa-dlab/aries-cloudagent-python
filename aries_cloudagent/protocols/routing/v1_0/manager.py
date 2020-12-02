@@ -1,7 +1,7 @@
 """Routing manager classes for tracking and inspecting routing records."""
 
 import json
-from typing import Sequence
+from typing import Coroutine, Sequence
 
 from ....config.injection_context import InjectionContext
 from ....core.error import BaseError
@@ -164,7 +164,7 @@ class RoutingManager:
         if route and route.record_id:
             storage: BaseStorage = await self._context.inject(BaseStorage)
             await storage.delete_record(
-                StorageRecord(None, None, None, route.record_id)
+                StorageRecord(RoutingManager.RECORD_TYPE, None, None, route.record_id)
             )
 
     async def update_routes(
@@ -217,7 +217,7 @@ class RoutingManager:
         return updated
 
     async def send_create_route(
-        self, router_connection_id: str, recip_key: str, outbound_handler
+        self, router_connection_id: str, recip_key: str, outbound_handler: Coroutine
     ):
         """Create and send a route update request.
 

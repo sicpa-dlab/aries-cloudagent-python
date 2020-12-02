@@ -159,6 +159,10 @@ async def ready_middleware(request: web.BaseRequest, handler: Coroutine):
         except Exception as e:
             # some other error?
             LOGGER.error("Handler error with exception: %s", str(e))
+            import traceback
+
+            print("\n=================")
+            traceback.print_exc()
             raise
 
     raise web.HTTPServiceUnavailable(reason="Shutdown in progress")
@@ -171,7 +175,7 @@ async def debug_middleware(request: web.BaseRequest, handler: Coroutine):
     if LOGGER.isEnabledFor(logging.DEBUG):
         LOGGER.debug(f"Incoming request: {request.method} {request.path_qs}")
         LOGGER.debug(f"Match info: {request.match_info}")
-        body = await request.text()
+        body = await request.text() if request.body_exists else None
         LOGGER.debug(f"Body: {body}")
 
     return await handler(request)
@@ -365,11 +369,15 @@ class AdminServer(BaseAdminServer):
         # order tags alphabetically, parameters deterministically and pythonically
         swagger_dict = self.app._state["swagger_dict"]
         swagger_dict.get("tags", []).sort(key=lambda t: t["name"])
-        for path in swagger_dict["paths"].values():
-            for method_spec in path.values():
+
+        # sort content per path and sort paths
+        for path_spec in swagger_dict["paths"].values():
+            for method_spec in path_spec.values():
                 method_spec["parameters"].sort(
                     key=lambda p: (p["in"], not p["required"], p["name"])
                 )
+        for path in sorted([p for p in swagger_dict["paths"]]):
+            swagger_dict["paths"][path] = swagger_dict["paths"].pop(path)
 
         # order definitions alphabetically by dict key
         swagger_dict["definitions"] = sort_dict(swagger_dict["definitions"])
