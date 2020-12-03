@@ -57,6 +57,10 @@ class AdminStatusReadinessSchema(Schema):
     ready = fields.Boolean(description="Readiness status", example=True)
 
 
+class AdminShutdownSchema(Schema):
+    """Response schema for admin Module."""
+
+
 class AdminResponder(BaseResponder):
     """Handle outgoing messages from message handlers."""
 
@@ -413,7 +417,7 @@ class AdminServer(BaseAdminServer):
             swagger["security"] = [{"ApiKeyHeader": []}]
 
     @docs(tags=["server"], summary="Fetch the list of loaded plugins")
-    @response_schema(AdminModulesSchema(), 200)
+    @response_schema(AdminModulesSchema(), 200, description="")
     async def plugins_handler(self, request: web.BaseRequest):
         """
         Request handler for the loaded plugins list.
@@ -432,7 +436,7 @@ class AdminServer(BaseAdminServer):
         return web.json_response({"result": plugins})
 
     @docs(tags=["server"], summary="Fetch the server status")
-    @response_schema(AdminStatusSchema(), 200)
+    @response_schema(AdminStatusSchema(), 200, description="")
     async def status_handler(self, request: web.BaseRequest):
         """
         Request handler for the server status information.
@@ -454,7 +458,7 @@ class AdminServer(BaseAdminServer):
         return web.json_response(status)
 
     @docs(tags=["server"], summary="Reset statistics")
-    @response_schema(AdminStatusSchema(), 200)
+    @response_schema(AdminStatusSchema(), 200, description="")
     async def status_reset_handler(self, request: web.BaseRequest):
         """
         Request handler for resetting the timing statistics.
@@ -476,7 +480,7 @@ class AdminServer(BaseAdminServer):
         raise web.HTTPFound("/api/doc")
 
     @docs(tags=["server"], summary="Liveliness check")
-    @response_schema(AdminStatusLivelinessSchema(), 200)
+    @response_schema(AdminStatusLivelinessSchema(), 200, description="")
     async def liveliness_handler(self, request: web.BaseRequest):
         """
         Request handler for liveliness check.
@@ -495,7 +499,7 @@ class AdminServer(BaseAdminServer):
             raise web.HTTPServiceUnavailable(reason="Service not available")
 
     @docs(tags=["server"], summary="Readiness check")
-    @response_schema(AdminStatusReadinessSchema(), 200)
+    @response_schema(AdminStatusReadinessSchema(), 200, description="")
     async def readiness_handler(self, request: web.BaseRequest):
         """
         Request handler for liveliness check.
@@ -514,6 +518,7 @@ class AdminServer(BaseAdminServer):
             raise web.HTTPServiceUnavailable(reason="Service not ready")
 
     @docs(tags=["server"], summary="Shut down server")
+    @response_schema(AdminShutdownSchema(), description="")
     async def shutdown_handler(self, request: web.BaseRequest):
         """
         Request handler for server shutdown.
