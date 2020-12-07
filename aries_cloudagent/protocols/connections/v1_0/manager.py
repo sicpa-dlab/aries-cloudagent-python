@@ -2,7 +2,7 @@
 
 import logging
 
-from typing import Sequence, Tuple
+from typing import Coroutine, Sequence, Tuple
 
 from ....cache.base import BaseCache
 from ....connections.models.conn_record import ConnRecord
@@ -13,9 +13,9 @@ from ....connections.models.diddoc import (
     PublicKeyType,
     Service,
 )
-from ....config.base import InjectorError
-from ....config.injection_context import InjectionContext
+from ....config.base import InjectionError
 from ....core.error import BaseError
+from ....core.profile import ProfileSession
 from ....ledger.base import BaseLedger
 from ....messaging.responder import BaseResponder
 from ....storage.base import BaseStorage
@@ -25,7 +25,7 @@ from ....transport.inbound.receipt import MessageReceipt
 from ....wallet.base import BaseWallet, DIDInfo
 from ....wallet.crypto import create_keypair, seed_to_did
 from ....wallet.error import WalletNotFoundError
-from ....wallet.util import bytes_to_b58
+from ....wallet.util import bytes_to_b58, did_key_to_naked
 from ....protocols.routing.v1_0.manager import RoutingManager
 
 from .messages.connection_invitation import ConnectionInvitation
@@ -45,26 +45,26 @@ class ConnectionManager:
     RECORD_TYPE_DID_DOC = "did_doc"
     RECORD_TYPE_DID_KEY = "did_key"
 
-    def __init__(self, context: InjectionContext):
+    def __init__(self, session: ProfileSession):
         """
         Initialize a ConnectionManager.
 
         Args:
-            context: The context for this connection manager
+            session: The profile session for this connection manager
         """
-        self._context = context
+        self._session = session
         self._logger = logging.getLogger(__name__)
 
     @property
-    def context(self) -> InjectionContext:
+    def session(self) -> ProfileSession:
         """
-        Accessor for the current injection context.
+        Accessor for the current profile session.
 
         Returns:
-            The injection context for this connection manager
+            The profile session for this connection manager
 
         """
-        return self._context
+        return self._session
 
     async def create_invitation(
         self,
@@ -107,8 +107,6 @@ class ConnectionManager:
                 "routing_keys": ["9EH5gYEeNc3z7PYXmd53d5x6qAfCNrqQqEB4nS7Zfu6K"],
             }
 
-        Currently, only peer DID is supported.
-
         Args:
             my_label: label for this connection
             my_endpoint: endpoint where other party can reach me
@@ -123,11 +121,11 @@ class ConnectionManager:
 
         """
         if not my_label:
-            my_label = self.context.settings.get("default_label")
-        wallet: BaseWallet = await self.context.inject(BaseWallet)
+            my_label = self._session.settings.get("default_label")
+        wallet = self._session.inject(BaseWallet)
 
         if public:
-            if not self.context.settings.get("public_invites"):
+            if not self._session.settings.get("public_invites"):
                 raise ConnectionManagerError("Public invitations are not enabled")
 
             public_did = await wallet.get_public_did()
@@ -152,14 +150,14 @@ class ConnectionManager:
             invitation_mode = ConnRecord.INVITATION_MODE_MULTI
 
         if not my_endpoint:
-            my_endpoint = self.context.settings.get("default_endpoint")
+            my_endpoint = self._session.settings.get("default_endpoint")
         accept = (
             ConnRecord.ACCEPT_AUTO
             if (
                 auto_accept
                 or (
                     auto_accept is None
-                    and self.context.settings.get("debug.auto_accept_requests")
+                    and self._session.settings.get("debug.auto_accept_requests")
                 )
             )
             else ConnRecord.ACCEPT_MANUAL
@@ -183,7 +181,7 @@ class ConnectionManager:
             alias=alias,
         )
 
-        await connection.save(self.context, reason="Created new invitation")
+        await connection.save(self._session, reason="Created new invitation")
 
         # Create connection invitation message
         # Note: Need to split this into two stages to support inbound routing of invites
@@ -194,7 +192,7 @@ class ConnectionManager:
             endpoint=my_endpoint,
             routing_keys=routing_keys,
         )
-        await connection.attach_invitation(self.context, invitation)
+        await connection.attach_invitation(self._session, invitation)
 
         return connection, invitation
 
@@ -228,7 +226,7 @@ class ConnectionManager:
                 auto_accept
                 or (
                     auto_accept is None
-                    and self.context.settings.get("debug.auto_accept_invites")
+                    and self._session.settings.get("debug.auto_accept_invites")
                 )
             )
             else ConnRecord.ACCEPT_MANUAL
@@ -245,25 +243,22 @@ class ConnectionManager:
         )
 
         await connection.save(
-            self.context,
+            self._session,
             reason="Created new connection record from invitation",
             log_params={"invitation": invitation, "their_label": invitation.label},
         )
 
         # Save the invitation for later processing
-        await connection.attach_invitation(self.context, invitation)
+        await connection.attach_invitation(self._session, invitation)
 
         if connection.accept == ConnRecord.ACCEPT_AUTO:
             request = await self.create_request(connection)
-            responder: BaseResponder = await self._context.inject(
-                BaseResponder,
-                required=False
-            )
+            responder = self._session.inject(BaseResponder, required=False)
             if responder:
                 await responder.send(request, connection_id=connection.connection_id)
                 # refetch connection for accurate state
                 connection = await ConnRecord.retrieve_by_id(
-                    self._context, connection.connection_id
+                    self._session, connection.connection_id
                 )
         else:
             self._logger.debug("Connection invitation will await acceptance")
@@ -287,7 +282,7 @@ class ConnectionManager:
             A new `ConnectionRequest` message to send to the other agent
 
         """
-        wallet: BaseWallet = await self.context.inject(BaseWallet)
+        wallet = self._session.inject(BaseWallet)
         if connection.my_did:
             my_info = await wallet.get_local_did(connection.my_did)
         else:
@@ -300,15 +295,15 @@ class ConnectionManager:
             my_endpoints = [my_endpoint]
         else:
             my_endpoints = []
-            default_endpoint = self.context.settings.get("default_endpoint")
+            default_endpoint = self._session.settings.get("default_endpoint")
             if default_endpoint:
                 my_endpoints.append(default_endpoint)
-            my_endpoints.extend(self.context.settings.get("additional_endpoints", []))
+            my_endpoints.extend(self._session.settings.get("additional_endpoints", []))
         did_doc = await self.create_did_document(
             my_info, connection.inbound_connection_id, my_endpoints
         )
         if not my_label:
-            my_label = self.context.settings.get("default_label")
+            my_label = self._session.settings.get("default_label")
         request = ConnectionRequest(
             label=my_label,
             connection=ConnectionDetail(did=connection.my_did, did_doc=did_doc),
@@ -318,7 +313,7 @@ class ConnectionManager:
         connection.request_id = request._id
         connection.state = ConnRecord.State.REQUEST.rfc160
 
-        await connection.save(self.context, reason="Created connection request")
+        await connection.save(self._session, reason="Created connection request")
 
         return request
 
@@ -337,7 +332,7 @@ class ConnectionManager:
 
         """
         ConnRecord.log_state(
-            self.context, "Receiving connection request", {"request": request}
+            self._session, "Receiving connection request", {"request": request}
         )
 
         connection = None
@@ -345,14 +340,14 @@ class ConnectionManager:
 
         # Determine what key will need to sign the response
         if receipt.recipient_did_public:
-            wallet: BaseWallet = await self.context.inject(BaseWallet)
+            wallet = self._session.inject(BaseWallet)
             my_info = await wallet.get_local_did(receipt.recipient_did)
             connection_key = my_info.verkey
         else:
             connection_key = receipt.recipient_verkey
             try:
                 connection = await ConnRecord.retrieve_by_invitation_key(
-                    context=self.context,
+                    session=self._session,
                     invitation_key=connection_key,
                     their_role=ConnRecord.Role.REQUESTER.rfc160,
                 )
@@ -363,14 +358,14 @@ class ConnectionManager:
 
         invitation = None
         if connection:
-            invitation = await connection.retrieve_invitation(self.context)
+            invitation = await connection.retrieve_invitation(self._session)
             connection_key = connection.invitation_key
             ConnRecord.log_state(
-                self.context, "Found invitation", {"invitation": invitation}
+                self._session, "Found invitation", {"invitation": invitation}
             )
 
             if connection.is_multiuse_invitation:
-                wallet: BaseWallet = await self.context.inject(BaseWallet)
+                wallet = self._session.inject(BaseWallet)
                 my_info = await wallet.create_local_did()
                 new_connection = ConnRecord(
                     invitation_key=connection_key,
@@ -381,7 +376,7 @@ class ConnectionManager:
                 )
 
                 await new_connection.save(
-                    self.context,
+                    self._session,
                     reason="Received connection request from multi-use invitation DID",
                 )
                 connection = new_connection
@@ -403,9 +398,9 @@ class ConnectionManager:
             connection.their_did = request.connection.did
             connection.state = ConnRecord.State.REQUEST.rfc160
             await connection.save(
-                self.context, reason="Received connection request from invitation"
+                self._session, reason="Received connection request from invitation"
             )
-        elif not self.context.settings.get("public_invites"):
+        elif not self._session.settings.get("public_invites"):
             raise ConnectionManagerError("Public invitations are not enabled")
         else:
             my_info = await wallet.create_local_did()
@@ -417,28 +412,26 @@ class ConnectionManager:
                 their_label=request.label,
                 state=ConnRecord.State.REQUEST.rfc160,
             )
-            if self.context.settings.get("debug.auto_accept_requests"):
+            if self._session.settings.get("debug.auto_accept_requests"):
                 connection.accept = ConnRecord.ACCEPT_AUTO
 
             await connection.save(
-                self.context, reason="Received connection request from public DID"
+                self._session, reason="Received connection request from public DID"
             )
 
         # Attach the connection request so it can be found and responded to
-        await connection.attach_request(self.context, request)
+        await connection.attach_request(self._session, request)
 
         if connection.accept == ConnRecord.ACCEPT_AUTO:
             response = await self.create_response(connection)
-            responder: BaseResponder = await self._context.inject(
-                BaseResponder, required=False
-            )
+            responder = self._session.inject(BaseResponder, required=False)
             if responder:
                 await responder.send_reply(
                     response, connection_id=connection.connection_id
                 )
                 # refetch connection for accurate state
                 connection = await ConnRecord.retrieve_by_id(
-                    self._context, connection.connection_id
+                    self._session, connection.connection_id
                 )
         else:
             self._logger.debug("Connection request will await acceptance")
@@ -460,7 +453,7 @@ class ConnectionManager:
 
         """
         ConnRecord.log_state(
-            self.context,
+            self._session,
             "Creating connection response",
             {"connection_id": connection.connection_id},
         )
@@ -473,8 +466,8 @@ class ConnectionManager:
                 "Connection is not in the request or response state"
             )
 
-        request = await connection.retrieve_request(self.context)
-        wallet: BaseWallet = await self.context.inject(BaseWallet)
+        request = await connection.retrieve_request(self._session)
+        wallet = self._session.inject(BaseWallet)
         if connection.my_did:
             my_info = await wallet.get_local_did(connection.my_did)
         else:
@@ -486,10 +479,10 @@ class ConnectionManager:
             my_endpoints = [my_endpoint]
         else:
             my_endpoints = []
-            default_endpoint = self.context.settings.get("default_endpoint")
+            default_endpoint = self._session.settings.get("default_endpoint")
             if default_endpoint:
                 my_endpoints.append(default_endpoint)
-            my_endpoints.extend(self.context.settings.get("additional_endpoints", []))
+            my_endpoints.extend(self._session.settings.get("additional_endpoints", []))
         did_doc = await self.create_did_document(
             my_info, connection.inbound_connection_id, my_endpoints
         )
@@ -500,14 +493,14 @@ class ConnectionManager:
         response.assign_thread_from(request)
         response.assign_trace_from(request)
         # Sign connection field using the invitation key
-        wallet: BaseWallet = await self.context.inject(BaseWallet)
+        wallet = self._session.inject(BaseWallet)
         await response.sign_field("connection", connection.invitation_key, wallet)
 
         # Update connection state
         connection.state = ConnRecord.State.RESPONSE.rfc160
 
         await connection.save(
-            self.context,
+            self._session,
             reason="Created connection response",
             log_params={"response": response},
         )
@@ -542,7 +535,7 @@ class ConnectionManager:
             # identify the request by the thread ID
             try:
                 connection = await ConnRecord.retrieve_by_request_id(
-                    self.context, response._thread_id
+                    self._session, response._thread_id
                 )
             except StorageNotFoundError:
                 pass
@@ -551,7 +544,7 @@ class ConnectionManager:
             # identify connection by the DID they used for us
             try:
                 connection = await ConnRecord.retrieve_by_did(
-                    self.context, receipt.sender_did, receipt.recipient_did
+                    self._session, receipt.sender_did, receipt.recipient_did
                 )
             except StorageNotFoundError:
                 pass
@@ -584,7 +577,7 @@ class ConnectionManager:
         connection.their_did = their_did
         connection.state = ConnRecord.State.RESPONSE.rfc160
 
-        await connection.save(self.context, reason="Accepted connection response")
+        await connection.save(self._session, reason="Accepted connection response")
 
         return connection
 
@@ -612,10 +605,10 @@ class ConnectionManager:
             alias: an alias for this connection record
 
         Returns:
-            The new `ConnRecord` instance
+            Tuple: my DIDInfo, their DIDInfo, new `ConnRecord` instance
 
         """
-        wallet: BaseWallet = await self.context.inject(BaseWallet)
+        wallet = self._session.inject(BaseWallet)
 
         # seed and DID optional
         my_info = await wallet.create_local_did(my_seed, my_did)
@@ -637,12 +630,11 @@ class ConnectionManager:
             invitation_mode=ConnRecord.INVITATION_MODE_STATIC,
             my_did=my_info.did,
             their_did=their_info.did,
-            their_role=ConnRecord.Role.REQUESTER.rfc160,
             their_label=their_label,
             state=ConnRecord.State.COMPLETED.rfc160,
             alias=alias,
         )
-        await connection.save(self.context, reason="Created new static connection")
+        await connection.save(self._session, reason="Created new static connection")
 
         # Synthesize their DID doc
         did_doc = await self.create_did_document(their_info, None, [their_endpoint])
@@ -678,7 +670,7 @@ class ConnectionManager:
         if their_did:
             try:
                 connection = await ConnRecord.retrieve_by_did(
-                    self.context, their_did, my_did
+                    self._session, their_did, my_did
                 )
             except StorageNotFoundError:
                 pass
@@ -689,12 +681,14 @@ class ConnectionManager:
             and auto_complete
         ):
             connection.state = ConnRecord.State.COMPLETED.rfc160
-            await connection.save(self.context, reason="Connection promoted to active")
+            await connection.save(self._session, reason="Connection promoted to active")
 
         if not connection and my_verkey:
             try:
                 connection = await ConnRecord.retrieve_by_invitation_key(
-                    self.context, my_verkey, their_role=ConnRecord.Role.REQUESTER.rfc160
+                    self._session,
+                    my_verkey,
+                    their_role=ConnRecord.Role.REQUESTER.rfc160,
                 )
             except StorageError:
                 pass
@@ -722,7 +716,7 @@ class ConnectionManager:
                 f"connection_by_verkey::{receipt.sender_verkey}"
                 f"::{receipt.recipient_verkey}"
             )
-            cache: BaseCache = await self.context.inject(BaseCache, required=False)
+            cache = self._session.inject(BaseCache, required=False)
             if cache:
                 async with cache.acquire(cache_key) as entry:
                     if entry.result:
@@ -731,7 +725,7 @@ class ConnectionManager:
                         receipt.recipient_did_public = cached["recipient_did_public"]
                         receipt.recipient_did = cached["recipient_did"]
                         connection = await ConnRecord.retrieve_by_id(
-                            self.context, cached["id"]
+                            self._session, cached["id"]
                         )
                     else:
                         connection = await self.resolve_inbound_connection(receipt)
@@ -772,14 +766,14 @@ class ConnectionManager:
 
         if receipt.recipient_verkey:
             try:
-                wallet: BaseWallet = await self.context.inject(BaseWallet)
+                wallet = self._session.inject(BaseWallet)
                 my_info = await wallet.get_local_did_for_verkey(
                     receipt.recipient_verkey
                 )
                 receipt.recipient_did = my_info.did
                 if "public" in my_info.metadata and my_info.metadata["public"] is True:
                     receipt.recipient_did_public = True
-            except InjectorError:
+            except InjectionError:
                 self._logger.warning(
                     "Cannot resolve recipient verkey, no wallet defined by "
                     "context: %s",
@@ -799,7 +793,7 @@ class ConnectionManager:
         self,
         did_info: DIDInfo,
         inbound_connection_id: str = None,
-        svc_endpoints: Sequence[str] = [],
+        svc_endpoints: Sequence[str] = None,
     ) -> DIDDoc:
         """Create our DID document for a given DID.
 
@@ -831,7 +825,7 @@ class ConnectionManager:
         router_idx = 1
         while router_id:
             # look up routing connection information
-            router = await ConnRecord.retrieve_by_id(self.context, router_id)
+            router = await ConnRecord.retrieve_by_id(self._session, router_id)
             if ConnRecord.State.get(router.state) != ConnRecord.State.COMPLETED:
                 raise ConnectionManagerError(
                     f"Router connection not active: {router_id}"
@@ -863,7 +857,7 @@ class ConnectionManager:
                 break
             router_id = router.inbound_connection_id
 
-        for endpoint_index, svc_endpoint in enumerate(svc_endpoints):
+        for endpoint_index, svc_endpoint in enumerate(svc_endpoints or []):
             endpoint_ident = "indy" if endpoint_index == 0 else f"indy{endpoint_index}"
             service = Service(
                 did_info.did,
@@ -883,7 +877,7 @@ class ConnectionManager:
         Args:
             did: The DID to search for
         """
-        storage: BaseStorage = await self.context.inject(BaseStorage)
+        storage = self._session.inject(BaseStorage)
         record = await storage.find_record(self.RECORD_TYPE_DID_DOC, {"did": did})
         return DIDDoc.from_json(record.value), record
 
@@ -894,7 +888,7 @@ class ConnectionManager:
             did_doc: The `DIDDoc` instance to be persisted
         """
         assert did_doc.did
-        storage: BaseStorage = await self.context.inject(BaseStorage)
+        storage: BaseStorage = self._session.inject(BaseStorage)
         try:
             stored_doc, record = await self.fetch_did_document(did_doc.did)
         except StorageNotFoundError:
@@ -917,7 +911,7 @@ class ConnectionManager:
             key: The verkey to be added
         """
         record = StorageRecord(self.RECORD_TYPE_DID_KEY, key, {"did": did, "key": key})
-        storage: BaseStorage = await self.context.inject(BaseStorage)
+        storage = self._session.inject(BaseStorage)
         await storage.add_record(record)
 
     async def find_did_for_key(self, key: str) -> str:
@@ -926,7 +920,7 @@ class ConnectionManager:
         Args:
             key: The verkey to look up
         """
-        storage: BaseStorage = await self.context.inject(BaseStorage)
+        storage = self._session.inject(BaseStorage)
         record = await storage.find_record(self.RECORD_TYPE_DID_KEY, {"key": key})
         return record.tags["did"]
 
@@ -936,7 +930,7 @@ class ConnectionManager:
         Args:
             did: The DID to remove keys for
         """
-        storage: BaseStorage = await self.context.inject(BaseStorage)
+        storage = self._session.inject(BaseStorage)
         keys = await storage.search_records(
             self.RECORD_TYPE_DID_KEY, {"did": did}
         ).fetch_all()
@@ -954,7 +948,7 @@ class ConnectionManager:
         """
         if not connection_id:
             connection_id = connection.connection_id
-        cache: BaseCache = await self.context.inject(BaseCache, required=False)
+        cache = self._session.inject(BaseCache, required=False)
         cache_key = f"connection_target::{connection_id}"
         if cache:
             async with cache.acquire(cache_key) as entry:
@@ -965,7 +959,7 @@ class ConnectionManager:
                 else:
                     if not connection:
                         connection = await ConnRecord.retrieve_by_id(
-                            self.context, connection_id
+                            self._session, connection_id
                         )
                     targets = await self.fetch_connection_targets(connection)
                     await entry.set_result([row.serialize() for row in targets], 3600)
@@ -987,7 +981,7 @@ class ConnectionManager:
             self._logger.debug("No local DID associated with connection")
             return None
 
-        wallet: BaseWallet = await self.context.inject(BaseWallet)
+        wallet = self._session.inject(BaseWallet)
         my_info = await wallet.get_local_did(connection.my_did)
         results = None
 
@@ -996,24 +990,49 @@ class ConnectionManager:
             in (ConnRecord.State.INVITATION, ConnRecord.State.REQUEST)
             and ConnRecord.Role.get(connection.their_role) is ConnRecord.Role.RESPONDER
         ):
-            invitation = await connection.retrieve_invitation(self.context)
-            if invitation.did:
-                # populate recipient keys and endpoint from the ledger
-                ledger: BaseLedger = await self.context.inject(
-                    BaseLedger, required=False
-                )
-                if not ledger:
-                    raise ConnectionManagerError(
-                        "Cannot resolve DID without ledger instance"
-                    )
-                async with ledger:
-                    endpoint = await ledger.get_endpoint_for_did(invitation.did)
-                    recipient_keys = [await ledger.get_key_for_did(invitation.did)]
-                    routing_keys = []
-            else:
-                endpoint = invitation.endpoint
-                recipient_keys = invitation.recipient_keys
-                routing_keys = invitation.routing_keys
+            invitation = await connection.retrieve_invitation(self._session)
+            if isinstance(invitation, ConnectionInvitation):  # conn protocol invitation
+                if invitation.did:
+                    # populate recipient keys and endpoint from the ledger
+                    ledger = self._session.inject(BaseLedger, required=False)
+                    if not ledger:
+                        raise ConnectionManagerError(
+                            "Cannot resolve DID without ledger instance"
+                        )
+                    async with ledger:
+                        endpoint = await ledger.get_endpoint_for_did(invitation.did)
+                        recipient_keys = [await ledger.get_key_for_did(invitation.did)]
+                        routing_keys = []
+                else:
+                    endpoint = invitation.endpoint
+                    recipient_keys = invitation.recipient_keys
+                    routing_keys = invitation.routing_keys
+            else:  # out-of-band invitation
+                if invitation.service_dids:
+                    # populate recipient keys and endpoint from the ledger
+                    ledger = self._session.inject(BaseLedger, required=False)
+                    if not ledger:
+                        raise ConnectionManagerError(
+                            "Cannot resolve DID without ledger instance"
+                        )
+                    async with ledger:
+                        endpoint = await ledger.get_endpoint_for_did(
+                            invitation.service_dids[0]
+                        )
+                        recipient_keys = [
+                            await ledger.get_key_for_did(invitation.service_dids[0])
+                        ]
+                        routing_keys = []
+                else:
+                    endpoint = invitation.service_blocks[0].service_endpoint
+                    recipient_keys = [
+                        did_key_to_naked(k)
+                        for k in invitation.service_blocks[0].recipient_keys
+                    ]
+                    routing_keys = [
+                        did_key_to_naked(k)
+                        for k in invitation.service_blocks[0].routing_keys
+                    ]
 
             results = [
                 ConnectionTarget(
@@ -1075,7 +1094,10 @@ class ConnectionManager:
         return targets
 
     async def establish_inbound(
-        self, connection: ConnRecord, inbound_connection_id: str, outbound_handler
+        self,
+        connection: ConnRecord,
+        inbound_connection_id: str,
+        outbound_handler: Coroutine,
     ) -> str:
         """Assign the inbound routing connection for a connection record.
 
@@ -1085,7 +1107,7 @@ class ConnectionManager:
 
         # The connection must have a verkey, but in the case of a received
         # invitation we might not have created one yet
-        wallet: BaseWallet = await self.context.inject(BaseWallet)
+        wallet = self._session.inject(BaseWallet)
         if connection.my_did:
             my_info = await wallet.get_local_did(connection.my_did)
         else:
@@ -1095,7 +1117,7 @@ class ConnectionManager:
 
         try:
             router = await ConnRecord.retrieve_by_id(
-                self.context, inbound_connection_id
+                self._session, inbound_connection_id
             )
         except StorageNotFoundError:
             raise ConnectionManagerError(
@@ -1107,13 +1129,13 @@ class ConnectionManager:
             )
         connection.inbound_connection_id = inbound_connection_id
 
-        route_mgr = RoutingManager(self.context)
+        route_mgr = RoutingManager(self._session)
 
         await route_mgr.send_create_route(
             inbound_connection_id, my_info.verkey, outbound_handler
         )
         connection.routing_state = ConnRecord.ROUTING_STATE_REQUEST
-        await connection.save(self.context)
+        await connection.save(self._session)
         return connection.routing_state
 
     async def update_inbound(
@@ -1125,9 +1147,9 @@ class ConnectionManager:
         connection and marks the routing as complete.
         """
         conns = await ConnRecord.query(
-            self.context, {"inbound_connection_id": inbound_connection_id}
+            self._session, {"inbound_connection_id": inbound_connection_id}
         )
-        wallet: BaseWallet = await self.context.inject(BaseWallet)
+        wallet = self._session.inject(BaseWallet)
 
         for connection in conns:
             # check the recipient key
@@ -1136,4 +1158,4 @@ class ConnectionManager:
             conn_info = await wallet.get_local_did(connection.my_did)
             if conn_info.verkey == recip_verkey:
                 connection.routing_state = routing_state
-                await connection.save(self.context)
+                await connection.save(self._session)

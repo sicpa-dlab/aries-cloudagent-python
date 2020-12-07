@@ -6,6 +6,8 @@ from aiohttp import web
 from aiohttp_apispec import docs, match_info_schema, querystring_schema, response_schema
 from marshmallow import fields
 
+from ..admin.request_context import AdminRequestContext
+from ..indy.holder import IndyHolder, IndyHolderError
 from ..ledger.base import BaseLedger
 from ..ledger.error import LedgerError
 from ..messaging.models.openapi import OpenAPISchema
@@ -20,7 +22,6 @@ from ..messaging.valid import (
     UUIDFour,
 )
 from ..wallet.error import WalletNotFoundError
-from .base import BaseHolder, HolderError
 
 
 class AttributeMimeTypesResultSchema(OpenAPISchema):
@@ -118,11 +119,12 @@ async def credentials_get(request: web.BaseRequest):
         The credential response
 
     """
-    context = request.app["request_context"]
+    context: AdminRequestContext = request["context"]
 
     credential_id = request.match_info["credential_id"]
 
-    holder: BaseHolder = await context.inject(BaseHolder)
+    session = await context.session()
+    holder = session.inject(IndyHolder)
     try:
         credential = await holder.get_credential(credential_id)
     except WalletNotFoundError as err:
@@ -147,13 +149,14 @@ async def credentials_revoked(request: web.BaseRequest):
         The credential response
 
     """
-    context = request.app["request_context"]
+    context: AdminRequestContext = request["context"]
+    session = await context.session()
 
     credential_id = request.match_info["credential_id"]
     fro = request.query.get("from")
     to = request.query.get("to")
 
-    ledger: BaseLedger = await context.inject(BaseLedger, required=False)
+    ledger = session.inject(BaseLedger, required=False)
     if not ledger:
         reason = "No ledger available"
         if not context.settings.get_value("wallet.type"):
@@ -162,7 +165,7 @@ async def credentials_revoked(request: web.BaseRequest):
 
     async with ledger:
         try:
-            holder: BaseHolder = await context.inject(BaseHolder)
+            holder = session.inject(IndyHolder)
             revoked = await holder.credential_revoked(
                 credential_id,
                 ledger,
@@ -191,9 +194,10 @@ async def credentials_attr_mime_types_get(request: web.BaseRequest):
         The MIME types response
 
     """
-    context = request.app["request_context"]
+    context: AdminRequestContext = request["context"]
+    session = await context.session()
     credential_id = request.match_info["credential_id"]
-    holder: BaseHolder = await context.inject(BaseHolder)
+    holder = session.inject(IndyHolder)
 
     return web.json_response(await holder.get_mime_type(credential_id))
 
@@ -211,11 +215,12 @@ async def credentials_remove(request: web.BaseRequest):
         The connection list response
 
     """
-    context = request.app["request_context"]
+    context: AdminRequestContext = request["context"]
 
     credential_id = request.match_info["credential_id"]
 
-    holder: BaseHolder = await context.inject(BaseHolder)
+    session = await context.session()
+    holder = session.inject(IndyHolder)
     try:
         await holder.delete_credential(credential_id)
     except WalletNotFoundError as err:
@@ -241,7 +246,8 @@ async def credentials_list(request: web.BaseRequest):
         The credential list response
 
     """
-    context = request.app["request_context"]
+    context: AdminRequestContext = request["context"]
+    session = await context.session()
 
     start = request.query.get("start")
     count = request.query.get("count")
@@ -254,10 +260,10 @@ async def credentials_list(request: web.BaseRequest):
     start = int(start) if isinstance(start, str) else 0
     count = int(count) if isinstance(count, str) else 10
 
-    holder: BaseHolder = await context.inject(BaseHolder)
+    holder = session.inject(IndyHolder)
     try:
         credentials = await holder.get_credentials(start, count, wql)
-    except HolderError as err:
+    except IndyHolderError as err:
         raise web.HTTPBadRequest(reason=err.roll_up) from err
 
     return web.json_response({"results": credentials})

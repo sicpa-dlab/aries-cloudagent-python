@@ -24,9 +24,7 @@ from runners.support.utils import (
 
 CRED_PREVIEW_TYPE = "https://didcomm.org/issue-credential/1.0/credential-preview"
 SELF_ATTESTED = os.getenv("SELF_ATTESTED")
-
 LOGGER = logging.getLogger(__name__)
-
 TAILS_FILE_COUNT = int(os.getenv("TAILS_FILE_COUNT", 100))
 
 
@@ -66,13 +64,17 @@ class FaberAgent(DemoAgent):
     def connection_ready(self):
         return self._connection_ready.done() and self._connection_ready.result()
 
+    async def handle_oob_invitation(self, message):
+        pass
+
     async def handle_connections(self, message):
-        if message["connection_id"] == self.connection_id:
-            if message["state"] in ["active", "response"]:
+        conn_id = message["connection_id"]
+        if (not self.connection_id) and (message["state"] == "invitation"):
+            self.connection_id = conn_id
+        if conn_id == self.connection_id:
+            if message["state"] == "active" and not self._connection_ready.done():
                 self.log("Connected")
                 self._connection_ready.set_result(True)
-                if not self._connection_ready.done():
-                    self._connection_ready.set_result(True)
 
     async def handle_issue_credential(self, message):
         state = message["state"]
@@ -117,6 +119,9 @@ class FaberAgent(DemoAgent):
                     self.log(f"Credential revocation ID: {cred_rev_id}")
             except ClientError:
                 pass
+
+    async def handle_issuer_cred_rev(self, message):
+        pass
 
     async def handle_present_proof(self, message):
         state = message["state"]
@@ -218,13 +223,13 @@ async def main(
         agent.connection_id = connection["connection_id"]
 
         qr = QRCode()
-        qr.add_data(connection["invitation_url"])
+        qr.add_data(invi_msg["invitation"]["service"][0]["serviceEndpoint"])
         log_msg(
             "Use the following JSON to accept the invite from another demo agent."
             " Or use the QR code to connect from a mobile agent."
         )
         log_msg(
-            json.dumps(connection["invitation"]), label="Invitation Data:", color=None
+            json.dumps(invi_msg["invitation"]), label="Invitation Data:", color=None
         )
         qr.print_ascii(invert=True)
 
