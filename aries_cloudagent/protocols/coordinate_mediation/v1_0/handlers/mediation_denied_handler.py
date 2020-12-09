@@ -27,13 +27,14 @@ class MediationDenyHandler(BaseHandler):
             raise HandlerException(
                 "Invalid client mediation denied response: no active connection")
         try:
+            session = await context.session()
             _record = await MediationRecord.retrieve_by_connection_id(
-                context, context.connection_record.connection_id
+                session, context.connection_record.connection_id
             )
             _record.state = MediationRecord.STATE_DENIED
             _record.mediator_terms = context.message.mediator_terms
             _record.recipient_terms = context.message.recipient_terms
-            await _record.save(context,
+            await _record.save(session,
                                reason="Mediation request denied",
                                webhook=True)
         except StorageNotFoundError:

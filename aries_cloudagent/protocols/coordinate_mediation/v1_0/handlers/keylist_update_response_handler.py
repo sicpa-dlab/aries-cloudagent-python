@@ -30,8 +30,9 @@ class KeylistUpdateResponseHandler(BaseHandler):
             raise HandlerException("Invalid mediation request: no active connection")
         mediation_record = None
         try:
+            session = await context.session()
             mediation_record = await MediationRecord.retrieve_by_connection_id(
-                context, context.connection_record.connection_id
+                session, context.connection_record.connection_id
             )
         except StorageNotFoundError as err:
             raise HandlerException('No mediation found for keylist.') from err
@@ -67,7 +68,7 @@ class KeylistUpdateResponseHandler(BaseHandler):
                 # record = records[0]
                 # await record.delete_record(context)
         await mediation_record.save(
-            context,
+            session,
             reason="keylist update response stored in mediation record",
             webhook=True
         )

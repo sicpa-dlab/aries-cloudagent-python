@@ -5,10 +5,8 @@ from aries_cloudagent.config.injection_context import InjectionContext
 from aries_cloudagent.connections.models.conn_record import ConnRecord
 from aries_cloudagent.messaging.request_context import RequestContext
 from aries_cloudagent.storage.base import BaseStorage
-from aries_cloudagent.storage.basic import BasicStorage
 from aries_cloudagent.transport.inbound.receipt import MessageReceipt
 from aries_cloudagent.wallet.base import BaseWallet
-from aries_cloudagent.wallet.basic import BasicWallet
 
 from ....routing.v1_0.manager import RoutingManager
 
@@ -27,13 +25,13 @@ TEST_ROUTE_VERKEY = "9WCgWKUaAJj3VWxxtzvvMQN3AoFxoBtBDo9ntwJnVVCC"
 
 class TestMediationManager(AsyncTestCase):
     async def setUp(self):
-        self.context = RequestContext(
-            base_context=InjectionContext(enforce_typing=False)
-        )
+        self.context = RequestContext.test_context()
         self.context.message_receipt = MessageReceipt(sender_verkey=TEST_VERKEY)
+        self.session = await self.context.session()
+        assert self.manager.session
         self.context.connection_record = ConnRecord(connection_id=TEST_CONN_ID)
-        self.storage = BasicStorage()
-        self.wallet = BasicWallet()
+        # self.storage = BasicStorage()
+        #self.wallet = BasicWallet()
         self.context.injector.bind_instance(BaseStorage, self.storage)
         self.context.injector.bind_instance(BaseWallet, self.wallet)
         self.manager = MediationManager(self.context)

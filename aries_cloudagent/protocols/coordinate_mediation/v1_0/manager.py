@@ -3,6 +3,7 @@ import json
 from typing import Optional, Sequence
 
 from ....config.injection_context import InjectionContext
+from ....core.profile import ProfileSession
 from ....core.error import BaseError
 from ....storage.base import BaseStorage
 from ....storage.error import StorageNotFoundError
@@ -12,6 +13,7 @@ from ...routing.v1_0.manager import RoutingManager
 from ...routing.v1_0.models.route_record import RouteRecord
 from ...routing.v1_0.models.route_update import RouteUpdate
 from ...routing.v1_0.models.route_updated import RouteUpdated
+from ....connections.models.conn_record import ConnRecord
 from .messages.inner.keylist_key import KeylistKey
 from .messages.inner.keylist_update_rule import KeylistUpdateRule
 from .messages.inner.keylist_updated import KeylistUpdated
@@ -34,23 +36,23 @@ class MediationManager:
 
     RECORD_TYPE = "routing_did"
 
-    def __init__(self, context: InjectionContext):
+    def __init__(self, session: ProfileSession):
         """Initialize Mediation Manager.
 
         Args:
-            context: The context for this manager
+            session: The profile session for this manager
         """
-        if not context:
-            raise MediationManagerError("Missing request context")
+        if not session:
+            raise MediationManagerError("Missing request session")
 
-        self.context = context
+        self._session = session
 
     # Role: Server {{{
 
     async def _retrieve_routing_did(self) -> Optional[DIDInfo]:
         """Retrieve routing DID from the wallet."""
 
-        storage: BaseStorage = await self.context.inject(BaseStorage)
+        storage: BaseStorage = self._session.inject(BaseStorage)
         try:
             record = await storage.get_record(
                 record_type=self.RECORD_TYPE,
@@ -64,8 +66,8 @@ class MediationManager:
 
     async def _create_routing_did(self) -> DIDInfo:
         """Create routing DID."""
-        wallet: BaseWallet = await self.context.inject(BaseWallet)
-        storage: BaseStorage = await self.context.inject(BaseStorage)
+        wallet: BaseWallet = self._session.inject(BaseWallet)
+        storage: BaseStorage = self._session.inject(BaseStorage)
         info: DIDInfo = await wallet.create_local_did(metadata={"type": "routing_did"})
         record = StorageRecord(
             type=self.RECORD_TYPE,
@@ -77,11 +79,12 @@ class MediationManager:
         return info
 
     async def receive_request(self,
-                              request: MediationRequest
+                              request: MediationRequest,
+                              connection_record: ConnRecord
                               ) -> MediationRecord:
         """Create a new mediation record to track external request."""
-        conn_id = self.context.connection_record.connection_id
-        if await MediationRecord.exists_for_connection_id(self.context, conn_id):
+        conn_id = connection_record.connection_id
+        if await MediationRecord.exists_for_connection_id(self._session, conn_id):
             raise MediationManagerError('Mediation Record already exists for connection')
         role = MediationRecord.ROLE_SERVER
         # TODO: Determine if terms are acceptable
@@ -91,7 +94,7 @@ class MediationManager:
             mediator_terms=request.mediator_terms,
             recipient_terms=request.recipient_terms
         )
-        await record.save(self.context, reason="New mediation request received",
+        await record.save(self._session, reason="New mediation request received",
                           webhook=True)
         return record
 
@@ -104,10 +107,10 @@ class MediationManager:
             routing_did = await self._create_routing_did()
 
         mediation.state = MediationRecord.STATE_GRANTED
-        await mediation.save(self.context, reason="Mediation request granted",
+        await mediation.save(self._session, reason="Mediation request granted",
                              webhook=True)
         grant = MediationGrant(
-            endpoint=self.context.settings.get("default_endpoint"),
+            endpoint=self._session.settings.get("default_endpoint"),
             routing_keys=[routing_did.verkey]
         )
         return (mediation, grant)
@@ -118,7 +121,7 @@ class MediationManager:
     ) -> (MediationRecord, MediationDeny):
         """Deny a mediation request and prepare a deny message."""
         mediation.state = MediationRecord.STATE_DENIED
-        await mediation.save(self.context, reason="Mediation request denied",
+        await mediation.save(self._session, reason="Mediation request denied",
                              webhook=True)
         deny = MediationDeny(
             mediator_terms=mediation.mediator_terms,
@@ -151,7 +154,7 @@ class MediationManager:
                 result=updated.result
             )
 
-        route_mgr = RoutingManager(self.context)
+        route_mgr = RoutingManager(self._session)
         updates = map(rule_to_update, updates)
         updated = await route_mgr.update_routes(record.connection_id, updates)
         updated = map(updated_to_keylist_updated, updated)
@@ -159,12 +162,12 @@ class MediationManager:
 
     async def get_keylist(self, record: MediationRecord) -> Sequence[RouteRecord]:
         """Retrieve routes for connection."""
-        route_mgr = RoutingManager(self.context)
+        route_mgr = RoutingManager(self._session)
         return await route_mgr.get_routes(record.connection_id)
 
     async def create_keylist(self, record: MediationRecord, did: DIDInfo) -> RouteRecord:
         """Create and store a new RouteRecord."""
-        route_mgr = RoutingManager(self.context)
+        route_mgr = RoutingManager(self._session)
         return await route_mgr.create_route_record(record.connection_id, did.verkey)
 
     async def create_keylist_query_response(
@@ -193,7 +196,7 @@ class MediationManager:
             mediator_terms=mediator_terms,
             recipient_terms=recipient_terms
         )
-        await record.save(self.context,
+        await record.save(self._session,
                           reason="Creating new mediation request.",
                           webhook=True)
         return (record, MediationRequest(
@@ -207,7 +210,11 @@ class MediationManager:
     ):
         """Process mediation grant message."""
         record.state = MediationRecord.STATE_GRANTED
-        await record.save(self.context, reason="Mediation request granted.", webhook=True)
+        await record.save(
+            self._session,
+            reason="Mediation request granted.",
+            webhook=True
+        )
         # TODO Store endpoint and routing key for later use.
 
     async def request_denied(
@@ -216,7 +223,7 @@ class MediationManager:
     ):
         """Process mediation denied message."""
         record.state = MediationRecord.STATE_DENIED
-        await record.save(self.context, reason="Mediation request denied.", webhook=True)
+        await record.save(self._session, reason="Mediation request denied.", webhook=True)
         # TODO Remove endpoint and routing key.
 
     async def prepare_keylist_query(
@@ -267,6 +274,6 @@ class MediationManager:
         """Get my routed keys."""
         tag_filter = {'connection_id': connection_id} if connection_id else {}
         tag_filter['role'] = RouteRecord.ROLE_CLIENT
-        return await RouteRecord.query(self.context, tag_filter)
+        return await RouteRecord.query(self._session, tag_filter)
 
     # }}}

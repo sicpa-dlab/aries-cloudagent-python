@@ -32,6 +32,11 @@ from .messages.connection_invitation import (
     ConnectionInvitation,
     ConnectionInvitationSchema,
 )
+from aries_cloudagent.connections.models.connection_target import ConnectionTargetSchema
+from ...coordinate_mediation.v1_0.models.mediation_record import (
+    MediationRecord
+    )
+from ...coordinate_mediation.v1_0.models.mediation_schemas import MEDIATION_ID_SCHEMA
 
 
 class ConnectionListSchema(OpenAPISchema):
@@ -39,6 +44,15 @@ class ConnectionListSchema(OpenAPISchema):
 
     results = fields.List(
         fields.Nested(ConnRecordSchema()),
+        description="List of connection records",
+    )
+
+
+class TargetListSchema(OpenAPISchema):
+    """Result schema for connection target list."""
+
+    results = fields.List(
+        fields.Nested(ConnectionTargetSchema()),
         description="List of connection records",
     )
 
@@ -69,6 +83,7 @@ class InvitationConnectionTargetRequestSchema(OpenAPISchema):
         required=False,
         description="List of routing keys",
     )
+    mediation_id = MEDIATION_ID_SCHEMA
 
 
 class InvitationResultSchema(OpenAPISchema):
@@ -180,6 +195,7 @@ class ReceiveInvitationQueryStringSchema(OpenAPISchema):
         description="Auto-accept connection (defaults to configuration)",
         required=False,
     )
+    mediation_id = MEDIATION_ID_SCHEMA
 
 
 class AcceptInvitationQueryStringSchema(OpenAPISchema):
@@ -189,6 +205,7 @@ class AcceptInvitationQueryStringSchema(OpenAPISchema):
     my_label = fields.Str(
         description="Label for connection", required=False, example="Broker"
     )
+    mediation_id = MEDIATION_ID_SCHEMA
 
 
 class AcceptRequestQueryStringSchema(OpenAPISchema):
@@ -231,6 +248,39 @@ def connection_sort_key(conn):
         pfx = "0"
 
     return pfx + conn["created_at"]
+
+
+@docs(
+    tags=["connection"],
+    summary="Query connection targets",
+)
+@match_info_schema(ConnIdMatchInfoSchema())
+@response_schema(TargetListSchema(), 200)
+async def target_list(request: web.BaseRequest):
+    """
+    Request handler for searching connection record targets.
+
+    Args:
+        request: aiohttp request object
+
+    Returns:
+        The connection list response
+
+    """
+    context: AdminRequestContext = request["context"]
+    connection_id = request.match_info["conn_id"]
+    session = await context.session()
+    connection_mgr = ConnectionManager(session)
+    try:
+        record = await ConnRecord.retrieve_by_id(session, connection_id)
+        targets = connection_mgr.fetch_connection_targets(record)
+        results = [target.serialize() for target in targets]
+    except StorageNotFoundError as err:
+        raise web.HTTPNotFound(reason=err.roll_up) from err
+    except BaseModelError as err:
+        raise web.HTTPBadRequest(reason=err.roll_up) from err
+
+    return web.json_response({"results": results})
 
 
 @docs(
@@ -343,6 +393,7 @@ async def connections_create_invitation(request: web.BaseRequest):
     recipient_keys = body.get("recipient_keys")
     service_endpoint = body.get("service_endpoint")
     routing_keys = body.get("routing_keys")
+    mediation_id = body.get("mediation_id")
 
     if public and not context.settings.get("public_invites"):
         raise web.HTTPForbidden(
@@ -361,6 +412,7 @@ async def connections_create_invitation(request: web.BaseRequest):
             recipient_keys=recipient_keys,
             my_endpoint=service_endpoint,
             routing_keys=routing_keys,
+            mediation_id=mediation_id
         )
 
         result = {
@@ -408,8 +460,18 @@ async def connections_receive_invitation(request: web.BaseRequest):
         invitation = ConnectionInvitation.deserialize(invitation_json)
         auto_accept = json.loads(request.query.get("auto_accept", "null"))
         alias = request.query.get("alias")
+        mediation_id = request.query.get("mediation_id")
+        mediation_record = None
+        if mediation_id:
+            mediation_record = await MediationRecord.retrieve_by_id(
+                session,
+                mediation_id
+            )
         connection = await connection_mgr.receive_invitation(
-            invitation, auto_accept=auto_accept, alias=alias
+            invitation,
+            auto_accept=auto_accept,
+            alias=alias,
+            routing_options=mediation_record
         )
         result = connection.serialize()
     except (ConnectionManagerError, StorageError, BaseModelError) as err:
@@ -444,9 +506,21 @@ async def connections_accept_invitation(request: web.BaseRequest):
     try:
         connection = await ConnRecord.retrieve_by_id(session, connection_id)
         connection_mgr = ConnectionManager(session)
-        my_label = request.query.get("my_label") or None
-        my_endpoint = request.query.get("my_endpoint") or None
-        request = await connection_mgr.create_request(connection, my_label, my_endpoint)
+        my_label = request.query.get("my_label")
+        my_endpoint = request.query.get("my_endpoint")
+        mediation_id = request.query.get("mediation_id")
+        mediation_record = None
+        if mediation_id:
+            mediation_record = await MediationRecord.retrieve_by_id(
+                session,
+                mediation_id
+            )
+        request = await connection_mgr.create_request(
+            connection,
+            my_label,
+            my_endpoint,
+            routing_options=mediation_record
+            )
         result = connection.serialize()
     except StorageNotFoundError as err:
         raise web.HTTPNotFound(reason=err.roll_up) from err
@@ -604,6 +678,7 @@ async def register(app: web.Application):
     app.add_routes(
         [
             web.get("/connections", connections_list, allow_head=False),
+            web.get("/targets", target_list, allow_head=False),
             web.get("/connections/{conn_id}", connections_retrieve, allow_head=False),
             web.post("/connections/create-static", connections_create_static),
             web.post("/connections/create-invitation", connections_create_invitation),

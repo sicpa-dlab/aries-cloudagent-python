@@ -32,8 +32,9 @@ class KeylistUpdateHandler(BaseHandler):
             raise HandlerException("Cannot update routes: no active connection")
 
         try:
+            session = await context.session()
             record = await MediationRecord.retrieve_by_connection_id(
-                context, context.connection_record.connection_id
+                session, context.connection_record.connection_id
             )
         except StorageNotFoundError:
             await self.reject(responder)
@@ -56,7 +57,7 @@ class KeylistUpdateHandler(BaseHandler):
             if updated.action == KeylistUpdateRule.RULE_REMOVE:
                 record.recipient_keys.remove(updated.recipient_key)
         await record.save(
-            context,
+            session,
             reason="keylist update response stored in mediation record",
             webhook=True
         )

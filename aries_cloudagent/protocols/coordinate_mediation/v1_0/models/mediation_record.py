@@ -3,6 +3,7 @@
 from typing import Sequence
 
 from marshmallow import EXCLUDE, fields
+from .....core.profile import ProfileSession
 
 from .....config.injection_context import InjectionContext
 
@@ -96,11 +97,11 @@ class MediationRecord(BaseRecord):
 
     @classmethod
     async def retrieve_by_connection_id(
-        cls, context: InjectionContext, connection_id: str
+        cls, session: ProfileSession, connection_id: str
     ):
         """Retrieve a route record by recipient key."""
         tag_filter = {"connection_id": connection_id}
-        return await cls.retrieve_by_tag_filter(context, tag_filter)
+        return await cls.retrieve_by_tag_filter(session, tag_filter)
 
     @property
     def record_value(self) -> dict:

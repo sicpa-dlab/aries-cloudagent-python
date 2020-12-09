@@ -18,6 +18,7 @@ from ....core.error import BaseError
 from ....core.profile import ProfileSession
 from ....ledger.base import BaseLedger
 from ....messaging.responder import BaseResponder
+from ....messaging.models.base_record import BaseRecord
 from ....storage.base import BaseStorage
 from ....storage.error import StorageError, StorageNotFoundError
 from ....storage.record import StorageRecord
@@ -33,6 +34,12 @@ from .messages.connection_request import ConnectionRequest
 from .messages.connection_response import ConnectionResponse
 from .messages.problem_report import ProblemReportReason
 from .models.connection_detail import ConnectionDetail
+from ...coordinate_mediation.v1_0.messages.inner.keylist_update_rule import (
+    KeylistUpdateRule
+)
+from ...coordinate_mediation.v1_0.messages.keylist_update import KeylistUpdate
+from ...coordinate_mediation.v1_0.manager import MediationManager
+from ...coordinate_mediation.v1_0.models.mediation_record import MediationRecord
 
 
 class ConnectionManagerError(BaseError):
@@ -76,6 +83,7 @@ class ConnectionManager:
         alias: str = None,
         routing_keys: Sequence[str] = None,
         recipient_keys: Sequence[str] = None,
+        mediation_id: str = None,
     ) -> Tuple[ConnRecord, ConnectionInvitation]:
         """
         Generate new connection invitation.
@@ -123,7 +131,6 @@ class ConnectionManager:
         if not my_label:
             my_label = self._session.settings.get("default_label")
         wallet = self._session.inject(BaseWallet)
-
         if public:
             if not self._session.settings.get("public_invites"):
                 raise ConnectionManagerError("Public invitations are not enabled")
@@ -144,13 +151,20 @@ class ConnectionManager:
                 label=my_label, did=f"did:sov:{public_did.did}"
             )
             return None, invitation
-
+        mediation_record = None
         invitation_mode = ConnRecord.INVITATION_MODE_ONCE
         if multi_use:
             invitation_mode = ConnRecord.INVITATION_MODE_MULTI
-
+        if mediation_id:
+            mediation_record = await MediationRecord.retrieve_by_id(
+                self._session,
+                mediation_id
+            )
         if not my_endpoint:
-            my_endpoint = self._session.settings.get("default_endpoint")
+            if mediation_record:
+                my_endpoint = mediation_record.endpoint
+            else:
+                my_endpoint = self._session.settings.get("default_endpoint")
         accept = (
             ConnRecord.ACCEPT_AUTO
             if (
@@ -165,12 +179,30 @@ class ConnectionManager:
 
         if recipient_keys:
             # TODO: check that recipient keys are in wallet
-            invitation_key = recipient_keys[0]
+            invitation_key = recipient_keys[0]  # TODO: use all keys?
         else:
             # Create and store new invitation key
             invitation_signing_key = await wallet.create_signing_key()
             invitation_key = invitation_signing_key.verkey
             recipient_keys = [invitation_key]
+            if mediation_record and self._session.settings.get(
+                "mediation.auto_send_keylist_update_in_create_invitation"
+            ):
+                # send a update keylist message with new recipient keys.
+                updates = [
+                    KeylistUpdateRule(
+                        recipient_key=invitation_key,
+                        action=KeylistUpdateRule.RULE_ADD
+                    )
+                ]
+                responder = self._session.inject(BaseResponder, required=False)
+                update_keylist_request = KeylistUpdate(updates=updates)
+                await responder.send_reply(
+                    update_keylist_request,
+                    connection_id=mediation_record.connection_id
+                )
+        if not routing_keys and mediation_record:
+            routing_keys = mediation_record.routing_keys
         # Create connection record
         connection = ConnRecord(
             invitation_key=invitation_key,  # TODO: determine correct key to use
@@ -201,6 +233,7 @@ class ConnectionManager:
         invitation: ConnectionInvitation,
         auto_accept: bool = None,
         alias: str = None,
+        routing_options: BaseRecord = None
     ) -> ConnRecord:
         """
         Create a new connection record to track a received invitation.
@@ -219,7 +252,9 @@ class ConnectionManager:
                 raise ConnectionManagerError("Invitation must contain recipient key(s)")
             if not invitation.endpoint:
                 raise ConnectionManagerError("Invitation must contain an endpoint")
-
+        if routing_options:
+            if not hasattr(routing_options, "routing_keys"):
+                raise ConnectionManagerError("routing_options must contain routing keys")
         accept = (
             ConnRecord.ACCEPT_AUTO
             if (
@@ -234,7 +269,7 @@ class ConnectionManager:
 
         # Create connection record
         connection = ConnRecord(
-            invitation_key=invitation.recipient_keys and invitation.recipient_keys[0],
+            invitation_key=invitation.recipient_keys[0],
             their_label=invitation.label,
             their_role=ConnRecord.Role.RESPONDER.rfc160,
             state=ConnRecord.State.INVITATION.rfc160,
@@ -252,7 +287,10 @@ class ConnectionManager:
         await connection.attach_invitation(self._session, invitation)
 
         if connection.accept == ConnRecord.ACCEPT_AUTO:
-            request = await self.create_request(connection)
+            request = await self.create_request(
+                connection,
+                routing_options=routing_options
+                )
             responder = self._session.inject(BaseResponder, required=False)
             if responder:
                 await responder.send(request, connection_id=connection.connection_id)
@@ -269,6 +307,7 @@ class ConnectionManager:
         connection: ConnRecord,
         my_label: str = None,
         my_endpoint: str = None,
+        routing_options: BaseRecord = None
     ) -> ConnectionRequest:
         """
         Create a new connection request for a previously-received invitation.
@@ -282,6 +321,7 @@ class ConnectionManager:
             A new `ConnectionRequest` message to send to the other agent
 
         """
+        my_info = None
         wallet = self._session.inject(BaseWallet)
         if connection.my_did:
             my_info = await wallet.get_local_did(connection.my_did)
@@ -289,7 +329,26 @@ class ConnectionManager:
             # Create new DID for connection
             my_info = await wallet.create_local_did()
             connection.my_did = my_info.did
-
+            if hasattr(connection, "routing_keys") and self._session.settings.get(
+                "mediation.auto_send_keylist_update_in_requests"
+            ):
+                if routing_options and hasattr(routing_options, "connection_id"):
+                    target_connection_id = routing_options.connection_id
+                else:
+                    target_connection_id = connection.recipient_keys[0]
+                # send a update keylist message with new recipient keys.
+                updates = [
+                    KeylistUpdateRule(
+                        recipient_key=my_info.verkey,
+                        action=KeylistUpdateRule.RULE_ADD
+                    )
+                ]
+                responder = self._session.inject(BaseResponder, required=False)
+                update_keylist_request = KeylistUpdate(updates=updates)
+                await responder.send_reply(
+                    update_keylist_request,
+                    connection_id=target_connection_id
+                )
         # Create connection request message
         if my_endpoint:
             my_endpoints = [my_endpoint]
@@ -299,9 +358,17 @@ class ConnectionManager:
             if default_endpoint:
                 my_endpoints.append(default_endpoint)
             my_endpoints.extend(self._session.settings.get("additional_endpoints", []))
-        did_doc = await self.create_did_document(
-            my_info, connection.inbound_connection_id, my_endpoints
-        )
+        if hasattr(connection, "routing_keys"):
+            did_doc = await self.create_routing_keys_did_document(
+                did_info=my_info,
+                recipient_keys=connection.recipient_keys,
+                routing_keys=connection.routing_keys,
+                endpoint=connection.endpoint  # does endpoint from invitation end up here?
+            )
+        else:
+            did_doc = await self.create_did_document(
+                my_info, connection.inbound_connection_id, my_endpoints
+            )
         if not my_label:
             my_label = self._session.settings.get("default_label")
         request = ConnectionRequest(
@@ -367,6 +434,26 @@ class ConnectionManager:
             if connection.is_multiuse_invitation:
                 wallet = self._session.inject(BaseWallet)
                 my_info = await wallet.create_local_did()
+                # update mediator keylist if mediation is set
+                mediation_records = await MediationRecord.query(self._session)
+                if hasattr(connection, "routing_keys") and \
+                        self._session.settings.get(
+                            "mediation.auto_send_keylist_update_in_requests"
+                ) and mediation_records[0]:
+                    # send a update keylist message with new recipient keys.
+                    updates = [  # WARNING: possible race condition here
+                        KeylistUpdateRule(
+                            recipient_key=my_info.verkey,
+                            action=KeylistUpdateRule.RULE_ADD
+                        )
+                    ]
+                    responder = self._session.inject(BaseResponder, required=False)
+                    update_keylist_request = KeylistUpdate(updates=updates)
+                    # TODO: add config for active mediator to send recipient keys to.
+                    await responder.send_reply(
+                        update_keylist_request,
+                        connection_id=mediation_records[0]
+                    )
                 new_connection = ConnRecord(
                     invitation_key=connection_key,
                     my_did=my_info.did,
@@ -404,6 +491,20 @@ class ConnectionManager:
             raise ConnectionManagerError("Public invitations are not enabled")
         else:
             my_info = await wallet.create_local_did()
+            # update mediator if mediation is set
+            if hasattr(connection, "routing_keys") and self._session.settings.get(
+                    "mediation.auto_send_keylist_update_in_requests"
+            ):
+                # send a update keylist message with new recipient keys.
+                updates = [
+                    KeylistUpdateRule(
+                        recipient_key=my_info.verkey,
+                        action=KeylistUpdateRule.RULE_ADD
+                    )
+                ]
+                responder = self._session.inject(BaseResponder, required=False)
+                update_keylist_request = KeylistUpdate(updates=updates)
+                await responder.send_reply(update_keylist_request)
             connection = ConnRecord(
                 invitation_key=connection_key,
                 my_did=my_info.did,
@@ -868,6 +969,64 @@ class ConnectionManager:
                 svc_endpoint,
             )
             did_doc.set(service)
+
+        return did_doc
+
+    async def create_routing_keys_did_document(
+        self,
+        did_info: DIDInfo,
+        recipient_keys: Sequence[str] = None,
+        routing_keys: Sequence[str] = None,
+        endpoint: str = None,
+    ) -> DIDDoc:
+        """Create DID document for connection request with routing keys.
+
+        Args:
+
+        Returns:
+            The prepared `DIDDoc` instance
+
+        """
+        recip_keys = []
+        route_keys = []
+        did_doc = DIDDoc(did=did_info.did)
+        wallet: BaseWallet = self._session.inject(BaseWallet)
+        for recipient_key in recipient_keys:
+            # TODO: resolve (get did record for verkey)
+            # TODO wrap in try/except
+            did_info = await wallet.get_local_did_for_verkey(recipient_key)
+            recip_key = PublicKey(
+                did_info.did,
+                "1",  # TODO: why one?
+                did_info.verkey,
+                PublicKeyType.ED25519_SIG_2018,
+                did_info.did,
+                True,
+            )
+            recip_keys.append(recip_key)
+
+        for routing_key in routing_keys:
+            # TODO: resolve did_dock for provided verkey
+            route_key = PublicKey(
+                did="55GkHamhTU1ZbTbV2ab9DE",  # fake! TODO: not provided from mediator
+                ident="1",  # f"routing-{connection.id}",
+                value=routing_key,
+                pk_type=PublicKeyType.ED25519_SIG_2018,
+                controller="55GkHamhTU1ZbTbV2ab9DE",  # fake! TODO: this is never provided
+                authn=False,
+            )
+            route_keys.append(route_key)
+
+        endpoint_ident = "indy"
+        service = Service(
+            did=did_info.did,
+            ident=endpoint_ident,
+            typ="IndyAgent",
+            recip_keys=recip_keys,
+            routing_keys=route_keys,
+            endpoint=endpoint,
+        )
+        did_doc.set(service)
 
         return did_doc
 

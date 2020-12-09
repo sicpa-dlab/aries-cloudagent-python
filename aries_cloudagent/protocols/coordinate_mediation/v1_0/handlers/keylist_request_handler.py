@@ -12,7 +12,7 @@ from .....messaging.base_handler import (
 
 from ..manager import MediationManager as Manager
 from ..messages.keylist_query import KeylistQuery as Request
-from ..models.mediation_record import MediationRecord as _Record
+from ..models.mediation_record import MediationRecord
 
 
 class KeylistRequestHandler(BaseHandler):
@@ -28,15 +28,16 @@ class KeylistRequestHandler(BaseHandler):
         if not context.connection_ready:
             raise HandlerException("Invalid keylist request: no active connection")
         try:
-            record = await _Record.retrieve_by_connection_id(
-                context, context.connection_record.connection_id
+            session = await context.session()
+            record = await MediationRecord.retrieve_by_connection_id(
+                session, context.connection_record.connection_id
             )
         except StorageNotFoundError:
             await self.reject(responder)
             return
 
-        if record.state == _Record.STATE_GRANTED:
-            mgr = Manager(context)
+        if record.state == MediationRecord.STATE_GRANTED:
+            mgr = Manager(session)
             keylist = await mgr.get_keylist(record)
             keylist_response = mgr.create_keylist_query_response(keylist)
             await responder.send_reply(keylist_response)

@@ -931,6 +931,20 @@ class MediationGroup(ArgumentGroup):
             help="Automatically create a connection invitation with the received updated"
             " keylists. Default: false.",
         )
+        parser.add_argument(
+            "--auto-send-keylist-update-in-requests",
+            action="store_true",
+            env_var="ACAPY_AUTO_SEND_KEYLIST_UPDATE_IN_REQUESTS",
+            help="Automatically updated mediator with newly created keys."
+            " keylists. Default: false.",
+        )
+        parser.add_argument(
+            "--auto-send-keylist-update-in-create-invitation",
+            action="store_true",
+            env_var="ACAPY_AUTO_SEND_KEYLIST_UPDATE_IN_CREATE_INVITATION",
+            help="Automatically updated mediator with newly created keys."
+            " keylists. Default: false.",
+        )
 
     def get_settings(self, args: Namespace):
         """Extract mediation settings."""
@@ -940,21 +954,27 @@ class MediationGroup(ArgumentGroup):
         else:
             settings["mediation.auto_mediation_request_on_discovery"] = False
         settings["mediation_invitation"] = True if args.mediation_invitation else False
+        if args.auto_send_keylist_update_in_requests:
+            settings["mediation.auto_send_keylist_update_in_requests"] = True
+        else:
+            settings["mediation.auto_send_keylist_update_in_requests"] = False
+        if args.auto_send_keylist_update_in_create_invitation:
+            settings["mediation.auto_send_keylist_update_in_create_invitation"] = True
+        else:
+            settings["mediation.auto_send_keylist_update_in_create_invitation"] = False
         if args.open_mediation:
             settings["mediation.open"] = True
             if args.automate_mediation:
                 settings["mediation.automate_mediation"] = True
                 settings["mediation.auto_respond_mediation_grant"] = True
                 settings["mediation.auto_respond_keylist_update_response"] = True
+                settings["mediation.auto_send_keylist_update_in_requests"] = True
+                settings["mediation.auto_send_keylist_update_in_create_invitation"] = True
             else:
                 if args.auto_respond_mediation_grant:
                     settings["mediation.auto_respond_mediation_grant"] = True
                 else:
                     settings["mediation.auto_respond_mediation_grant"] = False
-                if args.auto_respond_keylist_update_response:
-                    settings["mediation.auto_respond_keylist_update_response"] = True
-                else:
-                    settings["mediation.auto_respond_keylist_update_response"] = False
         return settings
 
 

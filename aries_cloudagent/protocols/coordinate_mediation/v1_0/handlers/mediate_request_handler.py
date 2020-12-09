@@ -24,15 +24,15 @@ class MediationRequestHandler(BaseHandler):
 
         if not context.connection_ready:
             raise HandlerException("Invalid mediation request: no active connection")
-
-        mgr = MediationManager(context)
+        session = await context.session()
+        mgr = MediationManager(session)
         try:
-            record = await mgr.receive_request(context.message)
+            record = await mgr.receive_request(context.message, context.connection_record)
             record, grant = await mgr.grant_request(record)
             await responder.send_reply(grant)
             record.routing_keys = grant.routing_keys
             record.endpoint = grant.endpoint
-            await record.save(context,
+            await record.save(session,
                               reason="Mediation request granted",
                               webhook=True)
         except MediationManagerError:
