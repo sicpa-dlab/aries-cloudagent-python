@@ -34,7 +34,7 @@ from .messages.keylist_update import KeylistUpdate
 from .manager import MediationManager as M_Manager
 from ....messaging.models.base import BaseModelError
 from ....messaging.models.openapi import OpenAPISchema
-
+from ....wallet.base import BaseWallet
 from ...connections.v1_0.routes import (InvitationResultSchema)
 from ...problem_report.v1_0 import internal_error
 from ....storage.error import StorageError, StorageNotFoundError
@@ -49,6 +49,7 @@ from .messages.keylist_update_response import KeylistUpdateResponseSchema
 import json
 from ...connections.v1_0.manager import ConnectionManager, ConnectionManagerError
 from ....connections.models.conn_record import ConnRecord
+from aries_cloudagent.messaging.responder import BaseResponder
 
 
 class CreateMediationInvitationQueryStringSchema(OpenAPISchema):
@@ -413,17 +414,34 @@ async def create_invitation(request: web.BaseRequest):
     (context, outbound_handler, _id) = itemgetter(*args)(await _prepare_handler(request))
     try:
         session = await context.session()
-        _record = await MediationRecord.retrieve_by_id(
+        mediation_record = await MediationRecord.retrieve_by_id(
             session, _id
         )
         connection_mgr = ConnectionManager(session)
+        wallet = session.inject(BaseWallet)
+        invitation_signing_key = await wallet.create_signing_key()
+        invitation_key = invitation_signing_key.verkey
+        # send a update keylist message with new recipient keys.
+        updates = [
+            KeylistUpdateRule(
+                recipient_key=invitation_key,
+                action=KeylistUpdateRule.RULE_ADD
+            )
+        ]
+        responder = session.inject(BaseResponder, required=False)
+        update_keylist_request = KeylistUpdate(updates=updates)
+        await responder.send(
+            update_keylist_request,
+            connection_id=mediation_record.connection_id
+        )
+        # wait for mediation ...
         (connection, invitation) = await connection_mgr.create_invitation(
             auto_accept=auto_accept,
             multi_use=multi_use,
             alias=alias,
-            recipient_keys=_record.recipient_keys,
-            my_endpoint=_record.endpoint,
-            routing_keys=_record.routing_keys,
+            recipient_keys=[invitation_key],
+            my_endpoint=mediation_record.endpoint,
+            routing_keys=mediation_record.routing_keys,
         )
         result = {
             "connection_id": connection and connection.connection_id,

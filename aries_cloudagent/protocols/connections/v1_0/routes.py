@@ -465,17 +465,11 @@ async def connections_receive_invitation(request: web.BaseRequest):
         auto_accept = json.loads(request.query.get("auto_accept", "null"))
         alias = request.query.get("alias")
         mediation_id = request.query.get("mediation_id")
-        mediation_record = None
-        if mediation_id:
-            mediation_record = await MediationRecord.retrieve_by_id(
-                session,
-                mediation_id
-            )
         connection = await connection_mgr.receive_invitation(
             invitation,
             auto_accept=auto_accept,
             alias=alias,
-            routing_options=mediation_record
+            mediation_id=mediation_id
         )
         result = connection.serialize()
     except (ConnectionManagerError, StorageError, BaseModelError) as err:
