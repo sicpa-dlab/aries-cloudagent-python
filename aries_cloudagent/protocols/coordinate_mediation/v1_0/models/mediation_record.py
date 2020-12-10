@@ -38,7 +38,6 @@ class MediationRecord(BaseRecord):
         connection_id: str = None,
         mediator_terms: Sequence[str] = None,
         recipient_terms: Sequence[str] = None,
-        recipient_keys: Sequence[str] = None,
         routing_keys: Sequence[str] = None,
         endpoint: str = None,
         **kwargs
@@ -52,8 +51,6 @@ class MediationRecord(BaseRecord):
             connection_id (str): ID of connection requesting or managing mediation
             mediator_terms (Sequence[str]): mediator_terms
             recipient_terms (Sequence[str]): recipient_terms
-            recipient_keys (Sequence[str]): keys in client control mediator
-            associates with connection
             routing_keys (Sequence[str]): keys in mediator control used to
             receive incoming messages
             endpoint (str): mediators endpoint
@@ -66,9 +63,7 @@ class MediationRecord(BaseRecord):
         self.mediator_terms = list(mediator_terms) if mediator_terms else []
         self.recipient_terms = list(recipient_terms) if recipient_terms else []
         self.routing_keys = list(routing_keys) if routing_keys else []
-        self.recipient_keys = list(recipient_keys) if recipient_keys else []
         self.endpoint = endpoint
-        self.routing_keys = list(routing_keys) if routing_keys else []
 
     def __eq__(self, other: "MediationRecord"):
         """Equality check."""
@@ -111,11 +106,8 @@ class MediationRecord(BaseRecord):
         return {
             prop: getattr(self, prop)
             for prop in (
-                "connection_id",
-                "state",
                 "mediator_terms",
                 "recipient_terms",
-                "recipient_keys",
                 "routing_keys",
                 "endpoint",
             )
@@ -177,6 +169,5 @@ class MediationRecordSchema(BaseRecordSchema):
     connection_id = fields.Str(required=True)
     mediator_terms = fields.List(fields.Str(), required=False)
     recipient_terms = fields.List(fields.Str(), required=False)
-    recipient_keys = fields.List(fields.Str(), required=False)
     routing_keys = fields.List(fields.Str(**INDY_RAW_PUBLIC_KEY), required=False)
     endpoint = fields.Str(required=False)

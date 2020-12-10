@@ -2,11 +2,6 @@
 
 from ...didcomm_prefix import DIDCommPrefix
 
-SPEC_URI = (
-    "https://github.com/hyperledger/aries-rfcs/tree/"
-    "fa8dc4ea1e667eb07db8f9ffeaf074a4455697c0/features/0211-route-coordination"
-)
-
 # Message types
 FORWARD = "routing/1.0/forward"
 ROUTE_QUERY_REQUEST = "routing/1.0/route-query-request"

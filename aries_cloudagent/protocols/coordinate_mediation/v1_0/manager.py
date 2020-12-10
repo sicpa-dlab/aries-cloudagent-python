@@ -116,10 +116,9 @@ class MediationManager:
             raise MediationAlreadyExists(
                 "MediationRecord already exists for connection"
             )
-        role = MediationRecord.ROLE_SERVER
         # TODO: Determine if terms are acceptable
         record = MediationRecord(
-            role=role,
+            role=MediationRecord.ROLE_SERVER,
             connection_id=connection_id,
             mediator_terms=request.mediator_terms,
             recipient_terms=request.recipient_terms,
@@ -239,11 +238,6 @@ class MediationManager:
             )
         route_mgr = RoutingManager(self.session)
         return await route_mgr.get_routes(record.connection_id)
-
-    async def create_keylist(self, record: MediationRecord, did: DIDInfo) -> RouteRecord:
-        """Create and store a new RouteRecord."""
-        route_mgr = RoutingManager(self.session)
-        return await route_mgr.create_route_record(record.connection_id, did.verkey)
 
     async def create_keylist_query_response(
         self, keylist: Sequence[RouteRecord]

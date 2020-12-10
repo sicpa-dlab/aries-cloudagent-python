@@ -33,11 +33,6 @@ class MediationRequestHandler(BaseHandler):
             if context.settings.get("mediation.open", False):
                 grant = await mgr.grant_request(record)
                 await responder.send_reply(grant)
-                # TODO: resolve double logic here,
-                # routing keys stored in mediation_record
-                record.routing_keys = grant.routing_keys
-                record.endpoint = grant.endpoint
-                await record.save(session, reason="Mediation request granted")
         except MediationAlreadyExists:
             await responder.send_reply(
                 ProblemReport(

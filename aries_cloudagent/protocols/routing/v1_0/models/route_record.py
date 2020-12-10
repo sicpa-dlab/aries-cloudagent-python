@@ -76,19 +76,6 @@ class RouteRecord(BaseRecord):
         tag_filter = {"recipient_key": recipient_key}
         return await cls.retrieve_by_tag_filter(context, tag_filter)
 
-    # @property
-    # def record_value(self) -> dict:
-    #     """Accessor for JSON record value."""
-    #     return {
-    #         prop: getattr(self, prop)
-    #         for prop in (
-    #             "record_id",
-    #             "role",
-    #             "connection_id",
-    #             "recipient_key",
-    #         )
-    #     }
-
     @classmethod
     async def retrieve_by_connection_id(
         cls, context: InjectionContext, connection_id: str
