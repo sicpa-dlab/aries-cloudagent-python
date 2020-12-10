@@ -14,6 +14,7 @@ from ..models.mediation_record import MediationRecord
 from ..messages.inner.keylist_updated import KeylistUpdated
 from ..messages.inner.keylist_update_rule import KeylistUpdateRule
 
+
 class KeylistUpdateHandler(BaseHandler):
     """Handler for keylist-update messages."""
 

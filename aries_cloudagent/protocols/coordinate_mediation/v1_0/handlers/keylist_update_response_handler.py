@@ -12,6 +12,7 @@ from .....storage.base import StorageNotFoundError
 from ..models.mediation_record import MediationRecord
 from ..manager import MediationManager
 
+
 class KeylistUpdateResponseHandler(BaseHandler):
     """Handler for keylist-update-response message."""
 

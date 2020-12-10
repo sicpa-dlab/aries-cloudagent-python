@@ -96,13 +96,13 @@ class MediationRecord(BaseRecord):
         """Setter for state."""
         if state not in [MediationRecord.STATE_DENIED,
                          MediationRecord.STATE_GRANTED,
-                         MediationRecord.STATE_REQUEST_RECEIVED]:
+                         MediationRecord.STATE_REQUEST]:
             raise ValueError(
                 f"{state} is not a valid state, "
                 f"must be one of ("
                 f"{MediationRecord.STATE_DENIED}, "
                 f"{MediationRecord.STATE_GRANTED}, "
-                f"{MediationRecord.STATE_REQUEST_RECEIVED}"
+                f"{MediationRecord.STATE_REQUEST}"
             )
         self._state = state
 
@@ -125,9 +125,8 @@ class MediationRecord(BaseRecord):
     @classmethod
     async def retrieve_by_connection_id(
         cls, session: ProfileSession, connection_id: str
-    ) -> "MediationRecord":
-        """
-        Retrieve a mediation record by connection ID.
+    ) -> 'MediationRecord':
+        """Retrieve a mediation record by connection ID.
 
         Args:
             session (ProfileSession): session

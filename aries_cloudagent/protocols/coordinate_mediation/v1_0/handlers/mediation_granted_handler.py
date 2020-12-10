@@ -12,6 +12,7 @@ from ..models.mediation_record import MediationRecord
 from aries_cloudagent.storage.error import StorageNotFoundError
 from ....connections.v1_0.messages.problem_report import ProblemReport
 
+
 class MediationGrantHandler(BaseHandler):
     """Handler for incoming mediation grant messages."""
 

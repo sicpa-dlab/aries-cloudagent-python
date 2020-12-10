@@ -7,7 +7,7 @@ from .....messaging.base_handler import (
     RequestContext,
 )
 from ....problem_report.v1_0.message import ProblemReport
-from ..manager import MediationManager, MediationAlreadyExists, MediationManagerError
+from ..manager import MediationManager, MediationAlreadyExists
 from ..messages.mediate_request import MediationRequest
 
 

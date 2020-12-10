@@ -181,7 +181,7 @@ class TestMediationManager:  # pylint: disable=R0904,W0621
         assert results[0].connection_id == TEST_CONN_ID
         assert results[0].recipient_key == TEST_VERKEY
 
-    async def test_gey_keylist_no_granted_record(self, manager):
+    async def test_get_keylist_no_granted_record(self, manager):
         """test_gey_keylist_no_granted_record."""
         record = MediationRecord()
         with pytest.raises(MediationNotGrantedError):
