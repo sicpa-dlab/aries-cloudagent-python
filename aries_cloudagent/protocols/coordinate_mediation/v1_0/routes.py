@@ -426,23 +426,6 @@ async def create_invitation(request: web.BaseRequest):
             my_endpoint=_record.endpoint,
             routing_keys=_record.routing_keys,
         )
-        # get connection_record with attached invitation
-        connection = await ConnRecord.retrieve_by_id(
-            session, connection.connection_id
-        )
-        # send a update keylist message with new recipient keys.
-        updates = [  # WARNING: possible race condition here
-            KeylistUpdateRule(
-                recipient_key=connection.recipient_keys[0].verkey,
-                action=KeylistUpdateRule.RULE_ADD
-            )
-        ]
-        responder = session.inject(BaseResponder, required=False)
-        update_keylist_request = KeylistUpdate(updates=updates)
-        await responder.send_reply(
-            update_keylist_request,
-            _record.connection_id
-        )
         result = {
             "connection_id": connection and connection.connection_id,
             "invitation": invitation.serialize(),

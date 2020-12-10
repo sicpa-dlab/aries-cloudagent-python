@@ -57,7 +57,7 @@ class TargetListSchema(OpenAPISchema):
 
     results = fields.List(
         fields.Nested(ConnectionTargetSchema()),
-        description="List of connection records",
+        description="List of target records",
     )
 
 
@@ -684,7 +684,7 @@ async def register(app: web.Application):
     app.add_routes(
         [
             web.get("/connections", connections_list, allow_head=False),
-            web.get("/targets", target_list, allow_head=False),
+            web.get("/targets/{conn_id}", target_list, allow_head=False),
             web.get("/connections/{conn_id}", connections_retrieve, allow_head=False),
             web.post("/connections/create-static", connections_create_static),
             web.post("/connections/create-invitation", connections_create_invitation),
