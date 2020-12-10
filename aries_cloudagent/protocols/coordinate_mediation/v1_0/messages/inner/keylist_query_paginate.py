@@ -1,4 +1,4 @@
-"""A keylist query paginate field inner object."""
+"""Inner structure of KeylistQuery. Represents KeylistQuery.paginate."""
 
 from marshmallow import fields
 
@@ -13,12 +13,7 @@ class KeylistQueryPaginate(BaseModel):
 
         schema_class = "KeylistQueryPaginateSchema"
 
-    def __init__(
-        self,
-        limit: int,
-        offset: int,
-        **kwargs
-    ):
+    def __init__(self, limit: int, offset: int, **kwargs):
         """
         Initialize keylist query pagination object.
 

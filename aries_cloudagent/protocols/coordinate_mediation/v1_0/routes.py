@@ -480,22 +480,22 @@ async def mediation_record_grant(request: web.BaseRequest):
     (r_time, context, outbound_handler,
      _id) = itemgetter(*args)(await _prepare_handler(request))
     # TODO: check that request origination point
-    _record = None
+    mediation_record = None
     try:
         session = await context.session()
-        _record = await MediationRecord.retrieve_by_id(
+        mediation_record = await MediationRecord.retrieve_by_id(
             session, _id
         )
-        _manager = M_Manager(session)
-        _record, _message = await _manager.grant_request(
-            mediation=_record
+        mediation_mgr = M_Manager(session)
+        grant_request = await mediation_mgr.grant_request(
+            mediation=mediation_record
         )
-        result = _record.serialize()
+        result = mediation_record.serialize()
     except (StorageError, BaseModelError) as err:
         raise web.HTTPBadRequest(reason=err.roll_up) from err
     await outbound_handler(
-        _message,
-        connection_id=_record.connection_id
+        grant_request,
+        connection_id=mediation_record.connection_id
     )
     return web.json_response(result, status=201)
 
@@ -516,19 +516,19 @@ async def mediation_record_deny(request: web.BaseRequest):
     (r_time, context, outbound_handler, _id, mediator_terms,
      recipient_terms) = itemgetter(*args)(await _prepare_handler(request))
     # TODO: check that request origination point
-    _record = None
+    mediation_record = None
     try:
         session = await context.session()
-        _record = await MediationRecord.retrieve_by_id(
+        mediation_record = await MediationRecord.retrieve_by_id(
             session, _id
         )
         _manager = M_Manager(session)
-        _record, _message = await _manager.deny_request(mediation=_record)
-        result = _message.serialize()
+        deny_request = await _manager.deny_request(mediation=mediation_record)
+        result = deny_request.serialize()
     except (StorageError, BaseModelError) as err:
         raise web.HTTPBadRequest(reason=err.roll_up) from err
     await outbound_handler(
-        _message, connection_id=_record.connection_id
+        deny_request, connection_id=mediation_record.connection_id
     )
     return web.json_response(result, status=201)
 

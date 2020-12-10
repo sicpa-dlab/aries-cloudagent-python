@@ -1,4 +1,4 @@
-"""Handler for incoming mediation request messages."""
+"""Handler for mediate-request message."""
 
 from .....messaging.base_handler import (
     BaseHandler,
@@ -6,17 +6,16 @@ from .....messaging.base_handler import (
     HandlerException,
     RequestContext,
 )
-
-from ..manager import MediationManager, MediationManagerError
-from ..messages.mediate_request import MediationRequest
 from ....problem_report.v1_0.message import ProblemReport
+from ..manager import MediationManager, MediationAlreadyExists, MediationManagerError
+from ..messages.mediate_request import MediationRequest
 
 
 class MediationRequestHandler(BaseHandler):
-    """Handler for incoming mediation request messages."""
+    """Handler for mediate-request message."""
 
     async def handle(self, context: RequestContext, responder: BaseResponder):
-        """Message handler implementation."""
+        """Handle mediate-request message."""
         self._logger.debug(
             "%s called with context %s", self.__class__.__name__, context
         )
@@ -24,18 +23,22 @@ class MediationRequestHandler(BaseHandler):
 
         if not context.connection_ready:
             raise HandlerException("Invalid mediation request: no active connection")
+
         session = await context.session()
         mgr = MediationManager(session)
         try:
-            record = await mgr.receive_request(context.message, context.connection_record)
-            record, grant = await mgr.grant_request(record)
-            await responder.send_reply(grant)
-            record.routing_keys = grant.routing_keys
-            record.endpoint = grant.endpoint
-            await record.save(session,
-                              reason="Mediation request granted",
-                              webhook=True)
-        except MediationManagerError:
+            record = await mgr.receive_request(
+                context.connection_record.connection_id, context.message
+            )
+            if context.settings.get("mediation.open", False):
+                grant = await mgr.grant_request(record)
+                await responder.send_reply(grant)
+                # TODO: resolve double logic here,
+                # routing keys stored in mediation_record
+                record.routing_keys = grant.routing_keys
+                record.endpoint = grant.endpoint
+                await record.save(session, reason="Mediation request granted")
+        except MediationAlreadyExists:
             await responder.send_reply(
                 ProblemReport(
                     explain_ltxt="Mediation request already exists from this connection."

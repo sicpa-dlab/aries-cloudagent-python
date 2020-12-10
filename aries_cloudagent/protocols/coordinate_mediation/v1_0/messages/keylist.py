@@ -1,4 +1,4 @@
-"""A mediation keylist query response message."""
+"""Response to keylist-query message."""
 
 from typing import Sequence
 
@@ -10,7 +10,7 @@ from .inner.keylist_key import KeylistKeySchema
 
 from .inner.keylist_query_paginate import (
     KeylistQueryPaginate,
-    KeylistQueryPaginateSchema
+    KeylistQueryPaginateSchema,
 )
 
 
@@ -21,7 +21,7 @@ HANDLER_CLASS = (
 
 
 class Keylist(AgentMessage):
-    """Class representing a keylist query response message."""
+    """Class representing a keylist-query response."""
 
     class Meta:
         """Metadata for a keylist query response."""
@@ -44,7 +44,7 @@ class Keylist(AgentMessage):
             keys: Found keys by requested query
             pagination: Pagination rules
         """
-        super(Keylist, self).__init__(**kwargs)
+        super().__init__(**kwargs)
         self.keys = list(keys) if keys else []
         self.pagination = pagination
 
@@ -58,11 +58,6 @@ class KeylistSchema(AgentMessageSchema):
         model_class = Keylist
 
     pagination = fields.Nested(
-        KeylistQueryPaginateSchema(),
-        required=False,
-        description="List of update rules"
+        KeylistQueryPaginateSchema(), required=False, description="List of update rules"
     )
-    keys = fields.List(
-        fields.Nested(KeylistKeySchema()),
-        description="Keys"
-    )
+    keys = fields.List(fields.Nested(KeylistKeySchema()), description="Keys")

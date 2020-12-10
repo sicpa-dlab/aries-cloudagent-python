@@ -215,21 +215,29 @@ async def main(
             log_status(
                 "#7 Create a connection to alice and print out the invite details"
             )
-            if mediation:
-                connection = await agent.admin_POST("/mediation/requests/client/" + agent.mediator_request_id + "/generate-invitation")
+            if mediation:  # TODO: update mediation generate-invitation post
+                connection = await agent.admin_POST(
+                    f'/mediation/requests/client/'
+                    f'{agent.mediator_request_id}/'
+                    f'generate-invitation'
+                )
             else:
                 connection = await agent.admin_POST("/connections/create-invitation")
 
+            invi_rec = await agent.admin_POST(
+                "/out-of-band/create-invitation",
+                {"include_handshake": True},
+            )
         agent.connection_id = connection["connection_id"]
 
         qr = QRCode()
-        qr.add_data(invi_msg["invitation"]["service"][0]["serviceEndpoint"])
+        qr.add_data(invi_rec["invitation_url"])
         log_msg(
             "Use the following JSON to accept the invite from another demo agent."
             " Or use the QR code to connect from a mobile agent."
         )
         log_msg(
-            json.dumps(invi_msg["invitation"]), label="Invitation Data:", color=None
+            json.dumps(invi_rec["invitation"]), label="Invitation Data:", color=None
         )
         qr.print_ascii(invert=True)
 

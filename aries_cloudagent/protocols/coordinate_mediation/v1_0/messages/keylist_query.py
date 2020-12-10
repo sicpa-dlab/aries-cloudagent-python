@@ -1,4 +1,4 @@
-"""A mediation keylist query content message."""
+"""keylist-query message used to request list of keys handled by mediator."""
 
 from marshmallow import fields
 
@@ -7,13 +7,12 @@ from ..message_types import KEYLIST_QUERY, PROTOCOL_PACKAGE
 
 from .inner.keylist_query_paginate import (
     KeylistQueryPaginate,
-    KeylistQueryPaginateSchema
+    KeylistQueryPaginateSchema,
 )
 
 
 HANDLER_CLASS = (
-    f"{PROTOCOL_PACKAGE}.handlers"
-    ".keylist_request_handler.KeylistRequestHandler"
+    f"{PROTOCOL_PACKAGE}.handlers" ".keylist_query_handler.KeylistQueryHandler"
 )
 
 
@@ -55,14 +54,8 @@ class KeylistQuerySchema(AgentMessageSchema):
         model_class = KeylistQuery
 
     filter = fields.Dict(
-        required=False,
-        description="Query dictionary object",
-        example={
-            "filter": {}
-        }
+        required=False, description="Query dictionary object", example={"filter": {}}
     )
     paginate = fields.Nested(
-        KeylistQueryPaginateSchema(),
-        required=False,
-        description="Pagination info"
+        KeylistQueryPaginateSchema(), required=False, description="Pagination info"
     )

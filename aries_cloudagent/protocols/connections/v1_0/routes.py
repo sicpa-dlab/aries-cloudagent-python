@@ -39,6 +39,10 @@ from ...coordinate_mediation.v1_0.models.mediation_record import (
 from ...coordinate_mediation.v1_0.models.mediation_schemas import MEDIATION_ID_SCHEMA
 
 
+class ConnectionModuleResponseSchema(OpenAPISchema):
+    """Response schema for connection module."""
+
+
 class ConnectionListSchema(OpenAPISchema):
     """Result schema for connection list."""
 
@@ -288,7 +292,7 @@ async def target_list(request: web.BaseRequest):
     summary="Query agent-to-agent connections",
 )
 @querystring_schema(ConnectionsListQueryStringSchema())
-@response_schema(ConnectionListSchema(), 200)
+@response_schema(ConnectionListSchema(), 200, description="")
 async def connections_list(request: web.BaseRequest):
     """
     Request handler for searching connection records.
@@ -339,7 +343,7 @@ async def connections_list(request: web.BaseRequest):
 
 @docs(tags=["connection"], summary="Fetch a single connection record")
 @match_info_schema(ConnIdMatchInfoSchema())
-@response_schema(ConnRecordSchema(), 200)
+@response_schema(ConnRecordSchema(), 200, description="")
 async def connections_retrieve(request: web.BaseRequest):
     """
     Request handler for fetching a single connection record.
@@ -372,7 +376,7 @@ async def connections_retrieve(request: web.BaseRequest):
 )
 @querystring_schema(CreateInvitationQueryStringSchema())
 @request_schema(InvitationConnectionTargetRequestSchema())
-@response_schema(InvitationResultSchema(), 200)
+@response_schema(InvitationResultSchema(), 200, description="")
 async def connections_create_invitation(request: web.BaseRequest):
     """
     Request handler for creating a new connection invitation.
@@ -435,7 +439,7 @@ async def connections_create_invitation(request: web.BaseRequest):
 )
 @querystring_schema(ReceiveInvitationQueryStringSchema())
 @request_schema(ReceiveInvitationRequestSchema())
-@response_schema(ConnRecordSchema(), 200)
+@response_schema(ConnRecordSchema(), 200, description="")
 async def connections_receive_invitation(request: web.BaseRequest):
     """
     Request handler for receiving a new connection invitation.
@@ -486,7 +490,7 @@ async def connections_receive_invitation(request: web.BaseRequest):
 )
 @match_info_schema(ConnIdMatchInfoSchema())
 @querystring_schema(AcceptInvitationQueryStringSchema())
-@response_schema(ConnRecordSchema(), 200)
+@response_schema(ConnRecordSchema(), 200, description="")
 async def connections_accept_invitation(request: web.BaseRequest):
     """
     Request handler for accepting a stored connection invitation.
@@ -537,7 +541,7 @@ async def connections_accept_invitation(request: web.BaseRequest):
 )
 @match_info_schema(ConnIdMatchInfoSchema())
 @querystring_schema(AcceptRequestQueryStringSchema())
-@response_schema(ConnRecordSchema(), 200)
+@response_schema(ConnRecordSchema(), 200, description="")
 async def connections_accept_request(request: web.BaseRequest):
     """
     Request handler for accepting a stored connection request.
@@ -573,6 +577,7 @@ async def connections_accept_request(request: web.BaseRequest):
     tags=["connection"], summary="Assign another connection as the inbound connection"
 )
 @match_info_schema(ConnIdRefIdMatchInfoSchema())
+@response_schema(ConnectionModuleResponseSchema(), 200, description="")
 async def connections_establish_inbound(request: web.BaseRequest):
     """
     Request handler for setting the inbound connection on a connection record.
@@ -602,6 +607,7 @@ async def connections_establish_inbound(request: web.BaseRequest):
 
 @docs(tags=["connection"], summary="Remove an existing connection record")
 @match_info_schema(ConnIdMatchInfoSchema())
+@response_schema(ConnectionModuleResponseSchema, 200, description="")
 async def connections_remove(request: web.BaseRequest):
     """
     Request handler for removing a connection record.
@@ -626,7 +632,7 @@ async def connections_remove(request: web.BaseRequest):
 
 @docs(tags=["connection"], summary="Create a new static connection")
 @request_schema(ConnectionStaticRequestSchema())
-@response_schema(ConnectionStaticResultSchema(), 200)
+@response_schema(ConnectionStaticResultSchema(), 200, description="")
 async def connections_create_static(request: web.BaseRequest):
     """
     Request handler for creating a new static connection.

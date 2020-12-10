@@ -1,4 +1,4 @@
-"""Mediation request message."""
+"""mediate-request message used to request mediation from a mediator."""
 
 from typing import Sequence
 
@@ -8,8 +8,9 @@ from .....messaging.agent_message import AgentMessage, AgentMessageSchema
 
 from ..message_types import MEDIATE_REQUEST, PROTOCOL_PACKAGE
 
-HANDLER_CLASS = \
+HANDLER_CLASS = (
     f"{PROTOCOL_PACKAGE}.handlers.mediate_request_handler.MediationRequestHandler"
+)
 
 
 class MediationRequest(AgentMessage):

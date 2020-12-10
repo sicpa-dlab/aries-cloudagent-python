@@ -1,4 +1,4 @@
-"""A mediation keylist update content message."""
+"""keylist-update message used to notify mediator of keylist changes."""
 
 from typing import Sequence
 
@@ -10,8 +10,7 @@ from ..message_types import KEYLIST_UPDATE, PROTOCOL_PACKAGE
 from .inner.keylist_update_rule import KeylistUpdateRule, KeylistUpdateRuleSchema
 
 HANDLER_CLASS = (
-    f"{PROTOCOL_PACKAGE}.handlers"
-    ".keylist_update_handler.KeylistUpdateHandler"
+    f"{PROTOCOL_PACKAGE}.handlers.keylist_update_handler.KeylistUpdateHandler"
 )
 
 

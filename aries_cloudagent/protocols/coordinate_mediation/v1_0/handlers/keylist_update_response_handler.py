@@ -1,26 +1,22 @@
-"""Handler for incoming mediation keylist update response messages."""
-
+"""Handler for keylist-update-response message."""
 from .....messaging.base_handler import (
     BaseHandler,
     BaseResponder,
     HandlerException,
     RequestContext,
 )
-
 from ..messages.keylist_update_response import KeylistUpdateResponse
 from ..messages.inner.keylist_updated import KeylistUpdated
 from ..messages.inner.keylist_update_rule import KeylistUpdateRule
-# from ....routing.v1_0.models.route_record import RouteRecord
 from .....storage.base import StorageNotFoundError
-# from aries_cloudagent.protocols.problem_report.v1_0.message import ProblemReport
 from ..models.mediation_record import MediationRecord
-
+from ..manager import MediationManager
 
 class KeylistUpdateResponseHandler(BaseHandler):
-    """Handler for incoming keylist update response messages."""
+    """Handler for keylist-update-response message."""
 
     async def handle(self, context: RequestContext, responder: BaseResponder):
-        """Message handler implementation."""
+        """Handle keylist-update-response message."""
         self._logger.debug(
             "%s called with context %s", self.__class__.__name__, context
         )
@@ -28,9 +24,12 @@ class KeylistUpdateResponseHandler(BaseHandler):
 
         if not context.connection_ready:
             raise HandlerException("Invalid mediation request: no active connection")
+        # TODO: resolve duplicate logic here
+        # store keylists in mediation_record
         mediation_record = None
+        session = await context.session()
+        mgr = MediationManager(session)
         try:
-            session = await context.session()
             mediation_record = await MediationRecord.retrieve_by_connection_id(
                 session, context.connection_record.connection_id
             )
@@ -41,34 +40,13 @@ class KeylistUpdateResponseHandler(BaseHandler):
                 continue
             if updated.action == KeylistUpdateRule.RULE_ADD:
                 mediation_record.recipient_keys.append(updated.recipient_key)
-                # record = RouteRecord(
-                #     role=RouteRecord.ROLE_CLIENT,
-                #     recipient_key=updated.recipient_key,
-                #     connection_id=context.connection_record.connection_id
-                # )
-                # TODO: log success
-                # await record.save(context, reason="Route successfully added.")
             if updated.action == KeylistUpdateRule.RULE_REMOVE:
                 mediation_record.recipient_keys.remove(updated.recipient_key)
-                # try:
-                #     records = await RouteRecord.query(
-                #         context,
-                #         {
-                #             'role': RouteRecord.ROLE_CLIENT,
-                #             'connection_id': context.connection_record.connection_id,
-                #             'recipient_key': updated.recipient_key
-                #         }
-                #     )
-                # except StorageNotFoundError:
-                #     raise HandlerException('No such route found.')
-
-                # if len(records) > 1:
-                #     raise HandlerException('More than one route record found.')
-
-                # record = records[0]
-                # await record.delete_record(context)
         await mediation_record.save(
             session,
-            reason="keylist update response stored in mediation record",
-            webhook=True
+            reason="keylist update response stored in mediation record"
+        )
+        # store keylists in ... routes?
+        await mgr.store_update_results(
+            context.connection_record.connection_id, context.message.updated
         )

@@ -1,8 +1,12 @@
-"""An object for containing updated route information."""
+"""Inner structure of keylist-update-response.
+
+Represents single item in keylist-update-response.updated list.
+"""
 
 from marshmallow import EXCLUDE, fields
 
 from ......messaging.models.base import BaseModel, BaseModelSchema
+from ......messaging.valid import INDY_RAW_PUBLIC_KEY
 
 
 class KeylistUpdated(BaseModel):
@@ -50,6 +54,6 @@ class KeylistUpdatedSchema(BaseModelSchema):
         model_class = KeylistUpdated
         unknown = EXCLUDE
 
-    recipient_key = fields.Str(required=True)
+    recipient_key = fields.Str(required=True, **INDY_RAW_PUBLIC_KEY)
     action = fields.Str(required=True)
     result = fields.Str(required=True)

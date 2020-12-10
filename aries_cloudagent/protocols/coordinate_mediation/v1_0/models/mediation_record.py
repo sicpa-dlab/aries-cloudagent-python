@@ -3,22 +3,16 @@
 from typing import Sequence
 
 from marshmallow import EXCLUDE, fields
+
 from .....core.profile import ProfileSession
-
 from .....config.injection_context import InjectionContext
-
 from .....messaging.models.base_record import BaseRecord, BaseRecordSchema
-
-from .....storage.base import StorageNotFoundError, StorageDuplicateError
+from .....messaging.valid import INDY_RAW_PUBLIC_KEY
+from .....storage.base import StorageDuplicateError, StorageNotFoundError
 
 
 class MediationRecord(BaseRecord):
-    """Class representing stored route information.
-
-    Args:
-        connection id:
-        terms:
-    """
+    """Class representing stored mediation information."""
 
     class Meta:
         """RouteRecord metadata."""
@@ -27,9 +21,9 @@ class MediationRecord(BaseRecord):
 
     RECORD_TYPE = "mediation_requests"
     RECORD_ID_NAME = "mediation_id"
-    TAG_NAMES = {"state",  "role", "connection_id"}
+    TAG_NAMES = {"state", "role", "connection_id"}
 
-    STATE_REQUEST_RECEIVED = "request_received"
+    STATE_REQUEST = "request"
     STATE_GRANTED = "granted"
     STATE_DENIED = "denied"
 
@@ -50,18 +44,24 @@ class MediationRecord(BaseRecord):
         endpoint: str = None,
         **kwargs
     ):
-        """
-        Initialize a MediationRecord instance.
+        """__init__.
 
         Args:
-            mediation_id:
-            state:
-            connection_id:
-            terms:
+            mediation_id (str): (Optional) manually set record ID
+            state (str): state, defaults to 'request_received'
+            role (str): role in mediation, defaults to 'server'
+            connection_id (str): ID of connection requesting or managing mediation
+            mediator_terms (Sequence[str]): mediator_terms
+            recipient_terms (Sequence[str]): recipient_terms
+            recipient_keys (Sequence[str]): keys in client control mediator
+            associates with connection
+            routing_keys (Sequence[str]): keys in mediator control used to
+            receive incoming messages
+            endpoint (str): mediators endpoint
+            kwargs: Pass arguments through to BaseRecord.__init__
+
         """
-        super().__init__(
-            mediation_id, state or self.STATE_REQUEST_RECEIVED, **kwargs
-        )
+        super().__init__(mediation_id, state or self.STATE_REQUEST, **kwargs)
         self.role = role if role else self.ROLE_SERVER
         self.connection_id = connection_id
         self.mediator_terms = list(mediator_terms) if mediator_terms else []
@@ -69,6 +69,17 @@ class MediationRecord(BaseRecord):
         self.routing_keys = list(routing_keys) if routing_keys else []
         self.recipient_keys = list(recipient_keys) if recipient_keys else []
         self.endpoint = endpoint
+        self.routing_keys = list(routing_keys) if routing_keys else []
+
+    def __eq__(self, other: "MediationRecord"):
+        """Equality check."""
+        if not isinstance(other, MediationRecord):
+            return False
+        return (
+            self.mediation_id == other.mediation_id
+            and self.record_tags == other.record_tags
+            and self.record_value == other.record_value
+        )
 
     @property
     def mediation_id(self) -> str:
@@ -95,17 +106,9 @@ class MediationRecord(BaseRecord):
             )
         self._state = state
 
-    @classmethod
-    async def retrieve_by_connection_id(
-        cls, session: ProfileSession, connection_id: str
-    ):
-        """Retrieve a route record by recipient key."""
-        tag_filter = {"connection_id": connection_id}
-        return await cls.retrieve_by_tag_filter(session, tag_filter)
-
     @property
     def record_value(self) -> dict:
-        """Accessor for JSON record value."""
+        """Return values of record as dictionary."""
         return {
             prop: getattr(self, prop)
             for prop in (
@@ -120,10 +123,37 @@ class MediationRecord(BaseRecord):
         }
 
     @classmethod
+    async def retrieve_by_connection_id(
+        cls, session: ProfileSession, connection_id: str
+    ) -> "MediationRecord":
+        """
+        Retrieve a mediation record by connection ID.
+
+        Args:
+            session (ProfileSession): session
+            connection_id (str): connection_id
+
+        Returns:
+            MediationRecord: retrieved record
+
+        """
+        tag_filter = {"connection_id": connection_id}
+        return await cls.retrieve_by_tag_filter(session, tag_filter)
+
+    @classmethod
     async def exists_for_connection_id(
         cls, context: InjectionContext, connection_id: str
     ) -> bool:
-        """Return whether a mediation record exists for the given connection."""
+        """Return whether a mediation record exists for the given connection.
+
+        Args:
+            context (InjectionContext): context
+            connection_id (str): connection_id
+
+        Returns:
+            bool: whether record exists
+
+        """
         tag_filter = {"connection_id": connection_id}
         try:
             record = await cls.retrieve_by_tag_filter(context, tag_filter)
@@ -146,9 +176,9 @@ class MediationRecordSchema(BaseRecordSchema):
 
     mediation_id = fields.Str(required=False)
     role = fields.Str(required=True)
-    endpoint = fields.Str(required=False)
-    routing_keys = fields.List(fields.Str(), required=False)
-    recipient_keys = fields.List(fields.Str(), required=False)
     connection_id = fields.Str(required=True)
     mediator_terms = fields.List(fields.Str(), required=False)
     recipient_terms = fields.List(fields.Str(), required=False)
+    recipient_keys = fields.List(fields.Str(), required=False)
+    routing_keys = fields.List(fields.Str(**INDY_RAW_PUBLIC_KEY), required=False)
+    endpoint = fields.Str(required=False)

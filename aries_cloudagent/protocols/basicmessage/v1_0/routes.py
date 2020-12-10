@@ -1,7 +1,7 @@
 """Basic message admin routes."""
 
 from aiohttp import web
-from aiohttp_apispec import docs, match_info_schema, request_schema
+from aiohttp_apispec import docs, match_info_schema, request_schema, response_schema
 
 from marshmallow import fields
 
@@ -13,6 +13,10 @@ from ....storage.error import StorageNotFoundError
 
 from .message_types import SPEC_URI
 from .messages.basicmessage import BasicMessage
+
+
+class BasicMessageModuleResponseSchema(OpenAPISchema):
+    """Response schema for Basic Message Module."""
 
 
 class SendMessageSchema(OpenAPISchema):
@@ -32,6 +36,7 @@ class ConnIdMatchInfoSchema(OpenAPISchema):
 @docs(tags=["basicmessage"], summary="Send a basic message to a connection")
 @match_info_schema(ConnIdMatchInfoSchema())
 @request_schema(SendMessageSchema())
+@response_schema(BasicMessageModuleResponseSchema(), 200, description="")
 async def connections_send_message(request: web.BaseRequest):
     """
     Request handler for sending a basic message to a connection.
@@ -46,7 +51,8 @@ async def connections_send_message(request: web.BaseRequest):
     params = await request.json()
 
     try:
-        connection = await ConnRecord.retrieve_by_id(context, connection_id)
+        async with context.session() as session:
+            connection = await ConnRecord.retrieve_by_id(session, connection_id)
     except StorageNotFoundError as err:
         raise web.HTTPNotFound(reason=err.roll_up) from err
 
