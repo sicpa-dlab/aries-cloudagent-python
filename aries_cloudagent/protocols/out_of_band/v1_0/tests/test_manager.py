@@ -74,6 +74,8 @@ class TestOOBManager(AsyncTestCase, TestConfig):
         self.session.context.injector.bind_instance(BaseLedger, self.ledger)
 
         self.manager = OutOfBandManager(self.session)
+        assert self.manager.session
+
         self.test_conn_rec = ConnRecord(
             my_did=TestConfig.test_did,
             their_did=TestConfig.test_target_did,
@@ -99,7 +101,7 @@ class TestOOBManager(AsyncTestCase, TestConfig):
             assert invi_rec.invitation["@type"] == DIDCommPrefix.qualify_current(
                 INVITATION
             )
-            assert not invi_rec.invitation["request~attach"]
+            assert not invi_rec.invitation.get("request~attach")
             assert invi_rec.invitation["label"] == "This guy"
             assert (
                 DIDCommPrefix.qualify_current(INVITATION)
@@ -221,7 +223,7 @@ class TestOOBManager(AsyncTestCase, TestConfig):
         )
 
         assert invi_rec.invitation["@type"] == DIDCommPrefix.qualify_current(INVITATION)
-        assert not invi_rec.invitation["request~attach"]
+        assert not invi_rec.invitation.get("request~attach")
         assert invi_rec.invitation["label"] == "That guy"
         assert (
             DIDCommPrefix.qualify_current(INVITATION)
@@ -231,7 +233,7 @@ class TestOOBManager(AsyncTestCase, TestConfig):
         assert service["id"] == "#inline"
         assert service["type"] == "did-communication"
         assert len(service["recipientKeys"]) == 1
-        assert not service["routingKeys"]
+        assert not service.get("routingKeys")
         assert service["serviceEndpoint"] == TestConfig.test_endpoint
 
     async def test_receive_invitation_service_block(self):
