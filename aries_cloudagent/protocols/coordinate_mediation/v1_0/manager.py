@@ -203,8 +203,7 @@ class MediationManager:
 
         def rule_to_update(rule: KeylistUpdateRule):
             return RouteUpdate(
-                recipient_key=rule.recipient_key,
-                action=action_map[rule.action]
+                recipient_key=rule.recipient_key, action=action_map[rule.action]
             )
 
         def updated_to_keylist_updated(updated: RouteUpdated):
@@ -449,4 +448,5 @@ class MediationManager:
         tag_filter = {"connection_id": connection_id} if connection_id else {}
         tag_filter["role"] = RouteRecord.ROLE_CLIENT
         return await RouteRecord.query(self.session, tag_filter)
+
     # }}}

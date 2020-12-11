@@ -899,7 +899,7 @@ class MediationGroup(ArgumentGroup):
             action="store_true",
             help="Enables didcomm mediation. After establishing a connection, if enabled, \
                 an agent may request message mediation, which will allow the mediator to \
-                forward messages on behalf of the recipient. See aries-rfc:0211."
+                forward messages on behalf of the recipient. See aries-rfc:0211.",
         )
         parser.add_argument(
             "--automate-mediation",
@@ -980,7 +980,9 @@ class MediationGroup(ArgumentGroup):
                 settings["mediation.auto_respond_mediation_grant"] = True
                 settings["mediation.auto_respond_keylist_update_response"] = True
                 settings["mediation.auto_send_keylist_update_in_requests"] = True
-                settings["mediation.auto_send_keylist_update_in_create_invitation"] = True
+                settings[
+                    "mediation.auto_send_keylist_update_in_create_invitation"
+                ] = True
             else:
                 if args.auto_respond_mediation_grant:
                     settings["mediation.auto_respond_mediation_grant"] = True

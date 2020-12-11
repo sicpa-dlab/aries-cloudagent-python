@@ -40,7 +40,7 @@ class MediationRecord(BaseRecord):
         recipient_terms: Sequence[str] = None,
         routing_keys: Sequence[str] = None,
         endpoint: str = None,
-        **kwargs
+        **kwargs,
     ):
         """__init__.
 
@@ -88,9 +88,11 @@ class MediationRecord(BaseRecord):
     @state.setter
     def state(self, state):
         """Setter for state."""
-        if state not in [MediationRecord.STATE_DENIED,
-                         MediationRecord.STATE_GRANTED,
-                         MediationRecord.STATE_REQUEST]:
+        if state not in [
+            MediationRecord.STATE_DENIED,
+            MediationRecord.STATE_GRANTED,
+            MediationRecord.STATE_REQUEST,
+        ]:
             raise ValueError(
                 f"{state} is not a valid state, "
                 f"must be one of ("
