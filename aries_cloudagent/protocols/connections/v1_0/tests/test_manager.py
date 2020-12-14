@@ -328,7 +328,7 @@ class TestConnectionManager(AsyncTestCase):
                 connect_invite, mediation_id="test-mediation-id", auto_accept=True
             )
             create_request.assert_called_once_with(
-                invitee_record, mediation_id="test-mediation-id"
+                invitee_record, mediation_id="test-mediation-id", mediation_record=None
             )
 
     async def test_receive_invitation_bad_mediation(self):
