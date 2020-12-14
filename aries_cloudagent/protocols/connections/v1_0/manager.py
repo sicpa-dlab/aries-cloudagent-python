@@ -2,6 +2,11 @@
 
 import logging
 from typing import Coroutine, Sequence, Tuple
+from functools import wraps
+
+from aries_cloudagent.protocols.coordinate_mediation.v1_0.manager import (
+    MediationManager,
+)
 
 from aries_cloudagent.protocols.coordinate_mediation.v1_0.manager import (
     MediationManager,
@@ -64,6 +69,29 @@ class ConnectionManager:
         """
         return self._session
 
+    def mediation_id_guard(func):
+        '''
+        Check for mediation id, if one is present
+        check for mediation record, if no record, retrieve
+        and attach it to the key value arguments. if any data
+        is with mediation is wrong, raise appropriate error.
+        '''
+        @wraps(func)
+        async def check(self, *args, **kwargs):
+            if kwargs.get('mediation_id'):
+                if not kwargs.get('mediation_record'):
+                    kwargs['mediation_record'] = await MediationRecord.retrieve_by_id(
+                        self._session, kwargs.get('mediation_id')
+                    )
+                if kwargs.get('mediation_record').state != MediationRecord.STATE_GRANTED:
+                    raise ConnectionManagerError(
+                        "Mediation is not granted for mediation identified by "
+                        f"{kwargs.get('mediation_record').mediation_id}"
+                    )
+            return await func(self, *args, **kwargs)
+        return check
+
+    @mediation_id_guard
     async def create_invitation(
         self,
         my_label: str = None,
@@ -75,6 +103,7 @@ class ConnectionManager:
         routing_keys: Sequence[str] = None,
         recipient_keys: Sequence[str] = None,
         mediation_id: str = None,
+        mediation_record: MediationRecord = None,
     ) -> Tuple[ConnRecord, ConnectionInvitation]:
         """
         Generate new connection invitation.
@@ -190,17 +219,6 @@ class ConnectionManager:
         await connection.save(self._session, reason="Created new invitation")
 
         if mediation_id:
-            # Let the error percolate up
-            mediation_record = await MediationRecord.retrieve_by_id(
-                self._session, mediation_id
-            )
-
-            if mediation_record.state != MediationRecord.STATE_GRANTED:
-                raise ConnectionManagerError(
-                    "Medation is not granted for mediation identified by "
-                    f"{mediation_record.mediation_id}"
-                )
-
             routing_keys = mediation_record.routing_keys
             my_endpoint = mediation_record.endpoint
 
@@ -236,6 +254,7 @@ class ConnectionManager:
         auto_accept: bool = None,
         alias: str = None,
         mediation_id: str = None,
+        mediation_record: MediationRecord = None,
     ) -> ConnRecord:
         """
         Create a new connection record to track a received invitation.
@@ -285,7 +304,9 @@ class ConnectionManager:
         await connection.attach_invitation(self._session, invitation)
 
         if connection.accept == ConnRecord.ACCEPT_AUTO:
-            request = await self.create_request(connection, mediation_id=mediation_id)
+            request = await self.create_request(
+                connection, mediation_id=mediation_id, mediation_record=mediation_record
+            )
             responder = self._session.inject(BaseResponder, required=False)
             if responder:
                 await responder.send(request, connection_id=connection.connection_id)
@@ -297,12 +318,14 @@ class ConnectionManager:
             self._logger.debug("Connection invitation will await acceptance")
         return connection
 
+    @mediation_id_guard
     async def create_request(
         self,
         connection: ConnRecord,
         my_label: str = None,
         my_endpoint: str = None,
         mediation_id: str = None,
+        mediation_record: MediationRecord = None,
     ) -> ConnectionRequest:
         """
         Create a new connection request for a previously-received invitation.
@@ -316,20 +339,8 @@ class ConnectionManager:
             A new `ConnectionRequest` message to send to the other agent
 
         """
-        # Mediation setup
-        mediation_mgr = MediationManager(self._session)
-        mediation_record = None
-        keylist_updates = None
-        if mediation_id:
-            mediation_record = await MediationRecord.retrieve_by_id(
-                self._session, mediation_id
-            )
-            if mediation_record.state != MediationRecord.STATE_GRANTED:
-                raise ConnectionManagerError(
-                    "Medation is not granted for mediation identified by "
-                    f"{mediation_record.mediation_id}"
-                )
 
+        keylist_updates = None  # Mediation setup
         my_info = None
         wallet = self._session.inject(BaseWallet)
         print(connection)
@@ -339,6 +350,7 @@ class ConnectionManager:
             # Create new DID for connection
             my_info = await wallet.create_local_did()
             connection.my_did = my_info.did
+            mediation_mgr = MediationManager(self._session)
             keylist_updates = await mediation_mgr.add_key(
                 my_info.verkey, keylist_updates
             )
@@ -389,11 +401,13 @@ class ConnectionManager:
 
         return request
 
+    @mediation_id_guard
     async def receive_request(
         self,
         request: ConnectionRequest,
         receipt: MessageReceipt,
         mediation_id: str = None,
+        mediation_record: MediationRecord = None,
     ) -> ConnRecord:
         """
         Receive and store a connection request.
@@ -520,15 +534,6 @@ class ConnectionManager:
                 "mediation.auto_send_keylist_update_in_requests"
             )
         ):
-            mediation_record = await MediationRecord.retrieve_by_id(
-                self._session, mediation_id
-            )
-            if mediation_record.state != MediationRecord.STATE_GRANTED:
-                raise ConnectionManagerError(
-                    "Medation is not granted for mediation identified by "
-                    f"{mediation_record.mediation_id}"
-                )
-
             responder = self._session.inject(BaseResponder, required=False)
             await responder.send(
                 keylist_updates, connection_id=mediation_record.connection_id
@@ -548,8 +553,10 @@ class ConnectionManager:
 
         return connection
 
+    @mediation_id_guard
     async def create_response(
-        self, connection: ConnRecord, my_endpoint: str = None, mediation_id: str = None
+        self, connection: ConnRecord, my_endpoint: str = None, mediation_id: str = None,
+        mediation_record: MediationRecord = None,
     ) -> ConnectionResponse:
         """
         Create a connection response for a received connection request.
@@ -559,7 +566,7 @@ class ConnectionManager:
             my_endpoint: The endpoint I can be reached at
             mediation_id: The record id for mediation that contains routing_keys and
             service endpoint
-
+            mediation_record: The record for mediation
         Returns:
             A tuple of the updated `ConnRecord` new `ConnectionResponse` message
 
@@ -572,16 +579,6 @@ class ConnectionManager:
 
         mediation_mgr = MediationManager(self._session)
         keylist_updates = None
-        mediation_record = None
-        if mediation_id:
-            mediation_record = await MediationRecord.retrieve_by_id(
-                self._session, mediation_id
-            )
-            if mediation_record.state != MediationRecord.STATE_GRANTED:
-                raise ConnectionManagerError(
-                    "Medation is not granted for mediation identified by "
-                    f"{mediation_record.mediation_id}"
-                )
 
         if ConnRecord.State.get(connection.state) not in (
             ConnRecord.State.REQUEST,
@@ -949,6 +946,73 @@ class ConnectionManager:
 
         """
 
+        def _routing_key_from_service(
+            service, did_info, did_controller, router_idx
+        ):
+            # check service for endpoint and keys to be used for routing
+            if 'serviceEndpoint' not in service:
+                raise ConnectionManagerError(
+                    "Routing DIDDoc service has no service endpoint"
+                )
+            if 'recipientKeys' not in service:
+                raise ConnectionManagerError(
+                    "Routing DIDDoc service has no recipient key(s)"
+                )
+            rk = PublicKey(
+                did_info.did,
+                f"routing-{router_idx}",
+                service['recipientKeys'][0],
+                PublicKeyType.ED25519_SIG_2018,
+                did_controller,
+                True,
+            )
+            # the last valid routers endpoint will be set below
+            svc_endpoints = [service['serviceEndpoint']]
+            return rk, svc_endpoints
+
+        async def _retrieve_service_by_routing_id(router_id):
+            # get router connection record
+            router = await ConnRecord.retrieve_by_id(self._session, router_id)
+            # check connection record is active
+            if ConnRecord.State.get(router.state) != ConnRecord.State.COMPLETED:
+                raise ConnectionManagerError(
+                    f"Router connection not active: {router_id}"
+                )
+            # get did_doc for router connection for routing key information
+            routing_doc, _ = await self.fetch_did_document(router.their_did)
+            # check router connection is configured with a service
+            if not routing_doc.service:
+                raise ConnectionManagerError(
+                    f"No services defined by routing DIDDoc: {router_id}"
+                )
+            did_doc: dict = routing_doc.serialize()
+            service: list = did_doc['service']
+            return service[0], router.inbound_connection_id
+
+        async def _routing_keys_from_routers(
+            router_id, routing_keys, endpoints, router_idx
+        ):
+            '''build list of keys to use for routing.
+            Strategy: inbound path can be analyzed by recursively looking up
+            the inbound router of the connection of the current inbound router.
+            We recursively look up the connection details of the inbound router
+            building a list of keys from each lookup that will be used for routing.
+            Before each lookup we update svc_endpoints with the last seen router,
+            which results in svc_endpoints containing the most fathest routers endpoint.
+            '''
+            if (not router_id):
+                return routing_keys, endpoints
+            router_service, inbound_router = await _retrieve_service_by_routing_id(
+                router_id
+            )
+            routing_key, endpoints = _routing_key_from_service(
+                router_service, did_info, did_controller, router_idx
+            )
+            routing_keys.append(routing_key)
+            return await _routing_keys_from_routers(
+                inbound_router, routing_keys, endpoints, router_idx
+            )
+
         did_doc = DIDDoc(did=did_info.did)
         did_controller = did_info.did
         did_key = did_info.verkey
@@ -961,43 +1025,18 @@ class ConnectionManager:
             True,
         )
         did_doc.set(pk)
-
+        # prepare variables for router look up.
         router_id = inbound_connection_id
         routing_keys = []
         router_idx = 1
-        while router_id:
-            # look up routing connection information
-            router = await ConnRecord.retrieve_by_id(self._session, router_id)
-            if ConnRecord.State.get(router.state) != ConnRecord.State.COMPLETED:
-                raise ConnectionManagerError(
-                    f"Router connection not active: {router_id}"
-                )
-            routing_doc, _ = await self.fetch_did_document(router.their_did)
-            if not routing_doc.service:
-                raise ConnectionManagerError(
-                    f"No services defined by routing DIDDoc: {router_id}"
-                )
-            for service in routing_doc.service.values():
-                if not service.endpoint:
-                    raise ConnectionManagerError(
-                        "Routing DIDDoc service has no service endpoint"
-                    )
-                if not service.recip_keys:
-                    raise ConnectionManagerError(
-                        "Routing DIDDoc service has no recipient key(s)"
-                    )
-                rk = PublicKey(
-                    did_info.did,
-                    f"routing-{router_idx}",
-                    service.recip_keys[0].value,
-                    PublicKeyType.ED25519_SIG_2018,
-                    did_controller,
-                    True,
-                )
-                routing_keys.append(rk)
-                svc_endpoints = [service.endpoint]
-                break
-            router_id = router.inbound_connection_id
+        # svc_endpoints will be updated in the recursion below.
+        routing_keys, svc_endpoints = await _routing_keys_from_routers(
+            router_id, routing_keys, svc_endpoints, router_idx
+        )
+
+        if mediation_record:
+            routing_keys = mediation_record.routing_keys
+            svc_endpoints = [mediation_record.endpoint]
 
         if mediation_record:
             routing_keys = mediation_record.routing_keys
