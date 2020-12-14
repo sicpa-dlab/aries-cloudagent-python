@@ -159,6 +159,7 @@ class ConnectionManager:
                 invitation_key, keylist_updates
             )
         else:
+            # TODO: check that recipient keys are in wallet
             invitation_key = recipient_keys[0]  # TODO first key appropriate?
 
         if not my_endpoint:
@@ -372,7 +373,7 @@ class ConnectionManager:
 
         await connection.save(self._session, reason="Created connection request")
 
-        # Notfiy mediator of keylist changes
+        # Notify mediator of keylist changes
         if (
             keylist_updates
             and mediation_record
@@ -556,7 +557,8 @@ class ConnectionManager:
         Args:
             connection: The `ConnRecord` with a pending connection request
             my_endpoint: The endpoint I can be reached at
-            mediation_id: ...
+            mediation_id: The record id for mediation that contains routing_keys and
+            service endpoint
 
         Returns:
             A tuple of the updated `ConnRecord` new `ConnectionResponse` message
@@ -939,7 +941,7 @@ class ConnectionManager:
             did_info: The DID information (DID and verkey) used in the connection
             inbound_connection_id: The ID of the inbound routing connection to use
             svc_endpoints: Custom endpoints for the DID Document
-            mediation_id: record id for mediation that contains routing_keys and
+            mediation_record: The record for mediation that contains routing_keys and
             service endpoint
 
         Returns:

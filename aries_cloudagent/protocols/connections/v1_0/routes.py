@@ -33,7 +33,6 @@ from .messages.connection_invitation import (
     ConnectionInvitationSchema,
 )
 from aries_cloudagent.connections.models.connection_target import ConnectionTargetSchema
-from ...coordinate_mediation.v1_0.models.mediation_record import MediationRecord
 from ...coordinate_mediation.v1_0.models.mediation_schemas import MEDIATION_ID_SCHEMA
 
 
@@ -502,13 +501,8 @@ async def connections_accept_invitation(request: web.BaseRequest):
         my_label = request.query.get("my_label")
         my_endpoint = request.query.get("my_endpoint")
         mediation_id = request.query.get("mediation_id")
-        mediation_record = None
-        if mediation_id:
-            mediation_record = await MediationRecord.retrieve_by_id(
-                session, mediation_id
-            )
         request = await connection_mgr.create_request(
-            connection, my_label, my_endpoint, routing_options=mediation_record
+            connection, my_label, my_endpoint, mediation_id=mediation_id
         )
         result = connection.serialize()
     except StorageNotFoundError as err:
