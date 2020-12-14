@@ -908,7 +908,6 @@ class MediationGroup(ArgumentGroup):
             help="automate all steps of mediation. Default: false.",
         )
         parser.add_argument(
-<<<<<<< HEAD
             "--mediation-invitation",
             type=str,
             dest="mediation_invitation",
@@ -937,8 +936,6 @@ class MediationGroup(ArgumentGroup):
             ". Default: false.",
         )
         parser.add_argument(
-=======
->>>>>>> 92249d9c93611251e2ddf1b52de124a2ce78b392
             "--auto-respond-keylist-update-response",
             action="store_true",
             env_var="ACAPY_AUTO_RESPOND_KEYLIST_UPDATE_RESPONSE",
@@ -963,14 +960,11 @@ class MediationGroup(ArgumentGroup):
     def get_settings(self, args: Namespace):
         """Extract mediation settings."""
         settings = {}
-<<<<<<< HEAD
         if args.auto_mediation_request_on_discovery:
             settings["mediation.auto_mediation_request_on_discovery"] = True
         else:
             settings["mediation.auto_mediation_request_on_discovery"] = False
         settings["mediation_invitation"] = True if args.mediation_invitation else False
-=======
->>>>>>> 92249d9c93611251e2ddf1b52de124a2ce78b392
         if args.auto_send_keylist_update_in_requests:
             settings["mediation.auto_send_keylist_update_in_requests"] = True
         else:
@@ -983,23 +977,12 @@ class MediationGroup(ArgumentGroup):
             settings["mediation.open"] = True
             if args.automate_mediation:
                 settings["mediation.automate_mediation"] = True
-<<<<<<< HEAD
                 settings["mediation.auto_respond_mediation_grant"] = True
-=======
->>>>>>> 92249d9c93611251e2ddf1b52de124a2ce78b392
                 settings["mediation.auto_respond_keylist_update_response"] = True
                 settings["mediation.auto_send_keylist_update_in_requests"] = True
                 settings[
                     "mediation.auto_send_keylist_update_in_create_invitation"
                 ] = True
-<<<<<<< HEAD
-            else:
-                if args.auto_respond_mediation_grant:
-                    settings["mediation.auto_respond_mediation_grant"] = True
-                else:
-                    settings["mediation.auto_respond_mediation_grant"] = False
-=======
->>>>>>> 92249d9c93611251e2ddf1b52de124a2ce78b392
         return settings
 
 
