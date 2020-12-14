@@ -950,11 +950,12 @@ class ConnectionManager:
 
         def _routing_key_from_service(service):
             # check service for endpoint and keys to be used for routing
-            if not service.endpoint:
+            print(service)
+            if 'serviceEndpoint' not in service:
                 raise ConnectionManagerError(
                     "Routing DIDDoc service has no service endpoint"
                 )
-            if not service.recip_keys:
+            if 'recipientKeys' not in service:
                 raise ConnectionManagerError(
                     "Routing DIDDoc service has no recipient key(s)"
                 )
@@ -964,14 +965,14 @@ class ConnectionManager:
             rk = PublicKey(
                 did_info.did,
                 f"routing-{router_idx}",
-                service.recip_keys[0].value,
+                service['recipientKeys'][0],
                 PublicKeyType.ED25519_SIG_2018,
                 did_controller,
                 True,
             )
             nonlocal svc_endpoints
             # the last valid routers endpoint will be set below
-            svc_endpoints = [service.endpoint]
+            svc_endpoints = [service['serviceEndpoint']]
             return rk
 
         async def _retrieve_service_by_routing_id(router_id):
@@ -990,8 +991,7 @@ class ConnectionManager:
                     f"No services defined by routing DIDDoc: {router_id}"
                 )
             did_doc: dict = routing_doc.serialize()
-            print(did_doc)
-            service: list = did_doc.service
+            service: list = did_doc['service']
             return service[0], router.inbound_connection_id
 
         async def _routing_keys_from_routers(router_id, routing_keys):
