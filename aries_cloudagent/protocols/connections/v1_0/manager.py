@@ -8,9 +8,6 @@ from aries_cloudagent.protocols.coordinate_mediation.v1_0.manager import (
     MediationManager,
 )
 
-from aries_cloudagent.protocols.coordinate_mediation.v1_0.manager import (
-    MediationManager,
-)
 
 from ....cache.base import BaseCache
 from ....config.base import InjectionError
@@ -70,25 +67,30 @@ class ConnectionManager:
         return self._session
 
     def mediation_id_guard(func):
-        '''
+        """
         Check for mediation id, if one is present
         check for mediation record, if no record, retrieve
         and attach it to the key value arguments. if any data
         is with mediation is wrong, raise appropriate error.
-        '''
+        """
+
         @wraps(func)
         async def check(self, *args, **kwargs):
-            if kwargs.get('mediation_id'):
-                if not kwargs.get('mediation_record'):
-                    kwargs['mediation_record'] = await MediationRecord.retrieve_by_id(
-                        self._session, kwargs.get('mediation_id')
+            if kwargs.get("mediation_id"):
+                if not kwargs.get("mediation_record"):
+                    kwargs["mediation_record"] = await MediationRecord.retrieve_by_id(
+                        self._session, kwargs.get("mediation_id")
                     )
-                if kwargs.get('mediation_record').state != MediationRecord.STATE_GRANTED:
+                if (
+                    kwargs.get("mediation_record").state
+                    != MediationRecord.STATE_GRANTED
+                ):
                     raise ConnectionManagerError(
                         "Mediation is not granted for mediation identified by "
                         f"{kwargs.get('mediation_record').mediation_id}"
                     )
             return await func(self, *args, **kwargs)
+
         return check
 
     @mediation_id_guard
@@ -102,6 +104,7 @@ class ConnectionManager:
         alias: str = None,
         routing_keys: Sequence[str] = None,
         recipient_keys: Sequence[str] = None,
+        metadata: dict = None,
         mediation_id: str = None,
         mediation_record: MediationRecord = None,
     ) -> Tuple[ConnRecord, ConnectionInvitation]:
@@ -169,6 +172,11 @@ class ConnectionManager:
                     "Cannot use public and multi_use at the same time"
                 )
 
+            if metadata:
+                raise ConnectionManagerError(
+                    "Cannot use public and set metadata at the same time"
+                )
+
             # FIXME - allow ledger instance to format public DID with prefix?
             invitation = ConnectionInvitation(
                 label=my_label, did=f"did:sov:{public_did.did}"
@@ -179,7 +187,10 @@ class ConnectionManager:
         if multi_use:
             invitation_mode = ConnRecord.INVITATION_MODE_MULTI
 
-        if not recipient_keys:
+        if recipient_keys:
+            # TODO: check that recipient keys are in wallet
+            invitation_key = recipient_keys[0]  # TODO first key appropriate?
+        else:
             # Create and store new invitation key
             invitation_signing_key = await wallet.create_signing_key()
             invitation_key = invitation_signing_key.verkey
@@ -187,9 +198,6 @@ class ConnectionManager:
             keylist_updates = await mediation_mgr.add_key(
                 invitation_key, keylist_updates
             )
-        else:
-            # TODO: check that recipient keys are in wallet
-            invitation_key = recipient_keys[0]  # TODO first key appropriate?
 
         if not my_endpoint:
             my_endpoint = self._session.settings.get("default_endpoint")
@@ -245,6 +253,10 @@ class ConnectionManager:
             endpoint=my_endpoint,
         )
         await connection.attach_invitation(self._session, invitation)
+
+        if metadata:
+            for key, value in metadata.items():
+                await connection.metadata_set(self._session, key, value)
 
         return connection, invitation
 
@@ -343,7 +355,6 @@ class ConnectionManager:
         keylist_updates = None  # Mediation setup
         my_info = None
         wallet = self._session.inject(BaseWallet)
-        print(connection)
         if connection.my_did:
             my_info = await wallet.get_local_did(connection.my_did)
         else:
@@ -555,7 +566,10 @@ class ConnectionManager:
 
     @mediation_id_guard
     async def create_response(
-        self, connection: ConnRecord, my_endpoint: str = None, mediation_id: str = None,
+        self,
+        connection: ConnRecord,
+        my_endpoint: str = None,
+        mediation_id: str = None,
         mediation_record: MediationRecord = None,
     ) -> ConnectionResponse:
         """
@@ -946,28 +960,26 @@ class ConnectionManager:
 
         """
 
-        def _routing_key_from_service(
-            service, did_info, did_controller, router_idx
-        ):
+        def _routing_key_from_service(service, did_info, did_controller, router_idx):
             # check service for endpoint and keys to be used for routing
-            if 'serviceEndpoint' not in service:
+            if "serviceEndpoint" not in service:
                 raise ConnectionManagerError(
                     "Routing DIDDoc service has no service endpoint"
                 )
-            if 'recipientKeys' not in service:
+            if "recipientKeys" not in service:
                 raise ConnectionManagerError(
                     "Routing DIDDoc service has no recipient key(s)"
                 )
             rk = PublicKey(
                 did_info.did,
                 f"routing-{router_idx}",
-                service['recipientKeys'][0],
+                service["recipientKeys"][0],
                 PublicKeyType.ED25519_SIG_2018,
                 did_controller,
                 True,
             )
             # the last valid routers endpoint will be set below
-            svc_endpoints = [service['serviceEndpoint']]
+            svc_endpoints = [service["serviceEndpoint"]]
             return rk, svc_endpoints
 
         async def _retrieve_service_by_routing_id(router_id):
@@ -986,21 +998,21 @@ class ConnectionManager:
                     f"No services defined by routing DIDDoc: {router_id}"
                 )
             did_doc: dict = routing_doc.serialize()
-            service: list = did_doc['service']
+            service: list = did_doc["service"]
             return service[0], router.inbound_connection_id
 
         async def _routing_keys_from_routers(
             router_id, routing_keys, endpoints, router_idx
         ):
-            '''build list of keys to use for routing.
+            """build list of keys to use for routing.
             Strategy: inbound path can be analyzed by recursively looking up
             the inbound router of the connection of the current inbound router.
             We recursively look up the connection details of the inbound router
             building a list of keys from each lookup that will be used for routing.
             Before each lookup we update svc_endpoints with the last seen router,
             which results in svc_endpoints containing the most fathest routers endpoint.
-            '''
-            if (not router_id):
+            """
+            if not router_id:
                 return routing_keys, endpoints
             router_service, inbound_router = await _retrieve_service_by_routing_id(
                 router_id
