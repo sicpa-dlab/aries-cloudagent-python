@@ -113,8 +113,11 @@ class MediationManager:
 
         """
         if await MediationRecord.exists_for_connection_id(self.session, connection_id):
+            record = await MediationRecord.retrieve_by_connection_id(
+                self.session, connection_id
+            )
             raise MediationAlreadyExists(
-                "MediationRecord already exists for connection"
+                f"MediationRecord {record}, already exists for connection {connection_id}"
             )
         # TODO: Determine if terms are acceptable
         record = MediationRecord(
