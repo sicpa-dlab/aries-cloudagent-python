@@ -1384,7 +1384,8 @@ class TestConnectionManager(AsyncTestCase):
         services = list(doc.service.values())
         assert len(services) == 1
         (service,) = services
-        assert service.routing_keys == mediation_record.routing_keys
+        service_public_keys = service.routing_keys[0]
+        assert service_public_keys.value == mediation_record.routing_keys[0]
         assert service.endpoint == mediation_record.endpoint
 
     async def test_create_did_document_mediation_svc_endpoints_overwritten(self):
@@ -1409,7 +1410,8 @@ class TestConnectionManager(AsyncTestCase):
         services = list(doc.service.values())
         assert len(services) == 1
         (service,) = services
-        assert service.routing_keys == mediation_record.routing_keys
+        service_public_keys = service.routing_keys[0]
+        assert service_public_keys.value == mediation_record.routing_keys[0]
         assert service.endpoint == mediation_record.endpoint
 
     async def test_did_key_storage(self):

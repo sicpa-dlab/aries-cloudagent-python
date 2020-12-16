@@ -952,6 +952,94 @@ class ConnectionManager:
             did_info: The DID information (DID and verkey) used in the connection
             inbound_connection_id: The ID of the inbound routing connection to use
             svc_endpoints: Custom endpoints for the DID Document
+            mediation_id: The record id for mediation that contains routing_keys and
+            service endpoint
+
+        Returns:
+            The prepared `DIDDoc` instance
+
+        """
+
+        did_doc = DIDDoc(did=did_info.did)
+        did_controller = did_info.did
+        did_key = did_info.verkey
+        pk = PublicKey(
+            did_info.did,
+            "1",
+            did_key,
+            PublicKeyType.ED25519_SIG_2018,
+            did_controller,
+            True,
+        )
+        did_doc.set(pk)
+
+        router_id = inbound_connection_id
+        routing_keys = []
+        router_idx = 1
+        while router_id:
+            # look up routing connection information
+            router = await ConnRecord.retrieve_by_id(self._session, router_id)
+            if ConnRecord.State.get(router.state) != ConnRecord.State.COMPLETED:
+                raise ConnectionManagerError(
+                    f"Router connection not active: {router_id}"
+                )
+            routing_doc, _ = await self.fetch_did_document(router.their_did)
+            if not routing_doc.service:
+                raise ConnectionManagerError(
+                    f"No services defined by routing DIDDoc: {router_id}"
+                )
+            for service in routing_doc.service.values():
+                if not service.endpoint:
+                    raise ConnectionManagerError(
+                        "Routing DIDDoc service has no service endpoint"
+                    )
+                if not service.recip_keys:
+                    raise ConnectionManagerError(
+                        "Routing DIDDoc service has no recipient key(s)"
+                    )
+                rk = PublicKey(
+                    did_info.did,
+                    f"routing-{router_idx}",
+                    service.recip_keys[0].value,
+                    PublicKeyType.ED25519_SIG_2018,
+                    did_controller,
+                    True,
+                )
+                routing_keys.append(rk)
+                svc_endpoints = [service.endpoint]
+                break
+            router_id = router.inbound_connection_id
+
+        if mediation_record:
+            routing_keys = [PublicKey(
+                    did_info.did,  # TODO: get correct controller did_info
+                    f"routing-{idx}",
+                    key,
+                    PublicKeyType.ED25519_SIG_2018,
+                    did_controller,  # TODO: get correct controller did_info
+                    True,  # TODO: should this be true?
+                ) for idx, key in enumerate(mediation_record.routing_keys)]
+            svc_endpoints = [mediation_record.endpoint]
+
+        for endpoint_index, svc_endpoint in enumerate(svc_endpoints or []):
+            endpoint_ident = "indy" if endpoint_index == 0 else f"indy{endpoint_index}"
+            service = Service(
+                did_info.did,
+                endpoint_ident,
+                "IndyAgent",
+                [pk],
+                routing_keys,
+                svc_endpoint,
+            )
+            did_doc.set(service)
+
+        return did_doc
+        """Create our DID document for a given DID.
+
+        Args:
+            did_info: The DID information (DID and verkey) used in the connection
+            inbound_connection_id: The ID of the inbound routing connection to use
+            svc_endpoints: Custom endpoints for the DID Document
             mediation_record: The record for mediation that contains routing_keys and
             service endpoint
 
