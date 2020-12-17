@@ -98,7 +98,6 @@ class ConnectionManager:
         recipient_keys: Sequence[str] = None,
         metadata: dict = None,
         mediation_id: str = None,
-        mediation_record: MediationRecord = None,
     ) -> Tuple[ConnRecord, ConnectionInvitation]:
         """
         Generate new connection invitation.
@@ -259,7 +258,6 @@ class ConnectionManager:
         auto_accept: bool = None,
         alias: str = None,
         mediation_id: str = None,
-        mediation_record: MediationRecord = None,
     ) -> ConnRecord:
         """
         Create a new connection record to track a received invitation.
@@ -310,7 +308,7 @@ class ConnectionManager:
 
         if connection.accept == ConnRecord.ACCEPT_AUTO:
             request = await self.create_request(
-                connection, mediation_id=mediation_id, mediation_record=mediation_record
+                connection, mediation_id=mediation_id
             )
             responder = self._session.inject(BaseResponder, required=False)
             if responder:
@@ -323,14 +321,12 @@ class ConnectionManager:
             self._logger.debug("Connection invitation will await acceptance")
         return connection
 
-    @mediation_id_guard
     async def create_request(
         self,
         connection: ConnRecord,
         my_label: str = None,
         my_endpoint: str = None,
         mediation_id: str = None,
-        mediation_record: MediationRecord = None,
     ) -> ConnectionRequest:
         """
         Create a new connection request for a previously-received invitation.
@@ -410,13 +406,11 @@ class ConnectionManager:
 
         return request
 
-    @mediation_id_guard
     async def receive_request(
         self,
         request: ConnectionRequest,
         receipt: MessageReceipt,
         mediation_id: str = None,
-        mediation_record: MediationRecord = None,
     ) -> ConnRecord:
         """
         Receive and store a connection request.
@@ -565,7 +559,6 @@ class ConnectionManager:
 
         return connection
 
-    @mediation_id_guard
     async def create_response(
         self,
         connection: ConnRecord,
