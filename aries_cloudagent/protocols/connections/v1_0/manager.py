@@ -1014,13 +1014,13 @@ class ConnectionManager:
 
         if mediation_record:
             routing_keys = [PublicKey(
-                    did_info.did,  # TODO: get correct controller did_info
-                    f"routing-{idx}",
-                    key,
-                    PublicKeyType.ED25519_SIG_2018,
-                    did_controller,  # TODO: get correct controller did_info
-                    True,  # TODO: should this be true?
-                ) for idx, key in enumerate(mediation_record.routing_keys)]
+                did_info.did,  # TODO: get correct controller did_info
+                f"routing-{idx}",
+                key,
+                PublicKeyType.ED25519_SIG_2018,
+                did_controller,  # TODO: get correct controller did_info
+                True,  # TODO: should this be true?
+            ) for idx, key in enumerate(mediation_record.routing_keys)]
             svc_endpoints = [mediation_record.endpoint]
 
         for endpoint_index, svc_endpoint in enumerate(svc_endpoints or []):

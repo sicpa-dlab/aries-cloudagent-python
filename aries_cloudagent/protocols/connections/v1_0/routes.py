@@ -112,11 +112,6 @@ class CreateInvitationRequestSchema(OpenAPISchema):
         "the invitation",
         required=False,
     )
-    mediation_id = fields.Str(
-        required=False,
-        description="Identifier for active mediation record to be used",
-        **MEDIATION_ID_SCHEMA
-    )
 
 
 class InvitationResultSchema(OpenAPISchema):
@@ -213,6 +208,11 @@ class CreateInvitationQueryStringSchema(OpenAPISchema):
     )
     multi_use = fields.Boolean(
         description="Create invitation for multiple use (default false)", required=False
+    )
+    mediation_id = fields.Str(
+        required=False,
+        description="Identifier for active mediation record to be used",
+        **MEDIATION_ID_SCHEMA
     )
 
 
@@ -484,7 +484,7 @@ async def connections_create_invitation(request: web.BaseRequest):
     service_endpoint = body.get("service_endpoint")
     routing_keys = body.get("routing_keys")
     metadata = body.get("metadata")
-    mediation_id = body.get("mediation_id")
+    mediation_id = request.query.get("mediation_id")
 
     if public and not context.settings.get("public_invites"):
         raise web.HTTPForbidden(
