@@ -2,7 +2,6 @@
 
 import logging
 from typing import Coroutine, Sequence, Tuple
-from functools import wraps
 
 from aries_cloudagent.protocols.coordinate_mediation.v1_0.manager import (
     MediationManager,
@@ -258,6 +257,7 @@ class ConnectionManager:
         auto_accept: bool = None,
         alias: str = None,
         mediation_id: str = None,
+        mediation_record: MediationRecord = None,
     ) -> ConnRecord:
         """
         Create a new connection record to track a received invitation.
@@ -307,9 +307,7 @@ class ConnectionManager:
         await connection.attach_invitation(self._session, invitation)
 
         if connection.accept == ConnRecord.ACCEPT_AUTO:
-            request = await self.create_request(
-                connection, mediation_id=mediation_id
-            )
+            request = await self.create_request(connection, mediation_id=mediation_id)
             responder = self._session.inject(BaseResponder, required=False)
             if responder:
                 await responder.send(request, connection_id=connection.connection_id)
@@ -346,7 +344,6 @@ class ConnectionManager:
         mediation_record = await self.mediation_record_if_id(mediation_id)
         mediation_mgr = MediationManager(self._session)
 
-        keylist_updates = None  # Mediation setup
         my_info = None
         wallet = self._session.inject(BaseWallet)
         if connection.my_did:
@@ -355,7 +352,6 @@ class ConnectionManager:
             # Create new DID for connection
             my_info = await wallet.create_local_did()
             connection.my_did = my_info.did
-            mediation_mgr = MediationManager(self._session)
             keylist_updates = await mediation_mgr.add_key(
                 my_info.verkey, keylist_updates
             )

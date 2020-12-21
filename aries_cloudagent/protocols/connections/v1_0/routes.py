@@ -32,8 +32,6 @@ from .messages.connection_invitation import (
     ConnectionInvitation,
     ConnectionInvitationSchema,
 )
-from aries_cloudagent.connections.models.connection_target import ConnectionTargetSchema
-from ...coordinate_mediation.v1_0.models.mediation_schemas import MEDIATION_ID_SCHEMA
 
 
 class ConnectionModuleResponseSchema(OpenAPISchema):
@@ -46,15 +44,6 @@ class ConnectionListSchema(OpenAPISchema):
     results = fields.List(
         fields.Nested(ConnRecordSchema()),
         description="List of connection records",
-    )
-
-
-class TargetListSchema(OpenAPISchema):
-    """Result schema for connection target list."""
-
-    results = fields.List(
-        fields.Nested(ConnectionTargetSchema()),
-        description="List of target records",
     )
 
 
@@ -89,6 +78,12 @@ class ReceiveInvitationRequestSchema(ConnectionInvitationSchema):
         """Bypass middleware field validation: marshmallow has no data yet."""
 
 
+MEDIATION_ID_SCHEMA = {
+    "validate": UUIDFour(),
+    "example": UUIDFour.EXAMPLE,
+}
+
+
 class CreateInvitationRequestSchema(OpenAPISchema):
     """Request schema for invitation connection target."""
 
@@ -111,6 +106,11 @@ class CreateInvitationRequestSchema(OpenAPISchema):
         description="Optional metadata to attach to the connection created with "
         "the invitation",
         required=False,
+    )
+    mediation_id = fields.Str(
+        required=False,
+        description="Identifier for active mediation record to be used",
+        **MEDIATION_ID_SCHEMA
     )
 
 
@@ -209,11 +209,6 @@ class CreateInvitationQueryStringSchema(OpenAPISchema):
     multi_use = fields.Boolean(
         description="Create invitation for multiple use (default false)", required=False
     )
-    mediation_id = fields.Str(
-        required=False,
-        description="Identifier for active mediation record to be used",
-        **MEDIATION_ID_SCHEMA
-    )
 
 
 class ReceiveInvitationQueryStringSchema(OpenAPISchema):
@@ -289,39 +284,6 @@ def connection_sort_key(conn):
         pfx = "0"
 
     return pfx + conn["created_at"]
-
-
-@docs(
-    tags=["connection"],
-    summary="Query connection targets",
-)
-@match_info_schema(ConnIdMatchInfoSchema())
-@response_schema(TargetListSchema(), 200)
-async def target_list(request: web.BaseRequest):
-    """
-    Request handler for searching connection record targets.
-
-    Args:
-        request: aiohttp request object
-
-    Returns:
-        The connection list response
-
-    """
-    context: AdminRequestContext = request["context"]
-    connection_id = request.match_info["conn_id"]
-    session = await context.session()
-    connection_mgr = ConnectionManager(session)
-    try:
-        record = await ConnRecord.retrieve_by_id(session, connection_id)
-        targets = connection_mgr.fetch_connection_targets(record)
-        results = [target.serialize() for target in targets]
-    except StorageNotFoundError as err:
-        raise web.HTTPNotFound(reason=err.roll_up) from err
-    except BaseModelError as err:
-        raise web.HTTPBadRequest(reason=err.roll_up) from err
-
-    return web.json_response({"results": results})
 
 
 @docs(
@@ -484,7 +446,7 @@ async def connections_create_invitation(request: web.BaseRequest):
     service_endpoint = body.get("service_endpoint")
     routing_keys = body.get("routing_keys")
     metadata = body.get("metadata")
-    mediation_id = request.query.get("mediation_id")
+    mediation_id = body.get("mediation_id")
 
     if public and not context.settings.get("public_invites"):
         raise web.HTTPForbidden(
@@ -754,7 +716,6 @@ async def register(app: web.Application):
     app.add_routes(
         [
             web.get("/connections", connections_list, allow_head=False),
-            web.get("/targets/{conn_id}", target_list, allow_head=False),
             web.get("/connections/{conn_id}", connections_retrieve, allow_head=False),
             web.get(
                 "/connections/{conn_id}/metadata",
