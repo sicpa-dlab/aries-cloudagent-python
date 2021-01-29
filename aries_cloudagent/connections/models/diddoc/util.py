@@ -17,9 +17,9 @@ See the License for the specific language governing permissions and
 limitations under the License.
 """
 
-
 from base58 import b58decode
 from urllib.parse import urlparse
+from .config import AVAILABLE_DIDS
 
 
 def resource(ref: str, delimiter: str = None) -> str:
@@ -40,7 +40,7 @@ def resource(ref: str, delimiter: str = None) -> str:
 
 def canon_did(uri: str) -> str:
     """
-    Convert a URI into a DID if need be, left-stripping 'did:sov:' if present.
+    Convert a URI into a DID if need be, left-stripping 'did:XXX:' if present.
 
     Args:
         uri: input URI or DID
@@ -49,20 +49,34 @@ def canon_did(uri: str) -> str:
         ValueError: for invalid input.
 
     """
+    error_msg = 'Bad specification {} does not correspond to a DID'.format(uri)
+
+    uri_aux = uri.split(':')
+    if len(uri_aux) > 1:
+        uri = uri_aux[-1]
+        if not '{}:{}'.format(uri_aux[0], uri_aux[1]) in AVAILABLE_DIDS:
+            error_msg = 'Bad specification with DID {}. ' \
+                        'Method {} not available'.format(uri, uri_aux[1])
+            uri = ''
 
     if ok_did(uri):
         return uri
 
-    if uri.startswith("did:sov:"):
-        rv = uri[8:]
-        if ok_did(rv):
-            return rv
-    raise ValueError(
-        "Bad specification {} does not correspond to a sovrin DID".format(uri)
-    )
+    raise ValueError(error_msg)
 
 
-def canon_ref(did: str, ref: str, delimiter: str = None):
+def compose_did(method: str, ref: str, network: str = None):
+    """
+    Compose DID with the method, ref & network
+    """
+    if network:
+        did = 'did:{}:{}:{}'.format(method, network, ref)
+    else:
+        did = 'did:{}:{}'.format(method, ref)
+    return did
+
+
+def canon_ref(did: str, ref: str, delimiter: str = None, method: str = 'sov', network: str = None):
     """
     Given a reference in a DID document, return it in its canonical form of a URI.
 
@@ -72,29 +86,33 @@ def canon_ref(did: str, ref: str, delimiter: str = None):
             location in the DID doc
         delimiter: delimiter character marking fragment (default '#') or
             introducing identifier (';') against DID resource
+        method: DID method, 'sov' by default
+        network: DID network if its exists.
+
     """
 
     if not ok_did(did):
         raise ValueError("Bad DID {} cannot act as DID document identifier".format(did))
 
     if ok_did(ref):  # e.g., LjgpST2rjsoxYegQDRm7EL
-        return "did:sov:{}".format(did)
+        return compose_did(method, did, network)
 
     if ok_did(resource(ref, delimiter)):  # e.g., LjgpST2rjsoxYegQDRm7EL#keys-1
-        return "did:sov:{}".format(ref)
+        return compose_did(method, ref, network)
 
-    if ref.startswith(
-        "did:sov:"
-    ):  # e.g., did:sov:LjgpST2rjsoxYegQDRm7EL, did:sov:LjgpST2rjsoxYegQDRm7EL#3
-        rv = ref[8:]
+    did_prefix = 'did:{}:'.format(method)
+    if network:
+        did_prefix += '{}:'.format(network)
+    if ref.startswith(did_prefix):  # e.g., did:sov:LjgpST2rjsoxYegQDRm7EL, did:sov:LjgpST2rjsoxYegQDRm7EL#3
+        rv = ref.split(':')[-1]
         if ok_did(resource(rv, delimiter)):
             return ref
-        raise ValueError("Bad URI {} does not correspond to a sovrin DID".format(ref))
+        raise ValueError("Bad URI {} does not correspond to a {} DID".format(ref, method))
 
     if urlparse(ref).scheme:  # e.g., https://example.com/messages/8377464
         return ref
 
-    return "did:sov:{}{}{}".format(did, delimiter if delimiter else "#", ref)  # e.g., 3
+    return "{}{}{}{}".format(did_prefix, did, delimiter if delimiter else "#", ref)  # e.g., 3
 
 
 def ok_did(token: str) -> bool:
