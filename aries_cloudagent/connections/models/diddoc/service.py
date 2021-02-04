@@ -17,11 +17,11 @@ See the License for the specific language governing permissions and
 limitations under the License.
 """
 
+
 from typing import List, Sequence, Union
 
 from .util import canon_did, canon_ref
 from .publickey import PublicKey
-from .schemas.serviceschema import ServiceSchema
 
 
 class Service:
@@ -32,13 +32,15 @@ class Service:
     everything else as URIs (oriented toward W3C-facing operations).
     """
 
-    """"""
-
     def __init__(
-            self,
-            *args,
-            priority: int = 0,
-            **kwargs
+        self,
+        did: str,
+        ident: str,
+        typ: str,
+        recip_keys: Union[Sequence, PublicKey],
+        routing_keys: Union[Sequence, PublicKey],
+        endpoint: str,
+        priority: int = 0,
     ):
         """
         Initialize the Service instance.
@@ -59,31 +61,25 @@ class Service:
             ValueError: on bad input controller DID
 
         """
-        if args:
-            self._did = canon_did(args[0])
-            self._id = id if id else canon_ref(self._did, args[1], ";")
-            self._type = args[2]
-            self._recip_keys = (
-                [args[3]]
-                if isinstance(args[3], PublicKey)
-                else list(args[3])
-                if [args[3]]
-                else None
-            )
-            self._routing_keys = (
-                [args[4]]
-                if isinstance(args[4], PublicKey)
-                else list(args[4])
-                if args[4]
-                else None
-            )
-            self._endpoint = args[5]
-        else:
-            self._id = kwargs.get('id')
-            self._type = kwargs.get('type')
-            self._recip_keys = kwargs.get('recipientKeys')
-            self._endpoint = kwargs.get('serviceEndpoint')
-            self._routing_keys = kwargs.get('routingKeys')
+
+        self._did = canon_did(did)
+        self._id = canon_ref(self._did, ident, ";")
+        self._type = typ
+        self._recip_keys = (
+            [recip_keys]
+            if isinstance(recip_keys, PublicKey)
+            else list(recip_keys)
+            if recip_keys
+            else None
+        )
+        self._routing_keys = (
+            [routing_keys]
+            if isinstance(routing_keys, PublicKey)
+            else list(routing_keys)
+            if routing_keys
+            else None
+        )
+        self._endpoint = endpoint
         self._priority = priority
 
     @property
@@ -111,31 +107,13 @@ class Service:
         return self._recip_keys
 
     @property
-    def recipientKeys(self) -> List[PublicKey]:
-        """Accessor for the recipient keys."""
-
-        return self._recip_keys
-
-    @property
     def routing_keys(self) -> List[PublicKey]:
         """Accessor for the routing keys."""
 
         return self._routing_keys
 
     @property
-    def routingKeys(self) -> List[PublicKey]:
-        """Accessor for the routing keys."""
-
-        return self._routing_keys
-
-    @property
     def endpoint(self) -> str:
-        """Accessor for the endpoint value."""
-
-        return self._endpoint
-
-    @property
-    def serviceEndpoint(self) -> str:
         """Accessor for the endpoint value."""
 
         return self._endpoint
@@ -149,6 +127,11 @@ class Service:
     def to_dict(self) -> dict:
         """Return dict representation of service to embed in DID document."""
 
-        schema = ServiceSchema()
-        result = schema.dump(self)
-        return result
+        rv = {"id": self.id, "type": self.type, "priority": self.priority}
+        if self.recip_keys:
+            rv["recipientKeys"] = [k.value for k in self.recip_keys]
+        if self.routing_keys:
+            rv["routingKeys"] = [k.value for k in self.routing_keys]
+        rv["serviceEndpoint"] = self.endpoint
+
+        return rv

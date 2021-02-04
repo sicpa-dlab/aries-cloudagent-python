@@ -17,11 +17,12 @@ See the License for the specific language governing permissions and
 limitations under the License.
 """
 
+
 from collections import namedtuple
 from enum import Enum
-import json
+
 from .util import canon_did, canon_ref
-from .schemas.publickeyschema import PublicKeySchema
+
 
 LinkedDataKeySpec = namedtuple("LinkedDataKeySpec", "ver_type authn_type specifier")
 
@@ -101,12 +102,13 @@ class PublicKey:
     """
 
     def __init__(
-            self,
-            *args,
-            type: PublicKeyType = None,
-            controller: str = None,
-            authn: bool = False,
-            **kwargs
+        self,
+        did: str,
+        ident: str,
+        value: str,
+        pk_type: PublicKeyType = None,
+        controller: str = None,
+        authn: bool = False,
     ) -> None:
         """
         Retain key specification particulars.
@@ -124,47 +126,12 @@ class PublicKey:
 
         """
 
-        self._type = type or PublicKeyType.ED25519_SIG_2018
-        if args:
-            self._did = canon_did(args[0])
-            self._id = canon_ref(self._did, args[1])
-            self._value = args[2]
-
-        else:
-            self._id = kwargs.get('id')
-
-        self.__fill_key__(kwargs)
+        self._did = canon_did(did)
+        self._id = canon_ref(self._did, ident)
+        self._value = value
+        self._type = pk_type or PublicKeyType.ED25519_SIG_2018
         self._controller = canon_did(controller) if controller else self._did
         self._authn = authn
-
-    def __fill_key__(self, kwargs=None):
-        if self._type == 'RsaVerificationKey2018':
-            if kwargs:
-                self.publicKeyPem = kwargs.get('publicKeyPem')
-            else:
-                self.publicKeyPem = self._value
-
-        elif self._type == 'Ed25519VerificationKey2018':
-            if kwargs:
-                self.publicKeyBase58 = kwargs.get('publicKeyBase58')
-            else:
-                self.publicKeyBase58 = self.value
-
-        elif self._type == 'Secp256k1VerificationKey2018':
-            if kwargs:
-                self.publicKeyHex = kwargs.get('publicKeyHex')
-            else:
-                self.publicKeyHex = self._value
-
-        elif self._type == 'EcdsaSecp256k1RecoveryMethod2020':
-            try:
-                if kwargs:
-                    value = kwargs.get('publicKeyJwk')
-                else:
-                    value = dict(self._value)
-            except:
-                value = json.loads(self._value)
-            self.publicKeyJwk = value
 
     @property
     def did(self) -> str:
@@ -217,10 +184,13 @@ class PublicKey:
 
     def to_dict(self) -> dict:
         """Return dict representation of public key to embed in DID document."""
-        schema = PublicKeySchema()
-        result = schema.dump(self)
-        result['controller'] = canon_ref(self.did, self.controller)
-        return result
+
+        return {
+            "id": self.id,
+            "type": str(self.type.ver_type),
+            "controller": canon_ref(self.did, self.controller),
+            **self.type.specification(self.value),
+        }
 
     def __repr__(self) -> str:
         """Return string representation of the public key instance."""

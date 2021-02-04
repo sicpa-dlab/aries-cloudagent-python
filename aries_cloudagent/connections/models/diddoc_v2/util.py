@@ -16,8 +16,7 @@ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
 """
-
-
+# TODO: Refactor & reuse the Regex and DIDUrl class from aries_cloudagent.resolver.did
 from base58 import b58decode
 from urllib.parse import urlparse
 
@@ -84,7 +83,7 @@ def canon_ref(did: str, ref: str, delimiter: str = None):
         return "did:sov:{}".format(ref)
 
     if ref.startswith(
-        "did:sov:"
+            "did:sov:"
     ):  # e.g., did:sov:LjgpST2rjsoxYegQDRm7EL, did:sov:LjgpST2rjsoxYegQDRm7EL#3
         rv = ref[8:]
         if ok_did(resource(rv, delimiter)):
