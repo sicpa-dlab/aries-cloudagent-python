@@ -17,6 +17,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 """
 
+
 import json
 import logging
 
@@ -25,7 +26,6 @@ from typing import List, Sequence, Union
 from .publickey import PublicKey, PublicKeyType
 from .service import Service
 from .util import canon_did, canon_ref, ok_did, resource
-from .schemas.diddocdeserializeschema import DIDDocSchema
 
 LOGGER = logging.getLogger(__name__)
 
@@ -39,11 +39,6 @@ class DIDDoc:
     """
 
     CONTEXT = "https://w3id.org/did/v1"
-    id = ""
-    publicKey = []
-    authentication = []
-    service = []
-    verificationMethod = ""
 
     def __init__(self, did: str = None) -> None:
         """
@@ -61,30 +56,8 @@ class DIDDoc:
         """
 
         self._did = canon_did(did) if did else None  # allow specification post-hoc
-        fields = did.split(':')
-        if len(fields) > 2:
-            self._method = fields[1]
-            if len(fields) > 3:
-                self._network = fields[2]
-            else:
-                self._network = None
-        else:
-            self._method = 'sov'
-            self._network = None
-        self._pubkey = []
-        self._service = []
-
-    @property
-    def method(self) -> str:
-        """Accessor for DID method."""
-
-        return self._method
-
-    @property
-    def network(self) -> str:
-        """Accessor for DID network."""
-
-        return self._network
+        self._pubkey = {}
+        self._service = {}
 
     @property
     def did(self) -> str:
@@ -140,9 +113,9 @@ class DIDDoc:
         """
 
         if isinstance(item, Service):
-            self.service.append(item)
+            self.service[item.id] = item
         elif isinstance(item, PublicKey):
-            self.pubkey.append(item)
+            self.pubkey[item.id] = item
         else:
             raise ValueError(
                 "Cannot add item {} to DIDDoc on DID {}".format(item, self.did)
@@ -159,12 +132,12 @@ class DIDDoc:
 
         return {
             "@context": DIDDoc.CONTEXT,
-            "id": canon_ref(self.did, self.did, method=self._method, network=self._network),
+            "id": canon_ref(self.did, self.did),
             "publicKey": [pubkey.to_dict() for pubkey in self.pubkey.values()],
             "authentication": [
                 {
                     "type": pubkey.type.authn_type,
-                    "publicKey": canon_ref(self.did, pubkey.id, method=self._method, network=self._network),
+                    "publicKey": canon_ref(self.did, pubkey.id),
                 }
                 for pubkey in self.pubkey.values()
                 if pubkey.authn
@@ -184,7 +157,7 @@ class DIDDoc:
         return json.dumps(self.serialize())
 
     def add_service_pubkeys(
-            self, service: dict, tags: Union[Sequence[str], str]
+        self, service: dict, tags: Union[Sequence[str], str]
     ) -> List[PublicKey]:
         """
         Add public keys specified in service. Return public keys so discovered.
@@ -205,7 +178,7 @@ class DIDDoc:
         for tag in [tags] if isinstance(tags, str) else list(tags):
 
             for svc_key in service.get(tag, {}):
-                canon_key = canon_ref(self.did, svc_key, method=self._method, network=self.network)
+                canon_key = canon_ref(self.did, svc_key)
                 pubkey = None
 
                 if "#" in svc_key:
@@ -234,85 +207,11 @@ class DIDDoc:
                         self._pubkey[pubkey.id] = pubkey
 
                 if (
-                        pubkey and pubkey not in rv
+                    pubkey and pubkey not in rv
                 ):  # perverse case: could specify same key multiple ways; append once
                     rv.append(pubkey)
 
         return rv
-
-    def _search_did_from_did_doc(did_doc):
-        rv = None
-        for section in ("publicKey", "authentication"):
-            if section in did_doc:
-                for key_spec in did_doc[section]:
-                    try:
-                        pubkey_did = canon_did(resource(key_spec.get("id", "")))
-                        if ok_did(pubkey_did):
-                            rv = DIDDoc(pubkey_did)
-                            method = rv.method
-                            network = rv.network
-                            break
-                    except ValueError:  # no identifier here, move on to next
-                        break
-        if rv is None:
-            LOGGER.debug("no identifier in DID document")
-            raise ValueError("No identifier in DID document")
-        return rv, method, network
-
-    def _build_pubkey(did_doc, rv, method, network=None):
-
-        for pubkey in did_doc.get("publicKey", {}):
-            # include all public keys, authentication pubkeys by reference
-            pubkey_type = PublicKeyType.get(pubkey["type"])
-            authn = any(
-                canon_ref(rv.did, ak.get("publicKey", ""), method=method, network=network)
-                == canon_ref(rv.did, pubkey["id"], method=method, network=network)
-                for ak in did_doc.get("authentication", {})
-                if isinstance(ak.get("publicKey", None), str)
-            )
-            key = PublicKey(  # initialization canonicalizes id
-                rv.did,
-                pubkey["id"],
-                pubkey[pubkey_type.specifier],
-                pubkey_type,
-                canon_did(pubkey["controller"]),
-                authn,
-            )
-            rv.pubkey[key.id] = key
-
-    def _build_akey(did_doc, rv):
-        for akey in did_doc.get("authentication", {}):
-            # include embedded authentication keys
-            if "publicKey" not in akey:  # not yet got it with public keys
-                pubkey_type = PublicKeyType.get(akey["type"])
-                key = PublicKey(  # initialization canonicalized id
-                    rv.did,
-                    akey["id"],
-                    akey[pubkey_type.specifier],
-                    pubkey_type,
-                    canon_did(akey["controller"]),
-                    True,
-                )
-                rv.pubkey[key.id] = key
-
-    def _build_service(did_doc, rv, method, network):
-        for service in did_doc.get("service", {}):
-            endpoint = service["serviceEndpoint"]
-            svc = Service(  # initialization canonicalizes id
-                rv.did,
-                service.get(
-                    "id",
-                    canon_ref(
-                        rv.did, "assigned-service-{}".format(len(rv.service)), ";", method=method, network=network
-                    ),
-                ),
-                service["type"],
-                rv.add_service_pubkeys(service, "recipientKeys"),
-                rv.add_service_pubkeys(service, ["mediatorKeys", "routingKeys"]),
-                canon_ref(rv.did, endpoint, ";", method=method, network=network) if ";" in endpoint else endpoint,
-                service.get("priority", None),
-            )
-            rv.service[svc.id] = svc
 
     @classmethod
     def deserialize(cls, did_doc: dict) -> "DIDDoc":
@@ -330,25 +229,77 @@ class DIDDoc:
         """
 
         rv = None
-
         if "id" in did_doc:
             rv = DIDDoc(did_doc["id"])
-            method = rv.method
-            network = rv.network
-
         else:
             # heuristic: get DID to serve as DID document identifier from
             # the first OK-looking public key
-            rv, method, network = cls._search_did_from_did_doc(did_doc)
+            for section in ("publicKey", "authentication"):
+                if rv is None and section in did_doc:
+                    for key_spec in did_doc[section]:
+                        try:
+                            pubkey_did = canon_did(resource(key_spec.get("id", "")))
+                            if ok_did(pubkey_did):
+                                rv = DIDDoc(pubkey_did)
+                                break
+                        except ValueError:  # no identifier here, move on to next
+                            break
+            if rv is None:
+                LOGGER.debug("no identifier in DID document")
+                raise ValueError("No identifier in DID document")
 
-        # Public Keys
-        cls._build_pubkey(did_doc, rv, method, network)
+        for pubkey in did_doc.get(
+            "publicKey", {}
+        ):  # include all public keys, authentication pubkeys by reference
+            pubkey_type = PublicKeyType.get(pubkey["type"])
+            authn = any(
+                canon_ref(rv.did, ak.get("publicKey", ""))
+                == canon_ref(rv.did, pubkey["id"])
+                for ak in did_doc.get("authentication", {})
+                if isinstance(ak.get("publicKey", None), str)
+            )
+            key = PublicKey(  # initialization canonicalizes id
+                rv.did,
+                pubkey["id"],
+                pubkey[pubkey_type.specifier],
+                pubkey_type,
+                canon_did(pubkey["controller"]),
+                authn,
+            )
+            rv.pubkey[key.id] = key
 
-        # Auth Keys
-        cls._build_akey(did_doc, rv)
+        for akey in did_doc.get(
+            "authentication", {}
+        ):  # include embedded authentication keys
+            if "publicKey" not in akey:  # not yet got it with public keys
+                pubkey_type = PublicKeyType.get(akey["type"])
+                key = PublicKey(  # initialization canonicalized id
+                    rv.did,
+                    akey["id"],
+                    akey[pubkey_type.specifier],
+                    pubkey_type,
+                    canon_did(akey["controller"]),
+                    True,
+                )
+                rv.pubkey[key.id] = key
 
-        # Service
-        cls._build_service(did_doc, rv, method, network)
+        for service in did_doc.get("service", {}):
+            endpoint = service["serviceEndpoint"]
+            svc = Service(  # initialization canonicalizes id
+                rv.did,
+                service.get(
+                    "id",
+                    canon_ref(
+                        rv.did, "assigned-service-{}".format(len(rv.service)), ";"
+                    ),
+                ),
+                service["type"],
+                rv.add_service_pubkeys(service, "recipientKeys"),
+                rv.add_service_pubkeys(service, ["mediatorKeys", "routingKeys"]),
+                canon_ref(rv.did, endpoint, ";") if ";" in endpoint else endpoint,
+                service.get("priority", None),
+            )
+            rv.service[svc.id] = svc
 
         return rv
 
