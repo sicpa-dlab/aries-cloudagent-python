@@ -19,9 +19,9 @@ limitations under the License.
 import json
 from typing import Sequence, Union
 
-from .util import canon_did, canon_ref
 from .schemas.verificationmethodschema import VerificationMethodSchema
 from .publickeytype import PublicKeyType
+from ...resolver.did import DIDUrl
 
 
 class PublicKey:
@@ -33,17 +33,15 @@ class PublicKey:
     """
 
     def __init__(
-            self,
-            did: str = None,
-            ident: str = None,
-            id: str = None,
-            type: PublicKeyType = None,
-            controller: Union[str, Sequence] = None,
-            usage: str = None,
-            value: str = None,
-            authn: bool = False,
-            json: dict = {},
-            **kwargs) -> None:
+        self,
+        id: str,
+        type: PublicKeyType,
+        controller: Union[str, Sequence],
+        usage: str = None,
+        value: str = None,
+        authn: bool = False,
+        **kwargs
+    ) -> None:
 
         """
         Retain key specification particulars.
@@ -60,29 +58,17 @@ class PublicKey:
             ValueError: on any bad input DID.
 
         """
-        if json:
-            self.json = json
 
-        else:
-            args = (type, controller, usage)
-            optional_args = [did, ident, id]
-            if any(param is None for param in args) and optional_args.count(None) > 1:
-                raise ValueError("Missing args in the PublicKey instantation {}")
+        self._id = id
+        self._type = type
+        self._controller = controller
+        self._usage = usage
+        self._authn = authn
+        if kwargs:
+            value = kwargs.get(PublicKeyType.get(type).specifier)
+        self._fill_key(value)
 
-            if id:
-                self._id = id
-            else:
-                did = canon_did(did)
-                self._id = canon_ref(did, ident)
-
-            self._type = type
-            self._controller = canon_did(controller) if controller else did
-            self._usage = usage
-            if kwargs:
-                value = kwargs.get(PublicKeyType.get(type).specifier)
-            self.__fill_key__(value)
-
-    def __fill_key__(self, value: str):
+    def _fill_key(self, value: str):
         if self._type == "RsaVerificationKey2018":
             self.publicKeyPem = value
 
@@ -99,7 +85,7 @@ class PublicKey:
                 value = json.loads(value)
             self.publicKeyJwk = value
 
-    def __get_key__(self):
+    def _get_key(self):
         if self._type == "RsaVerificationKey2018":
             return self.publicKeyPem
 
@@ -122,6 +108,8 @@ class PublicKey:
     def id(self, value: str):
         """Setter for the public key identifier."""
 
+        # Validation process
+        DIDUrl.parse(value)
         self._id = value
 
     @property
@@ -140,7 +128,7 @@ class PublicKey:
     def value(self) -> str:
         """Getter for the public key value."""
 
-        return self.__get_key__()
+        return self._get_key()
 
     @value.setter
     def value(self, value: str):
@@ -191,20 +179,17 @@ class PublicKey:
 
         self._authn = value
 
-    @property
-    def json(self) -> dict:
+    def serialize(self) -> dict:
         """Return dict representation of public key to embed in DID document."""
         schema = VerificationMethodSchema()
         result = schema.dump(self)
         return result
 
-    @json.setter
-    def json(self, value: dict):
+    @classmethod
+    def deserialize(cls, value: dict):
+        """Return a PublicKey object to embed in DIDDoc object.
+        Args:
+            value: dict representation of a publicKey"""
         schema = VerificationMethodSchema()
-        result = schema.load(value)
-        self.type = result.type
-        self.controller = result.controller
-        self.id = result.id
-        self.usage = result.usage
-        self.__fill_key__(result.value)
-        self.authn = False
+        pub_key = schema.load(value)
+        return pub_key

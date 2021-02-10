@@ -21,22 +21,33 @@ from marshmallow.exceptions import ValidationError
 
 
 class ListOrStringField(fields.Field):
+    """
+    List or String field for Marshmallow
+    """
+
     def _deserialize(self, value, attr, data, **kwargs):
         if isinstance(value, str) or isinstance(value, list):
             return value
         else:
-            raise ValidationError('Field should be str or list')
+            raise ValidationError("Field should be str or list")
 
 
 class ListOrStringOrDictField(fields.Field):
+    """
+    List, String or Dict field for Marshmallow
+    """
+
     def _deserialize(self, value, attr, data, **kwargs):
         if isinstance(value, str) or isinstance(value, list) or isinstance(value, dict):
             return value
         else:
-            raise ValidationError('Field should be str, list or dict')
+            raise ValidationError("Field should be str, list or dict")
 
 
 class PublicKeyField(fields.Field):
+    """
+    Public Key field for Marshmallow
+    """
 
     def _serialize(self, value, attr, obj, **kwargs):
         if value is None:
@@ -44,17 +55,26 @@ class PublicKeyField(fields.Field):
         if isinstance(value, list):
             for idx, val in enumerate(value):
                 if not isinstance(val, str):
-                    value[idx] = val.json
+                    value[idx] = val.serialize()
             return value
         else:
             return "".join(str(d) for d in value)
 
     def _deserialize(self, value, attr, data, **kwargs):
         from ..publickey import PublicKey
+
         if isinstance(value, list):
             for idx, val in enumerate(value):
-                if isinstance(value[idx], dict):
+                if isinstance(val, dict):
+                    if (
+                        (not val.get("id"))
+                        or (not val.get("type"))
+                        or (not val.get("controller"))
+                    ):
+                        raise ValidationError(
+                            "VerificationMethod Map must have id, type & controler"
+                        )
                     value[idx] = PublicKey(**val)
             return value
         else:
-            raise ValidationError('Field should be str, list or dict')
+            raise ValidationError("Field should be str, list or dict")
