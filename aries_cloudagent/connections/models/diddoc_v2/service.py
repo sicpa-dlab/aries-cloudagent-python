@@ -17,9 +17,9 @@ limitations under the License.
 """
 
 from typing import List, Sequence, Union
-from .util import canon_did, canon_ref
 from .publickey import PublicKey
 from .schemas.serviceschema import ServiceSchema
+from ...resolver.did import DIDUrl
 
 
 class Service:
@@ -30,18 +30,15 @@ class Service:
     everything else as URIs (oriented toward W3C-facing operations).
     """
 
-    """"""
-
-    def __init__(self,
-                 did: str = None,
-                 ident: str = None,
-                 type: Union[str, List] = None,
-                 recipientKeys: Union[Sequence, PublicKey] = None,
-                 routingKeys: Union[Sequence, PublicKey] = None,
-                 serviceEndpoint: Union[str, Sequence, dict] = None,
-                 priority: str = None,
-                 id: str = None,
-                 json: dict = {}):
+    def __init__(
+        self,
+        id: str,
+        type: Union[str, List] = None,
+        recipientKeys: Union[Sequence, PublicKey] = None,
+        routingKeys: Union[Sequence, PublicKey] = None,
+        serviceEndpoint: Union[str, Sequence, dict] = None,
+        priority: str = None,
+    ):
         """
         Initialize the Service instance.
 
@@ -55,39 +52,26 @@ class Service:
             routingKeys: routing key or keys
             serviceEndpoint: service endpoint
             priority: service priority
-            json: load from json
 
         Raises:
             ValueError: on bad input controller DID
 
         """
 
-        if json:
-            self.json = json
+        if not id:
+            raise ValueError("Missing ID in the Service instantation")
 
-        else:
+        args = (id, type, serviceEndpoint)
 
-            if not id:
-                if not (did and ident):
-                    raise ValueError("Missing ID in the Service instantation")
-                did = canon_did(did)
-                id = canon_ref(did, ident, ";")
+        if any(param is None for param in args):
+            raise ValueError("Missing args in the Service instantation")
 
-            args = (id, type, serviceEndpoint)
-
-            if any(param is None for param in args):
-                raise ValueError("Missing args in the Service instantation")
-
-            self._id = id
-            self._type = type
-            self._endpoint = serviceEndpoint
-
-            if recipientKeys:
-                self._recip_keys = recipientKeys
-            if routingKeys:
-                self._routing_keys = routingKeys
-            if priority:
-                self._priority = priority
+        self._id = id
+        self._type = type
+        self._endpoint = serviceEndpoint
+        self._recip_keys = recipientKeys
+        self._routing_keys = routingKeys
+        self._priority = priority
 
     @property
     def id(self) -> str:
@@ -98,6 +82,9 @@ class Service:
     @id.setter
     def id(self, value: str):
         """Service identifier setter"""
+
+        # Validation process
+        DIDUrl.parse(value)
         self._id = value
 
     @property
@@ -159,22 +146,19 @@ class Service:
         """Service Priority setter"""
         self._priority = value
 
-    @property
-    def json(self) -> dict:
+    def serialize(self) -> dict:
         """Return dict representation of service to embed in DID document."""
 
         schema = ServiceSchema()
         result = schema.dump(self)
         return result
 
-    @json.setter
-    def json(self, value: dict):
-        """Load dict representation of service to embed in DID document."""
+    @classmethod
+    def deserialize(cls, value: dict):
+        """Return a Service object to embed in DID document.
+        Args:
+            value: dict representation of service
+        """
         schema = ServiceSchema()
         service = schema.load(value)
-        self._id = service.id
-        self._type = service.type
-        self._recip_keys = service.recipientKeys
-        self._endpoint = service.serviceEndpoint
-        self._routing_keys = service.routingKeys
-        self._priority = service.priority
+        return service

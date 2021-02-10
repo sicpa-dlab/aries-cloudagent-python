@@ -16,37 +16,40 @@ See the License for the specific language governing permissions and
 limitations under the License.
 """
 
-from marshmallow import Schema, fields, post_load, post_dump, pre_load
+from marshmallow import Schema, fields, post_load, post_dump, pre_load, validate
 from .unionfield import ListOrStringField, ListOrStringOrDictField
+from ...resolver.did import DID_PATTERN
+import re
+
+DID_PATTERN = re.compile("{}#[a-zA-Z0-9._-]+".format(DID_PATTERN.pattern))
 
 
 class ServiceSchema(Schema):
-    # TODO: implement validation
     """
     Based on https://w3c.github.io/did-core/#service-properties
 
     Example:
 
-    {"id": "1",
+    {"id": "did:sov:LjgpST2rjsoxYegQDRm7EL#keys-3",
      "type": "one",
      "priority": 1,
 
      "recipientKeys": [
-         "~XXXXXXXXXXXXXXXX",
          "did:sov:LjgpST2rjsoxYegQDRm7EL#keys-1"],
      "routingKeys": ["did:sov:LjgpST2rjsoxYegQDRm7EL#keys-4"],
      "serviceEndpoint": "LjgpST2rjsoxYegQDRm7EL;2"}
     """
 
-    id = fields.Str()
-    type = ListOrStringField()
-    priority = fields.Int()
-    recipientKeys = fields.List(fields.Str())
-    routingKeys = fields.List(fields.Str())
-    serviceEndpoint = ListOrStringOrDictField()
+    id = fields.Str(required=True, validate=validate.Regexp(DID_PATTERN))
+    type = ListOrStringField(required=True)
+    serviceEndpoint = ListOrStringOrDictField(required=True)
+    priority = fields.Int(validate=validate.Range(min=0))
+    recipientKeys = fields.List(fields.Str(validate=validate.Regexp(DID_PATTERN)))
+    routingKeys = fields.List(fields.Str(validate=validate.Regexp(DID_PATTERN)))
 
     @post_load
     def make_service(self, data, **kwargs):
         from ..service import Service
+
         service = Service(**data)
         return service

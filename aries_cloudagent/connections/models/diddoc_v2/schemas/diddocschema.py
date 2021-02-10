@@ -1,8 +1,3 @@
-from marshmallow import Schema, fields, post_load, pre_load, post_dump
-from .verificationmethodschema import VerificationMethodSchema
-from .serviceschema import ServiceSchema
-from .unionfield import ListOrStringField, PublicKeyField
-
 """
 DID Document classes.
 
@@ -21,55 +16,58 @@ See the License for the specific language governing permissions and
 limitations under the License.
 """
 
+from marshmallow import Schema, fields, post_load, pre_load, post_dump, validate
+from .verificationmethodschema import VerificationMethodSchema
+from .serviceschema import ServiceSchema
+from .unionfield import ListOrStringField, PublicKeyField
+from ...resolver.did import DID_PATTERN
+import re
+
 
 class DIDDocSchema(Schema):
     """
-    Based on https://w3c.github.io/did-core/#did-document-properties
+        Based on https://w3c.github.io/did-core/#did-document-properties
 
-    Example:
-{
-   "authentication":[
-      {
-         "controller":"LjgpST2rjsoxYegQDRm7EL",
-         "id":"3",
-         "publicKeyPem":"-----BEGIN PUBLIC X...",
-         "type":"RsaVerificationKey2018",
-         "usage":"signing"
-      }
-   ],
-   "id":"mayor_id",
-   "publicKey":[
-      {
-         "controller":"LjgpST2rjsoxYegQDRm7EL",
-         "id":"3",
-         "publicKeyPem":"-----BEGIN PUBLIC X...",
-         "type":"RsaVerificationKey2018",
-         "usage":"signing"
-      }
-   ],
-   "service":[
-      {
-         "id":"1",
-         "priority":1,
-         "recipientKeys":[
-            "~XXXXXXXXXXXXXXXX",
-            "did:sov:LjgpST2rjsoxYegQDRm7EL#keys-1"
-         ],
-         "routingKeys":[
-            "did:sov:LjgpST2rjsoxYegQDRm7EL#keys-4"
-         ],
-         "serviceEndpoint":"LjgpST2rjsoxYegQDRm7EL;2",
-         "type":"one"
-      }
-   ]
-}
+        Example:
+    {
+       "authentication":[
+          {
+             "controller":"LjgpST2rjsoxYegQDRm7EL",
+             "id":"3",
+             "publicKeyPem":"-----BEGIN PUBLIC X...",
+             "type":"RsaVerificationKey2018",
+             "usage":"signing"
+          }
+       ],
+       "id":"mayor_id",
+       "publicKey":[
+          {
+             "controller":"LjgpST2rjsoxYegQDRm7EL",
+             "id":"3",
+             "publicKeyPem":"-----BEGIN PUBLIC X...",
+             "type":"RsaVerificationKey2018",
+             "usage":"signing"
+          }
+       ],
+       "service":[
+          {
+             "id":"1",
+             "priority":1,
+             "recipientKeys":[
+                "~XXXXXXXXXXXXXXXX",
+                "did:sov:LjgpST2rjsoxYegQDRm7EL#keys-1"
+             ],
+             "routingKeys":[
+                "did:sov:LjgpST2rjsoxYegQDRm7EL#keys-4"
+             ],
+             "serviceEndpoint":"LjgpST2rjsoxYegQDRm7EL;2",
+             "type":"one"
+          }
+       ]
+    }
     """
-    # TODO: implement Validation
 
-    # Required:
-    id = fields.Str()
-
-    # Not Required:
+    id = fields.Str(required=True, validate=validate.Regexp(DID_PATTERN))
     alsoKnownAs = fields.List(fields.Str())
     controller = ListOrStringField()
     verificationMethod = fields.List(fields.Nested(VerificationMethodSchema))
@@ -86,13 +84,14 @@ class DIDDocSchema(Schema):
         verification = in_data.get("verificationMethod")
         if isinstance(verification, dict):
             in_data["verificationMethod"] = [verification]
-        if in_data.get('@context'):
+        if in_data.get("@context"):
             in_data.pop("@context")
         return in_data
 
     @post_load
     def post_load_did_doc(self, data, **kwargs):
         from ..diddoc import DIDDoc
+
         return DIDDoc(**data)
 
     @post_dump

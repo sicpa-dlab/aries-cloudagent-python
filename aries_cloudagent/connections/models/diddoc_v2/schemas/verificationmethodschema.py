@@ -16,8 +16,12 @@ See the License for the specific language governing permissions and
 limitations under the License.
 """
 
-from marshmallow import Schema, fields, post_load
+from marshmallow import Schema, fields, post_load, validate
 from .unionfield import ListOrStringField
+from ...resolver.did import DID_PATTERN
+import re
+
+DID_PATTERN = re.compile("{}#[a-zA-Z0-9._-]+".format(DID_PATTERN.pattern))
 
 
 class VerificationMethodSchema(Schema):
@@ -26,7 +30,7 @@ class VerificationMethodSchema(Schema):
 
     Example:
 
-    {"id": "3",
+    {"id": "did:sov:LjgpST2rjsoxYegQDRm7EL#keys-4",
      "type": "RsaVerificationKey2018",
      "controller": "did:sov:LjgpST2rjsoxYegQDRm7EL",
      "usage": "signing",
@@ -43,11 +47,10 @@ class VerificationMethodSchema(Schema):
       }
     """
 
-    id = fields.Str()
+    id = fields.Str(required=True, validate=validate.Regexp(DID_PATTERN))
+    type = fields.Str(required=True)
+    controller = ListOrStringField(required=True)
     usage = fields.Str()
-    controller = ListOrStringField()
-    type = fields.Str()
-
     publicKeyHex = fields.Str()
     publicKeyPem = fields.Str()
     publicKeyJwk = fields.Dict()
