@@ -114,7 +114,6 @@ class DIDDoc:
         for index, key in enumerate(keys):
             if isinstance(key, str):
                 if not self.dereference(key):
-
                     raise ValueError("Key '{}' not found on DIDDoc".format(key))
             else:
                 self._set(key)
@@ -453,6 +452,19 @@ class DIDDoc:
         DIDUrl.parse(did_url)
 
         return self._index.get(did_url)
+
+    def get_service_by_type(self, service_type: str = "did-communication") -> list:
+        """
+        Retrieve the services filtered by type.
+        Args:
+            service_type: type to filter
+        """
+        aux_list = []
+        for service in self.service:
+            if service.type == service_type:
+                aux_list.append(service)
+        aux_list = sorted(aux_list, key=lambda x: x.priority, reverse=True)
+        return aux_list
 
 
 class AntiquatedDIDDoc(DIDDoc):

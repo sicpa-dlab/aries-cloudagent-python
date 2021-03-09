@@ -8,9 +8,10 @@ import logging
 
 from typing import Sequence, Tuple, List
 
+from aries_cloudagent.resolver.base import ResolverError
+from aries_cloudagent.resolver.did_resolver import DIDResolver
 from ..core.error import BaseError
 from ..core.profile import ProfileSession
-from ..ledger.base import BaseLedger
 from ..protocols.connections.v1_0.messages.connection_invitation import (
     ConnectionInvitation,
 )
@@ -225,14 +226,16 @@ class BaseConnectionManager:
             if isinstance(invitation, ConnectionInvitation):  # conn protocol invitation
                 if invitation.did:
                     # populate recipient keys and endpoint from the ledger
-                    ledger = self._session.inject(BaseLedger, required=False)
-                    if not ledger:
-                        raise BaseConnectionManagerError(
+                    resolver = self._session.inject(DIDResolver, required=False)
+                    if not resolver:
+                        raise ResolverError(
                             "Cannot resolve DID without ledger instance"
                         )
-                    async with ledger:
-                        endpoint = await ledger.get_endpoint_for_did(invitation.did)
-                        recipient_keys = [await ledger.get_key_for_did(invitation.did)]
+                    async with resolver:
+                        doc = await resolver.resolve(self._session, invitation.did)
+                        service = doc.get_service_by_type()[0]
+                        endpoint = service.service_endpoint
+                        recipient_keys = service.recipient_keys
                         routing_keys = []
                 else:
                     endpoint = invitation.endpoint
@@ -241,18 +244,19 @@ class BaseConnectionManager:
             else:  # out-of-band invitation
                 if invitation.service_dids:
                     # populate recipient keys and endpoint from the ledger
-                    ledger = self._session.inject(BaseLedger, required=False)
-                    if not ledger:
-                        raise BaseConnectionManagerError(
+                    resolver = self._session.inject(DIDResolver, required=False)
+                    if not resolver:
+                        raise ResolverError(
                             "Cannot resolve DID without ledger instance"
                         )
-                    async with ledger:
-                        endpoint = await ledger.get_endpoint_for_did(
-                            invitation.service_dids[0]
+
+                    async with resolver:
+                        doc = await resolver.resolve(
+                            self._session, invitation.service_dids[0]
                         )
-                        recipient_keys = [
-                            await ledger.get_key_for_did(invitation.service_dids[0])
-                        ]
+                        service = doc.get_service_by_type()[0]
+                        endpoint = service.service_endpoint
+                        recipient_keys = service.recipient_keys
                         routing_keys = []
                 else:
                     endpoint = invitation.service_blocks[0].service_endpoint
