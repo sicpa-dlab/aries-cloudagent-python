@@ -516,7 +516,6 @@ class TestConnectionManager(AsyncTestCase):
         ) as create_local_did, async_mock.patch.object(
             MediationManager, "get_default_mediator"
         ) as mock_get_default_mediator:
-
             did_info = DIDInfo(did=self.test_did, verkey=self.test_verkey, metadata={})
             create_local_did.return_value = did_info
             await self.manager.create_request(
@@ -571,7 +570,6 @@ class TestConnectionManager(AsyncTestCase):
             "get_default_mediator",
             async_mock.CoroutineMock(return_value=mediation_record),
         ) as mock_get_default_mediator:
-
             did_info = DIDInfo(did=self.test_did, verkey=self.test_verkey, metadata={})
             create_local_did.return_value = did_info
             await self.manager.create_request(
@@ -1296,7 +1294,6 @@ class TestConnectionManager(AsyncTestCase):
         with async_mock.patch.object(
             ConnRecord, "save", autospec=True
         ) as mock_conn_rec_save:
-
             _my, _their, conn_rec = await self.manager.create_static_connection(
                 my_did=self.test_did,
                 their_did=self.test_target_did,
@@ -1392,7 +1389,6 @@ class TestConnectionManager(AsyncTestCase):
         with async_mock.patch.object(
             ConnRecord, "save", autospec=True
         ) as mock_conn_rec_save:
-
             with self.assertRaises(ConnectionManagerError):
                 await self.manager.create_static_connection(
                     my_did=self.test_did,
@@ -1405,7 +1401,6 @@ class TestConnectionManager(AsyncTestCase):
         with async_mock.patch.object(
             ConnRecord, "save", autospec=True
         ) as mock_conn_rec_save:
-
             _my, _their, conn_rec = await self.manager.create_static_connection(
                 my_did=self.test_did,
                 their_seed=self.test_seed,
@@ -2050,6 +2045,121 @@ class TestConnectionManager(AsyncTestCase):
         assert target.recipient_keys == conn_invite.recipient_keys
         assert target.routing_keys == []
         assert target.sender_key == local_did.verkey
+
+    async def test_fetch_connection_targets_conn_invitation_btcr_ledger(self):
+        did_doc = DIDDoc("did:btcr:x705-jznz-q3nl-srs")
+        key = did_doc.add_verification_method(
+            type=PublicKeyType.ED25519_SIG_2018,
+            value="02e0e01a8c302976e1556e95c54146e8464adac8626a5d29474718a7281133ff49",
+            verification_type="verificationMethod",
+        )
+        did_doc.add_didcomm_service(
+            recipient_keys=[key],
+            routing_keys=[key],
+            endpoint=self.test_endpoint,
+            priority=0,
+        )
+        did_doc.add_didcomm_service(
+            recipient_keys=[key],
+            routing_keys=[key],
+            endpoint="{}/priority2".format(self.test_endpoint),
+            priority=2,
+        )
+
+        self.ledger = async_mock.MagicMock()
+        self.ledger.get_endpoint_for_did = async_mock.CoroutineMock(
+            return_value=self.test_endpoint
+        )
+        self.ledger.resolve = async_mock.CoroutineMock(return_value=did_doc)
+        self.context.injector.bind_instance(DIDResolver, self.ledger)
+
+        local_did = await self.session.wallet.create_local_did(
+            seed=self.test_seed, did=did_doc.id, metadata=None
+        )
+
+        conn_invite = ConnectionInvitation(
+            did=did_doc.id,
+            endpoint=self.test_endpoint,
+            recipient_keys=[key.id],
+            routing_keys=[self.test_verkey],
+            label="label",
+        )
+        mock_conn = async_mock.MagicMock(
+            my_did=did_doc.id,
+            their_did=self.test_target_did,
+            connection_id="dummy",
+            their_role=ConnRecord.Role.RESPONDER.rfc23,
+            state=ConnRecord.State.INVITATION.rfc23,
+            retrieve_invitation=async_mock.CoroutineMock(return_value=conn_invite),
+        )
+
+        targets = await self.manager.fetch_connection_targets(mock_conn)
+        assert len(targets) == 1
+        target = targets[0]
+        assert target.did == mock_conn.their_did
+        assert target.endpoint == "{}/priority2".format(self.test_endpoint)
+        assert target.label == conn_invite.label
+        assert target.recipient_keys == conn_invite.recipient_keys
+        assert target.routing_keys == [key.id]
+        assert target.sender_key == local_did.verkey
+
+    async def test_fetch_connection_targets_conn_invitation_btcr_without_services(self):
+        did_doc_json = {
+            "@context": ["https://www.w3.org/ns/did/v1"],
+            "id": "did:btcr:x705-jznz-q3nl-srs",
+            "verificationMethod": [
+                {
+                    "type": "EcdsaSecp256k1VerificationKey2019",
+                    "id": "did:btcr:x705-jznz-q3nl-srs#key-0",
+                    "publicKeyBase58": "02e0e01a8c302976e1556e95c54146e8464adac8626a5d29474718a7281133ff49",
+                },
+                {
+                    "type": "EcdsaSecp256k1VerificationKey2019",
+                    "id": "did:btcr:x705-jznz-q3nl-srs#key-1",
+                    "publicKeyBase58": "02e0e01a8c302976e1556e95c54146e8464adac8626a5d29474718a7281133ff49",
+                },
+                {
+                    "type": "EcdsaSecp256k1VerificationKey2019",
+                    "id": "did:btcr:x705-jznz-q3nl-srs#satoshi",
+                    "publicKeyBase58": "02e0e01a8c302976e1556e95c54146e8464adac8626a5d29474718a7281133ff49",
+                },
+            ],
+            "authentication": [
+                {
+                    "type": "EcdsaSecp256k1SignatureAuthentication2019",
+                    "verificationMethod": "#satoshi",
+                }
+            ],
+        }
+        did_doc = DIDDoc.deserialize(did_doc_json)
+        self.ledger = async_mock.MagicMock()
+        self.ledger.get_endpoint_for_did = async_mock.CoroutineMock(
+            return_value=self.test_endpoint
+        )
+        self.ledger.resolve = async_mock.CoroutineMock(return_value=did_doc)
+        self.context.injector.bind_instance(DIDResolver, self.ledger)
+
+        local_did = await self.session.wallet.create_local_did(
+            seed=self.test_seed, did=did_doc.id, metadata=None
+        )
+
+        conn_invite = ConnectionInvitation(
+            did=did_doc.id,
+            endpoint=self.test_endpoint,
+            recipient_keys=["{}#1".format(did_doc.id)],
+            routing_keys=[self.test_verkey],
+            label="label",
+        )
+        mock_conn = async_mock.MagicMock(
+            my_did=did_doc.id,
+            their_did=self.test_target_did,
+            connection_id="dummy",
+            their_role=ConnRecord.Role.RESPONDER.rfc23,
+            state=ConnRecord.State.INVITATION.rfc23,
+            retrieve_invitation=async_mock.CoroutineMock(return_value=conn_invite),
+        )
+        with self.assertRaises(ResolverError):
+            await self.manager.fetch_connection_targets(mock_conn)
 
     async def test_fetch_connection_targets_oob_invitation_svc_did_no_ledger(self):
         await self.session.wallet.create_local_did(

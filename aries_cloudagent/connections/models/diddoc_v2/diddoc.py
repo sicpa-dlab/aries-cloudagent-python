@@ -456,6 +456,7 @@ class DIDDoc:
     def get_service_by_type(self, service_type: str = "did-communication") -> list:
         """
         Retrieve the services filtered by type.
+
         Args:
             service_type: type to filter
         """
