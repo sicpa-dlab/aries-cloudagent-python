@@ -178,9 +178,12 @@ class DIDDoc:
         did_doc = schema.load(did_doc)
         return did_doc
 
-    def serialize(self) -> dict:
+    def serialize(self, key_redundancy=True) -> dict:
         """
         Serialize the DIDDoc object into dict.
+
+        Args:
+            key_redundancy: Add the keys without references
 
         Returns: Dict
         """
@@ -188,6 +191,21 @@ class DIDDoc:
         did_doc = schema.dump(copy.deepcopy(self))
         did_doc["@context"] = self.CONTEXT
         did_doc.update(self.extra)
+        if not key_redundancy:
+            verification_key = list(self._index.keys())
+            ref_content = copy.deepcopy(self._ref_content)
+            ref_content.pop("service")
+            for item in self._ref_content.get("service"):
+                verification_key.remove(item)
+
+            for key in ref_content.keys():
+                value = ref_content.get(key)
+                if value:
+                    did_doc[key] = value
+            ver_methods = [
+                self.dereference(key).serialize() for key in verification_key
+            ]
+            did_doc["verificationMethod"] = ver_methods
         return did_doc
 
     @property
