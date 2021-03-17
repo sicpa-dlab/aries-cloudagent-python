@@ -27,7 +27,7 @@ from ..wallet.util import did_key_to_naked
 from .models.conn_record import ConnRecord
 from .models.connection_target import ConnectionTarget
 from .models.diddoc_v2 import AntiquatedDIDDoc, DIDDoc, PublicKeyType
-
+import json
 
 class BaseConnectionManagerError(BaseError):
     """BaseConnectionManager error."""
@@ -152,8 +152,15 @@ class BaseConnectionManager:
         assert did_doc.id
         storage: BaseStorage = self._session.inject(BaseStorage)
         try:
-            stored_doc, record = await self.fetch_did_document(did_doc.id)
+            try:
+                self._logger.error("DID to find is {}".format(did_doc.id))
+                stored_doc, record = await self.fetch_did_document(did_doc.id)
+            except Exception as e:
+                self._logger.error(str(e))
+                did_str = str(did_doc.id).split(":")[-1]
+                stored_doc, record = await self.fetch_did_document(did_str)
         except StorageNotFoundError:
+            self._logger.error("No se encontro el DID")
             record = StorageRecord(
                 self.RECORD_TYPE_DID_DOC,
                 did_doc.serialize(),
@@ -343,6 +350,8 @@ class BaseConnectionManager:
         Args:
             did: The DID to search for
         """
+        if did.find(":") < 0:
+            did = "did:sov:{}".format(did)
         storage = self._session.inject(BaseStorage)
         record = await storage.find_record(self.RECORD_TYPE_DID_DOC, {"did": did})
         return DIDDoc.deserialize(record.value), record

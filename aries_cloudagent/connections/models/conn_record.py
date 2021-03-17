@@ -27,6 +27,7 @@ from ...protocols.out_of_band.v1_0.messages.invitation import (
 from ...storage.base import BaseStorage
 from ...storage.record import StorageRecord
 from ...storage.error import StorageNotFoundError
+import logging
 
 
 class ConnRecord(BaseRecord):
@@ -336,7 +337,12 @@ class ConnRecord(BaseRecord):
             self.RECORD_TYPE_INVITATION,
             {"connection_id": self.connection_id},
         )
-        ser = json.loads(result.value)
+
+        ser = json.loads(str(result.value))
+
+        if isinstance(ser, str):
+            ser = json.loads(ser)
+
         return (
             ConnectionInvitation
             if DIDCommPrefix.unqualify(ser["@type"]) == CONNECTION_INVITATION
@@ -378,6 +384,10 @@ class ConnRecord(BaseRecord):
             self.RECORD_TYPE_REQUEST, {"connection_id": self.connection_id}
         )
         ser = json.loads(result.value)
+
+        if isinstance(ser, str):
+            ser = json.loads(ser)
+
         return (
             ConnectionRequest
             if DIDCommPrefix.unqualify(ser["@type"]) == CONNECTION_REQUEST
