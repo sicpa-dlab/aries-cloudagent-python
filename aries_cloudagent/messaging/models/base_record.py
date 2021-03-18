@@ -108,12 +108,11 @@ class BaseRecord(BaseModel):
         """
         record_id_name = cls.RECORD_ID_NAME
 
-        ## TODO: good validation
-        """
+        if isinstance(record, str):
+            record = json.loads(record)
+
         if record_id_name in record:
             raise ValueError(f"Duplicate {record_id_name} inputs; {record}")
-        """
-        ##
 
         if isinstance(record, str):
             record = json.loads(record)
