@@ -347,7 +347,7 @@ class ConnRecord(BaseRecord):
             ConnectionInvitation
             if DIDCommPrefix.unqualify(ser["@type"]) == CONNECTION_INVITATION
             else OOBInvitation
-        ).deserialize(ser)
+        ).deserialize(dict(ser))
 
     async def attach_request(
         self,
@@ -392,7 +392,7 @@ class ConnRecord(BaseRecord):
             ConnectionRequest
             if DIDCommPrefix.unqualify(ser["@type"]) == CONNECTION_REQUEST
             else DIDXRequest
-        ).deserialize(ser)
+        ).deserialize(dict(ser))
 
     @property
     def is_ready(self) -> str:
