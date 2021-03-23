@@ -538,7 +538,9 @@ class ConnectionManager(BaseConnectionManager):
             )
         if request.connection.did.split(":")[-1] != conn_did_doc.id.split(":")[-1]:
             raise ConnectionManagerError(
-                "Connection DID \"{}\" does not match DIDDoc id \"{}\"".format(request.connection.did, conn_did_doc.id),
+                'Connection DID "{}" does not match DIDDoc id "{}"'.format(
+                    request.connection.did, conn_did_doc.id
+                ),
                 error_code=ProblemReportReason.REQUEST_NOT_ACCEPTED,
             )
         await self.store_did_document(conn_did_doc)
@@ -796,7 +798,11 @@ class ConnectionManager(BaseConnectionManager):
         else:
             did_id = conn_did_doc.did.split(":")[-1]
         if their_did.split(":")[-1] != did_id:
-            raise ConnectionManagerError("Acept Response: Connection DID \"{}\" does not match DIDDoc id \"{}\"".format(their_did, did_id),)
+            raise ConnectionManagerError(
+                'Connection DID "{}" does not match DIDDoc id "{}"'.format(
+                    their_did, did_id
+                ),
+            )
         await self.store_did_document(conn_did_doc)
 
         connection.their_did = their_did

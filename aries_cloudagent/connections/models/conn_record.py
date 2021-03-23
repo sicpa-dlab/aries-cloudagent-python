@@ -27,7 +27,6 @@ from ...protocols.out_of_band.v1_0.messages.invitation import (
 from ...storage.base import BaseStorage
 from ...storage.record import StorageRecord
 from ...storage.error import StorageNotFoundError
-import logging
 
 
 class ConnRecord(BaseRecord):

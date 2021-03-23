@@ -27,7 +27,7 @@ from ..wallet.util import did_key_to_naked
 from .models.conn_record import ConnRecord
 from .models.connection_target import ConnectionTarget
 from .models.diddoc_v2 import AntiquatedDIDDoc, DIDDoc, PublicKeyType
-import json
+
 
 class BaseConnectionManagerError(BaseError):
     """BaseConnectionManager error."""
