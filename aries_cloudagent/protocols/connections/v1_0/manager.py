@@ -1009,6 +1009,7 @@ class ConnectionManager(BaseConnectionManager):
         if receipt.sender_verkey:
             try:
                 receipt.sender_did = await self.find_did_for_key(receipt.sender_verkey)
+                receipt.sender_did = receipt.sender_did.split(":")[-1]
             except StorageNotFoundError:
                 self._logger.warning(
                     "No corresponding DID found for sender verkey: %s",
