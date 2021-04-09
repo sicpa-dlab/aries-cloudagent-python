@@ -16,9 +16,10 @@ from ....wallet.base import BaseWallet
 from .. import routes as test_module
 from ....resolver.did_resolver import DIDResolver
 from ....resolver.did_resolver_registry import DIDResolverRegistry
-from ....resolver.base import DIDNotFound, DIDMethodNotSupported
+from ....resolver.base import DIDNotFound, DIDMethodNotSupported, BaseDIDResolver, ResolverType
 from ....resolver.tests import DOC
-from pydid import DIDDocument
+from ....resolver.default.indy import IndyDIDResolver
+from pydid import DIDDocument, VerificationMethod, DID, DIDUrl, VerificationSuite
 
 did_doc = DIDDocument.deserialize(DOC)
 
@@ -191,14 +192,39 @@ def test_post_process_routes():
     assert "tags" in mock_app._state["swagger_dict"]
 
 
+class SovResolver(BaseDIDResolver):
+    def __init__(self, resolved=None, native: bool = False):
+        super().__init__(ResolverType.NATIVE if native else ResolverType.NON_NATIVE)
+        self._supported_methods = ["sov"]
+        self.resolved = resolved
+
+    async def setup(self, context):
+        pass
+
+    @property
+    def supported_methods(self):
+        return self._supported_methods
+
+    async def _resolve(self, profile, did):
+        if isinstance(self.resolved, Exception):
+            raise self.resolved
+        return self.resolved.serialize()
+
 class TestJSONLDRoutes(AsyncTestCase):
     async def setUp(self):
         self.context = AdminRequestContext.test_context()
         self.ledger = async_mock.MagicMock()
         self.registery = DIDResolverRegistry()
+        self.registery.register(IndyDIDResolver())
         self.resolver = DIDResolver(self.registery)
         self.context.injector.bind_instance(DIDResolver, self.resolver)
         self.did_info = await (await self.context.session()).wallet.create_local_did()
+        self.res_ver_meth = VerificationMethod(
+			id_= DIDUrl("did:sov:5yKdnU7ToTjAoRNDzfuzVTfWBH38qyhE1b9xh4v8JaWF#key-2"),
+			suite =VerificationSuite(type_ = "Ed25519Verification2018",verification_material_prop="5yKdnU7ToTjAoRNDzfuzVTfWBH38qyhE1b9xh4v8JaWF"),
+			controller= DID("did:sov:5yKdnU7ToTjAoRNDzfuzVTfWBH38qyhE1b9xh4v8JaWF"),
+			material= "5yKdnU7ToTjAoRNDzfuzVTfWBH38qyhE1b9xh4v8JaWF"
+        )
         self.request_dict = {
             "context": self.context,
             "outbound_message_router": async_mock.CoroutineMock(),
@@ -214,7 +240,7 @@ class TestJSONLDRoutes(AsyncTestCase):
         POSTED_REQUEST = {  # posted json
             "verificationMethod": (
                 # pulled from the did:key in example
-                "did:indy:5yKdnU7ToTjAoRNDzfuzVTfWBH38qyhE1b9xh4v8JaWF#2"
+                "did:sov:5yKdnU7ToTjAoRNDzfuzVTfWBH38qyhE1b9xh4v8JaWF#key-2"
             ),
             "doc": {
                 "@context": [

@@ -45,7 +45,7 @@ async def sign(request: web.BaseRequest):
     session = await context.session()
     profile = context.profile
     body = await request.json()
-    ver_meth = body.get("verificationMethod")
+    ver_meth = body.get("verificationMethod")  # DID URL pointing to the ver method
     doc = body.get("document")
     try:
         resolver = session.inject(DIDResolver)
@@ -54,7 +54,7 @@ async def sign(request: web.BaseRequest):
             raise ResolverError(f"Verification method {ver_meth} not found.")
         verkey = ver_meth_expanded.material
         doc_with_proof = await sign_credential(
-            session, doc, {"verificationMethod": ver_meth}, verkey
+            session, doc, ver_meth_expanded, verkey
         )
     except (DIDError, ResolverError, WalletError, InjectionError) as err:
         if isinstance(err, BaseError):
