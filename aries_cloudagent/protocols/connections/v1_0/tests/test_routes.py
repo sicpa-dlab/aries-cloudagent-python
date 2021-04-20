@@ -135,6 +135,55 @@ class TestConnectionRoutes(AsyncTestCase):
             await test_module.connections_retrieve(self.request)
             mock_response.assert_called_once_with({"hello": "world"})
 
+    async def test_connections_endpoints(self):
+        self.request.match_info = {"conn_id": "dummy"}
+        mock_conn_rec = async_mock.MagicMock()
+
+        with async_mock.patch.object(
+            test_module, "ConnectionManager", autospec=True
+        ) as mock_conn_mgr_cls, async_mock.patch.object(
+            test_module.web, "json_response"
+        ) as mock_response:
+            mock_conn_mgr_cls.return_value = async_mock.MagicMock(
+                get_endpoints=async_mock.CoroutineMock(
+                    return_value=("localhost:8080", "1.2.3.4:8081")
+                )
+            )
+            await test_module.connections_endpoints(self.request)
+            mock_response.assert_called_once_with(
+                {
+                    "my_endpoint": "localhost:8080",
+                    "their_endpoint": "1.2.3.4:8081",
+                }
+            )
+
+    async def test_connections_endpoints_x(self):
+        self.request.match_info = {"conn_id": "dummy"}
+        mock_conn_rec = async_mock.MagicMock()
+
+        with async_mock.patch.object(
+            test_module, "ConnectionManager", autospec=True
+        ) as mock_conn_mgr_cls, async_mock.patch.object(
+            test_module.web, "json_response"
+        ) as mock_response:
+            mock_conn_mgr_cls.return_value = async_mock.MagicMock(
+                get_endpoints=async_mock.CoroutineMock(
+                    side_effect=StorageNotFoundError()
+                )
+            )
+
+            with self.assertRaises(test_module.web.HTTPNotFound):
+                await test_module.connections_endpoints(self.request)
+
+            mock_conn_mgr_cls.return_value = async_mock.MagicMock(
+                get_endpoints=async_mock.CoroutineMock(
+                    side_effect=test_module.WalletError()
+                )
+            )
+
+            with self.assertRaises(test_module.web.HTTPBadRequest):
+                await test_module.connections_endpoints(self.request)
+
     async def test_connections_metadata(self):
         self.request.match_info = {"conn_id": "dummy"}
         mock_conn_rec = async_mock.MagicMock()
@@ -151,7 +200,7 @@ class TestConnectionRoutes(AsyncTestCase):
 
             await test_module.connections_metadata(self.request)
             mock_metadata_get_all.assert_called_once()
-            mock_response.assert_called_once_with({"hello": "world"})
+            mock_response.assert_called_once_with({"results": {"hello": "world"}})
 
     async def test_connections_metadata_get_single(self):
         self.request.match_info = {"conn_id": "dummy"}
@@ -172,7 +221,7 @@ class TestConnectionRoutes(AsyncTestCase):
 
             await test_module.connections_metadata(self.request)
             mock_metadata_get.assert_called_once()
-            mock_response.assert_called_once_with({"test": "value"})
+            mock_response.assert_called_once_with({"results": {"test": "value"}})
 
     async def test_connections_metadata_x(self):
         self.request.match_info = {"conn_id": "dummy"}
@@ -216,7 +265,7 @@ class TestConnectionRoutes(AsyncTestCase):
 
             await test_module.connections_metadata_set(self.request)
             mock_metadata_set.assert_called_once()
-            mock_response.assert_called_once_with({"hello": "world"})
+            mock_response.assert_called_once_with({"results": {"hello": "world"}})
 
     async def test_connections_metadata_set_x(self):
         self.request.match_info = {"conn_id": "dummy"}

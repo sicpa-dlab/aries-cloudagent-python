@@ -121,6 +121,7 @@ class DemoAgent:
         revocation: bool = False,
         multitenant: bool = False,
         mediation: bool = False,
+        arg_file: str = None,
         extra_args=None,
         **params,
     ):
@@ -146,6 +147,7 @@ class DemoAgent:
         self.mediation = mediation
         self.mediator_connection_id = None
         self.mediator_request_id = None
+        self.arg_file = arg_file
 
         self.admin_url = f"http://{self.internal_host}:{admin_port}"
         if AGENT_ENDPOINT:
@@ -218,9 +220,10 @@ class DemoAgent:
             "attributes": schema_attrs,
         }
         schema_response = await self.admin_POST("/schemas", schema_body)
-        # log_json(json.dumps(schema_response), label="Schema:")
-        schema_id = schema_response["schema_id"]
+        log_json(json.dumps(schema_response), label="Schema:")
+        schema_id = schema_response["sent"]["schema_id"]
         log_msg("Schema ID:", schema_id)
+        await asyncio.sleep(2.0)
 
         # Create a cred def for the schema
         cred_def_tag = (
@@ -239,7 +242,7 @@ class DemoAgent:
         credential_definition_response = await self.admin_POST(
             "/credential-definitions", credential_definition_body
         )
-        credential_definition_id = credential_definition_response[
+        credential_definition_id = credential_definition_response["sent"][
             "credential_definition_id"
         ]
         log_msg("Cred def ID:", credential_definition_id)
@@ -326,6 +329,14 @@ class DemoAgent:
                 ]
             )
 
+        if self.arg_file:
+            result.extend(
+                (
+                    "--arg-file",
+                    self.arg_file,
+                )
+            )
+
         if self.extra_args:
             result.extend(self.extra_args)
 
@@ -342,13 +353,14 @@ class DemoAgent:
         alias: str = None,
         did: str = None,
         verkey: str = None,
+        role: str = "TRUST_ANCHOR",
     ):
         self.log(f"Registering {self.ident} ...")
         if not ledger_url:
             ledger_url = LEDGER_URL
         if not ledger_url:
             ledger_url = f"http://{self.external_host}:9000"
-        data = {"alias": alias or self.ident, "role": "TRUST_ANCHOR"}
+        data = {"alias": alias or self.ident, "role": role}
         if did and verkey:
             data["did"] = did
             data["verkey"] = verkey
@@ -361,6 +373,7 @@ class DemoAgent:
                 raise Exception(f"Error registering DID, response code {resp.status}")
             nym_info = await resp.json()
             self.did = nym_info["did"]
+            self.log(f"nym_info: {nym_info}")
             if self.multitenant:
                 if not self.agency_wallet_did:
                     self.agency_wallet_did = self.did
@@ -382,6 +395,11 @@ class DemoAgent:
             self.seed = self.agency_wallet_seed
             self.did = self.agency_wallet_did
             self.wallet_key = self.agency_wallet_key
+
+            wallet_params = await self.get_id_and_token(self.wallet_name)
+            self.managed_wallet_params["wallet_id"] = wallet_params["id"]
+            self.managed_wallet_params["token"] = wallet_params["token"]
+
             self.log(f"Switching to AGENCY wallet {target_wallet_name}")
             return False
 
@@ -396,6 +414,11 @@ class DemoAgent:
                 self.ident = target_wallet_name
                 # we can't recover the seed so let's set it to None and see what happens
                 self.seed = None
+
+                wallet_params = await self.get_id_and_token(self.wallet_name)
+                self.managed_wallet_params["wallet_id"] = wallet_params["id"]
+                self.managed_wallet_params["token"] = wallet_params["token"]
+
                 self.log(f"Switching to EXISTING wallet {target_wallet_name}")
                 return False
 
@@ -432,6 +455,19 @@ class DemoAgent:
         self.log(f"Created NEW wallet {target_wallet_name}")
         return True
 
+    async def get_id_and_token(self, wallet_name):
+        wallet = await self.agency_admin_GET(
+            f"/multitenancy/wallets?wallet_name={wallet_name}"
+        )
+        wallet_id = wallet["results"][0]["wallet_id"]
+
+        wallet = await self.agency_admin_POST(
+            f"/multitenancy/wallet/{wallet_id}/token", {}
+        )
+        token = wallet["token"]
+
+        return {"id": wallet_id, "token": token}
+
     def handle_output(self, *output, source: str = None, **kwargs):
         end = "" if source else "\n"
         if source == "stderr":
@@ -458,6 +494,7 @@ class DemoAgent:
             stderr=subprocess.PIPE,
             env=env,
             encoding="utf-8",
+            close_fds=True,
         )
         loop.run_in_executor(
             None,
@@ -491,9 +528,8 @@ class DemoAgent:
 
         # start agent sub-process
         loop = asyncio.get_event_loop()
-        self.proc = await loop.run_in_executor(
-            None, self._process, agent_args, my_env, loop
-        )
+        future = loop.run_in_executor(None, self._process, agent_args, my_env, loop)
+        self.proc = await asyncio.wait_for(future, 20, loop=loop)
         if wait:
             await asyncio.sleep(1.0)
             await self.detect_process()
@@ -510,12 +546,17 @@ class DemoAgent:
                 raise Exception(msg)
 
     async def terminate(self):
-        loop = asyncio.get_event_loop()
-        if self.proc:
-            await loop.run_in_executor(None, self._terminate)
+        # close session to admin api
         await self.client_session.close()
+        # shut down web hooks first
         if self.webhook_site:
             await self.webhook_site.stop()
+            await asyncio.sleep(0.5)
+        # now shut down the agent
+        loop = asyncio.get_event_loop()
+        if self.proc:
+            future = loop.run_in_executor(None, self._terminate)
+            result = await asyncio.wait_for(future, 10, loop=loop)
 
     async def listen_webhooks(self, webhook_port):
         self.webhook_port = webhook_port
@@ -563,6 +604,9 @@ class DemoAgent:
         self.log(
             f"Received problem report: {message['explain-ltxt']}\n", source="stderr"
         )
+
+    async def handle_endorse_transaction(self, message):
+        self.log(f"Received endorse transaction: {message}\n", source="stderr")
 
     async def handle_revocation_registry(self, message):
         reg_id = message.get("revoc_reg_id", "(undetermined)")

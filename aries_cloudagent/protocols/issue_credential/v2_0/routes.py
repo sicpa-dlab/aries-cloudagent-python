@@ -21,6 +21,7 @@ from ....ledger.error import LedgerError
 from ....messaging.decorators.attach_decorator import AttachDecorator
 from ....messaging.models.base import BaseModelError, OpenAPISchema
 from ....messaging.valid import (
+    ENDPOINT,
     INDY_CRED_DEF_ID,
     INDY_DID,
     INDY_SCHEMA_ID,
@@ -38,9 +39,8 @@ from ...problem_report.v1_0 import internal_error
 from ...problem_report.v1_0.message import ProblemReport
 
 from .manager import V20CredManager, V20CredManagerError
-from .message_types import SPEC_URI
+from .message_types import ATTACHMENT_FORMAT, CRED_20_PROPOSAL, SPEC_URI
 from .messages.cred_format import V20CredFormat
-from .messages.cred_offer import V20CredOfferSchema
 from .messages.cred_proposal import V20CredProposal
 from .messages.inner.cred_preview import V20CredPreview, V20CredPreviewSchema
 from .models.cred_ex_record import V20CredExRecord, V20CredExRecordSchema
@@ -122,7 +122,7 @@ class V20CredStoreRequestSchema(OpenAPISchema):
     credential_id = fields.Str(required=False)
 
 
-class V20CredFilterIndy(OpenAPISchema):
+class V20CredFilterIndySchema(OpenAPISchema):
     """Indy credential filtration criteria."""
 
     cred_def_id = fields.Str(
@@ -147,7 +147,7 @@ class V20CredFilterIndy(OpenAPISchema):
     )
 
 
-class V20CredFilterDIF(OpenAPISchema):
+class V20CredFilterDIFSchema(OpenAPISchema):
     """DIF credential filtration criteria."""
 
     some_dif_criterion = fields.Str(
@@ -156,14 +156,18 @@ class V20CredFilterDIF(OpenAPISchema):
     )
 
 
-class V20CredFilter(OpenAPISchema):
+class V20CredFilterSchema(OpenAPISchema):
     """Credential filtration criteria."""
 
     indy = fields.Nested(
-        V20CredFilterIndy, required=False, description="Credential filter for indy"
+        V20CredFilterIndySchema,
+        required=False,
+        description="Credential filter for indy",
     )
     dif = fields.Nested(
-        V20CredFilterDIF, required=False, description="Credential filter for DIF"
+        V20CredFilterDIFSchema,
+        required=False,
+        description="Credential filter for DIF",
     )
 
     @validates_schema
@@ -180,15 +184,15 @@ class V20CredFilter(OpenAPISchema):
             ValidationError: if data has neither indy nor dif
 
         """
-        if not (("indy" in data) or ("dif" in data)):
-            raise ValidationError("V20CredFilter requires indy, dif, or both")
+        if not any(f.api in data for f in V20CredFormat.Format):
+            raise ValidationError("V20CredFilterSchema requires indy, dif, or both")
 
 
 class V20IssueCredSchemaCore(AdminAPIMessageTracingSchema):
     """Filter, auto-remove, comment, trace."""
 
     filter_ = fields.Nested(
-        V20CredFilter,
+        V20CredFilterSchema,
         required=True,
         data_key="filter",
         description="Credential specification criteria by format",
@@ -256,6 +260,19 @@ class V20CredOfferRequestSchema(V20IssueCredSchemaCore):
     credential_preview = fields.Nested(V20CredPreviewSchema, required=True)
 
 
+class V20CreateFreeOfferResultSchema(OpenAPISchema):
+    """Result schema for creating free offer."""
+
+    response = fields.Nested(
+        V20CredExRecord(),
+        description="Credential exchange record",
+    )
+    oob_url = fields.Str(
+        description="Out-of-band URL",
+        **ENDPOINT,
+    )
+
+
 class V20CredIssueRequestSchema(OpenAPISchema):
     """Request schema for sending credential issue admin message."""
 
@@ -287,19 +304,19 @@ class V20CredExIdMatchInfoSchema(OpenAPISchema):
 
 
 def _formats_filters(filt_spec: Mapping) -> Mapping:
-    """Break out formats and filters for v2.0 messages."""
+    """Break out formats and filters for v2.0 cred proposal messages."""
 
     return {
         "formats": [
             V20CredFormat(
-                attach_id=fmt_aka,
-                format_=V20CredFormat.Format.get(fmt_aka),
+                attach_id=fmt_api,
+                format_=ATTACHMENT_FORMAT[CRED_20_PROPOSAL][fmt_api],
             )
-            for fmt_aka in filt_spec.keys()
+            for fmt_api in filt_spec
         ],
         "filters_attach": [
-            AttachDecorator.from_indy_dict(filt_by_fmt, ident=fmt_aka)
-            for (fmt_aka, filt_by_fmt) in filt_spec.items()
+            AttachDecorator.data_base64(filt_by_fmt, ident=fmt_api)
+            for (fmt_api, filt_by_fmt) in filt_spec.items()
         ],
     }
 
@@ -468,7 +485,7 @@ async def credential_exchange_create(request: web.BaseRequest):
 
         cred_manager = V20CredManager(context.profile)
         (cred_ex_record, cred_offer_message) = await cred_manager.prepare_send(
-            conn_id=None,
+            connection_id=None,
             cred_proposal=cred_proposal,
             auto_remove=auto_remove,
         )
@@ -514,7 +531,7 @@ async def credential_exchange_send(request: web.BaseRequest):
     body = await request.json()
 
     comment = body.get("comment")
-    conn_id = body.get("connection_id")
+    connection_id = body.get("connection_id")
     preview_spec = body.get("credential_preview")
     if not preview_spec:
         raise web.HTTPBadRequest(reason="Missing credential_preview")
@@ -529,9 +546,9 @@ async def credential_exchange_send(request: web.BaseRequest):
     try:
         cred_preview = V20CredPreview.deserialize(preview_spec)
         async with context.session() as session:
-            conn_record = await ConnRecord.retrieve_by_id(session, conn_id)
+            conn_record = await ConnRecord.retrieve_by_id(session, connection_id)
             if not conn_record.is_ready:
-                raise web.HTTPForbidden(reason=f"Connection {conn_id} not ready")
+                raise web.HTTPForbidden(reason=f"Connection {connection_id} not ready")
 
         cred_proposal = V20CredProposal(
             comment=comment,
@@ -551,7 +568,7 @@ async def credential_exchange_send(request: web.BaseRequest):
 
         cred_manager = V20CredManager(context.profile)
         (cred_ex_record, cred_offer_message) = await cred_manager.prepare_send(
-            conn_id,
+            connection_id,
             cred_proposal=cred_proposal,
             auto_remove=auto_remove,
         )
@@ -565,7 +582,10 @@ async def credential_exchange_send(request: web.BaseRequest):
             outbound_handler,
         )
 
-    await outbound_handler(cred_offer_message, connection_id=cred_ex_record.conn_id)
+    await outbound_handler(
+        cred_offer_message,
+        connection_id=cred_ex_record.connection_id,
+    )
 
     trace_event(
         context.settings,
@@ -601,7 +621,7 @@ async def credential_exchange_send_proposal(request: web.BaseRequest):
 
     body = await request.json()
 
-    conn_id = body.get("connection_id")
+    connection_id = body.get("connection_id")
     comment = body.get("comment")
     preview_spec = body.get("credential_preview")
     filt_spec = body.get("filter")
@@ -617,20 +637,20 @@ async def credential_exchange_send_proposal(request: web.BaseRequest):
             V20CredPreview.deserialize(preview_spec) if preview_spec else None
         )
         async with context.session() as session:
-            conn_record = await ConnRecord.retrieve_by_id(session, conn_id)
+            conn_record = await ConnRecord.retrieve_by_id(session, connection_id)
             if not conn_record.is_ready:
-                raise web.HTTPForbidden(reason=f"Connection {conn_id} not ready")
+                raise web.HTTPForbidden(reason=f"Connection {connection_id} not ready")
 
         cred_manager = V20CredManager(context.profile)
         cred_ex_record = await cred_manager.create_proposal(
-            conn_id=conn_id,
+            connection_id=connection_id,
             auto_remove=auto_remove,
             comment=comment,
             cred_preview=cred_preview,
             trace=trace_msg,
             fmt2filter={
-                V20CredFormat.Format.get(fmt_aka): filt_by_fmt
-                for (fmt_aka, filt_by_fmt) in filt_spec.items()
+                V20CredFormat.Format.get(fmt_api): filt_by_fmt
+                for (fmt_api, filt_by_fmt) in filt_spec.items()
             },
         )
 
@@ -647,7 +667,7 @@ async def credential_exchange_send_proposal(request: web.BaseRequest):
             outbound_handler,
         )
 
-    await outbound_handler(cred_proposal_message, connection_id=conn_id)
+    await outbound_handler(cred_proposal_message, connection_id=connection_id)
 
     trace_event(
         context.settings,
@@ -662,7 +682,7 @@ async def credential_exchange_send_proposal(request: web.BaseRequest):
 async def _create_free_offer(
     profile: Profile,
     filt_spec: Mapping = None,
-    conn_id: str = None,
+    connection_id: str = None,
     auto_issue: bool = False,
     auto_remove: bool = False,
     preview_spec: dict = None,
@@ -683,7 +703,7 @@ async def _create_free_offer(
     )
 
     cred_ex_record = V20CredExRecord(
-        conn_id=conn_id,
+        connection_id=connection_id,
         initiator=V20CredExRecord.INITIATOR_SELF,
         role=V20CredExRecord.ROLE_ISSUER,
         cred_proposal=cred_proposal.serialize(),
@@ -706,7 +726,7 @@ async def _create_free_offer(
     summary="Create a credential offer, independent of any proposal",
 )
 @request_schema(V20CredOfferRequestSchema())
-@response_schema(V20CredOfferSchema(), 200, description="")
+@response_schema(V20CreateFreeOfferResultSchema(), 200, description="")
 async def credential_exchange_create_free_offer(request: web.BaseRequest):
     """
     Request handler for creating free credential offer.
@@ -739,14 +759,14 @@ async def credential_exchange_create_free_offer(request: web.BaseRequest):
     filt_spec = body.get("filter")
     if not filt_spec:
         raise web.HTTPBadRequest(reason="Missing filter")
-    conn_id = body.get("connection_id")
+    connection_id = body.get("connection_id")
     trace_msg = body.get("trace")
 
     async with context.session() as session:
         wallet = session.inject(BaseWallet)
-        if conn_id:
+        if connection_id:
             try:
-                conn_record = await ConnRecord.retrieve_by_id(session, conn_id)
+                conn_record = await ConnRecord.retrieve_by_id(session, connection_id)
                 conn_did = await wallet.get_local_did(conn_record.my_did)
             except (WalletError, StorageError) as err:
                 raise web.HTTPBadRequest(reason=err.roll_up) from err
@@ -754,7 +774,7 @@ async def credential_exchange_create_free_offer(request: web.BaseRequest):
             conn_did = await wallet.get_public_did()
             if not conn_did:
                 raise web.HTTPBadRequest(reason="Wallet has no public DID")
-            conn_id = None
+            connection_id = None
 
         did_info = await wallet.get_public_did()
         del wallet
@@ -770,7 +790,7 @@ async def credential_exchange_create_free_offer(request: web.BaseRequest):
         (cred_ex_record, cred_offer_message) = await _create_free_offer(
             context.profile,
             filt_spec,
-            conn_id,
+            connection_id,
             auto_issue,
             auto_remove,
             preview_spec,
@@ -827,7 +847,7 @@ async def credential_exchange_send_free_offer(request: web.BaseRequest):
 
     body = await request.json()
 
-    conn_id = body.get("connection_id")
+    connection_id = body.get("connection_id")
     filt_spec = body.get("filter")
     if not filt_spec:
         raise web.HTTPBadRequest(reason="Missing filter")
@@ -845,14 +865,14 @@ async def credential_exchange_send_free_offer(request: web.BaseRequest):
     conn_record = None
     try:
         async with context.session() as session:
-            conn_record = await ConnRecord.retrieve_by_id(session, conn_id)
+            conn_record = await ConnRecord.retrieve_by_id(session, connection_id)
             if not conn_record.is_ready:
-                raise web.HTTPForbidden(reason=f"Connection {conn_id} not ready")
+                raise web.HTTPForbidden(reason=f"Connection {connection_id} not ready")
 
         (cred_ex_record, cred_offer_message,) = await _create_free_offer(
             context.profile,
             filt_spec,
-            conn_id,
+            connection_id,
             auto_issue,
             auto_remove,
             preview_spec,
@@ -874,7 +894,7 @@ async def credential_exchange_send_free_offer(request: web.BaseRequest):
             outbound_handler,
         )
 
-    await outbound_handler(cred_offer_message, connection_id=conn_id)
+    await outbound_handler(cred_offer_message, connection_id=connection_id)
 
     trace_event(
         context.settings,
@@ -924,7 +944,7 @@ async def credential_exchange_send_bound_offer(request: web.BaseRequest):
             except StorageNotFoundError as err:
                 raise web.HTTPNotFound(reason=err.roll_up) from err
 
-            conn_id = cred_ex_record.conn_id
+            connection_id = cred_ex_record.connection_id
             if cred_ex_record.state != (
                 V20CredExRecord.STATE_PROPOSAL_RECEIVED
             ):  # check state here: manager call creates free offers too
@@ -934,9 +954,9 @@ async def credential_exchange_send_bound_offer(request: web.BaseRequest):
                     f"(must be {V20CredExRecord.STATE_PROPOSAL_RECEIVED})"
                 )
 
-            conn_record = await ConnRecord.retrieve_by_id(session, conn_id)
+            conn_record = await ConnRecord.retrieve_by_id(session, connection_id)
             if not conn_record.is_ready:
-                raise web.HTTPForbidden(reason=f"Connection {conn_id} not ready")
+                raise web.HTTPForbidden(reason=f"Connection {connection_id} not ready")
 
         cred_manager = V20CredManager(context.profile)
         (cred_ex_record, cred_offer_message) = await cred_manager.create_offer(
@@ -954,7 +974,7 @@ async def credential_exchange_send_bound_offer(request: web.BaseRequest):
             outbound_handler,
         )
 
-    await outbound_handler(cred_offer_message, connection_id=conn_id)
+    await outbound_handler(cred_offer_message, connection_id=connection_id)
 
     trace_event(
         context.settings,
@@ -1001,11 +1021,11 @@ async def credential_exchange_send_request(request: web.BaseRequest):
                 )
             except StorageNotFoundError as err:
                 raise web.HTTPNotFound(reason=err.roll_up) from err
-            conn_id = cred_ex_record.conn_id
+            connection_id = cred_ex_record.connection_id
 
-            conn_record = await ConnRecord.retrieve_by_id(session, conn_id)
+            conn_record = await ConnRecord.retrieve_by_id(session, connection_id)
             if not conn_record.is_ready:
-                raise web.HTTPForbidden(reason=f"Connection {conn_id} not ready")
+                raise web.HTTPForbidden(reason=f"Connection {connection_id} not ready")
 
         cred_manager = V20CredManager(context.profile)
         (cred_ex_record, cred_request_message) = await cred_manager.create_request(
@@ -1023,7 +1043,7 @@ async def credential_exchange_send_request(request: web.BaseRequest):
             outbound_handler,
         )
 
-    await outbound_handler(cred_request_message, connection_id=conn_id)
+    await outbound_handler(cred_request_message, connection_id=connection_id)
 
     trace_event(
         context.settings,
@@ -1074,11 +1094,11 @@ async def credential_exchange_issue(request: web.BaseRequest):
                 )
             except StorageNotFoundError as err:
                 raise web.HTTPNotFound(reason=err.roll_up) from err
-            conn_id = cred_ex_record.conn_id
+            connection_id = cred_ex_record.connection_id
 
-            conn_record = await ConnRecord.retrieve_by_id(session, conn_id)
+            conn_record = await ConnRecord.retrieve_by_id(session, connection_id)
             if not conn_record.is_ready:
-                raise web.HTTPForbidden(reason=f"Connection {conn_id} not ready")
+                raise web.HTTPForbidden(reason=f"Connection {connection_id} not ready")
 
         cred_manager = V20CredManager(context.profile)
         (cred_ex_record, cred_issue_message) = await cred_manager.issue_credential(
@@ -1105,7 +1125,7 @@ async def credential_exchange_issue(request: web.BaseRequest):
             outbound_handler,
         )
 
-    await outbound_handler(cred_issue_message, connection_id=conn_id)
+    await outbound_handler(cred_issue_message, connection_id=connection_id)
 
     trace_event(
         context.settings,
@@ -1159,10 +1179,10 @@ async def credential_exchange_store(request: web.BaseRequest):
             except StorageNotFoundError as err:
                 raise web.HTTPNotFound(reason=err.roll_up) from err
 
-            conn_id = cred_ex_record.conn_id
-            conn_record = await ConnRecord.retrieve_by_id(session, conn_id)
+            connection_id = cred_ex_record.connection_id
+            conn_record = await ConnRecord.retrieve_by_id(session, connection_id)
             if not conn_record.is_ready:
-                raise web.HTTPForbidden(reason=f"Connection {conn_id} not ready")
+                raise web.HTTPForbidden(reason=f"Connection {connection_id} not ready")
 
         cred_manager = V20CredManager(context.profile)
         (cred_ex_record, cred_stored_message) = await cred_manager.store_credential(
@@ -1189,7 +1209,7 @@ async def credential_exchange_store(request: web.BaseRequest):
             outbound_handler,
         )
 
-    await outbound_handler(cred_stored_message, connection_id=conn_id)
+    await outbound_handler(cred_stored_message, connection_id=connection_id)
 
     trace_event(
         context.settings,
@@ -1265,7 +1285,7 @@ async def credential_exchange_problem_report(request: web.BaseRequest):
     error_result = ProblemReport(explain_ltxt=body["explain_ltxt"])
     error_result.assign_thread_id(cred_ex_record.thread_id)
 
-    await outbound_handler(error_result, connection_id=cred_ex_record.conn_id)
+    await outbound_handler(error_result, connection_id=cred_ex_record.connection_id)
 
     trace_event(
         context.settings,

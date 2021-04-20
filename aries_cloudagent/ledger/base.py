@@ -7,6 +7,8 @@ from enum import Enum
 from typing import Sequence, Tuple, Union
 
 from ..indy.issuer import IndyIssuer
+from ..utils import sentinel
+from ..wallet.did_info import DIDInfo
 
 from .endpoint_type import EndpointType
 
@@ -132,12 +134,31 @@ class BaseLedger(ABC, metaclass=ABCMeta):
         """Generate the digest of a TAA record."""
 
     @abstractmethod
+    async def txn_endorse(
+        self,
+        request_json: str,
+    ) -> str:
+        """Endorse (sign) the provided transaction."""
+
+    @abstractmethod
+    async def txn_submit(
+        self,
+        request_json: str,
+        sign: bool,
+        taa_accept: bool,
+        sign_did: DIDInfo = sentinel,
+    ) -> str:
+        """Write the provided (signed and possibly endorsed) transaction to the ledger."""
+
+    @abstractmethod
     async def create_and_send_schema(
         self,
         issuer: IndyIssuer,
         schema_name: str,
         schema_version: str,
         attribute_names: Sequence[str],
+        write_ledger: bool = True,
+        endorser_did: str = None,
     ) -> Tuple[str, dict]:
         """
         Send schema to ledger.
@@ -176,6 +197,8 @@ class BaseLedger(ABC, metaclass=ABCMeta):
         signature_type: str = None,
         tag: str = None,
         support_revocation: bool = False,
+        write_ledger: bool = True,
+        endorser_did: str = None,
     ) -> Tuple[str, dict, bool]:
         """
         Send credential definition to ledger and store relevant key matter in wallet.

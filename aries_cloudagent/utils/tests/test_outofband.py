@@ -2,7 +2,7 @@ from asynctest import mock, TestCase
 
 from ...messaging.agent_message import AgentMessage
 from ...protocols.out_of_band.v1_0.messages.invitation import InvitationMessage
-from ...wallet.base import DIDInfo
+from ...wallet.did_info import DIDInfo
 
 from .. import outofband as test_module
 
@@ -14,7 +14,7 @@ class TestOutOfBand(TestCase):
 
     def test_serialize_oob(self):
         invi = InvitationMessage(
-            comment="my sister", label=u"ma sœur", service=[TestOutOfBand.test_did]
+            comment="my sister", label=u"ma sœur", services=[TestOutOfBand.test_did]
         )
 
         result = test_module.serialize_outofband(

@@ -5,7 +5,7 @@ import json
 from urllib.parse import quote, urljoin
 
 from ..messaging.agent_message import AgentMessage
-from ..wallet.base import DIDInfo
+from ..wallet.did_info import DIDInfo
 from ..wallet.util import str_to_b64
 
 
@@ -19,7 +19,7 @@ def serialize_outofband(message: AgentMessage, did: DIDInfo, endpoint: str) -> s
     """
     body = message.serialize()
     # FIXME no support for routing keys
-    body["~service"] = {
+    body["~services"] = {
         "recipientKeys": [did.verkey],
         "routingKeys": [],
         "serviceEndpoint": endpoint,

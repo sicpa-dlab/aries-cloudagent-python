@@ -1,3 +1,5 @@
+import json
+
 from aiohttp import ClientSession, DummyCookieJar, TCPConnector, web
 from aiohttp.test_utils import unused_port
 
@@ -14,6 +16,39 @@ from ...utils.task_queue import TaskQueue
 
 from .. import server as test_module
 from ..server import AdminServer, AdminSetupError
+
+
+class TestAdminResponder(AsyncTestCase):
+    async def test_admin_responder(self):
+        admin_responder = test_module.AdminResponder(
+            None, async_mock.CoroutineMock(), async_mock.CoroutineMock()
+        )
+
+        assert admin_responder.send_fn is admin_responder._send
+        assert admin_responder.webhook_fn is admin_responder._webhook
+
+        message = test_module.OutboundMessage(payload="hello")
+        await admin_responder.send_outbound(message)
+        assert admin_responder._send.called_once_with(None, message)
+
+        await admin_responder.send_webhook("topic", {"payload": "hello"})
+        assert admin_responder._webhook.called_once_with("topic", {"outbound": "hello"})
+
+
+class TestWebhookTarget(AsyncTestCase):
+    async def test_webhook_target(self):
+        webhook_target = test_module.WebhookTarget(
+            endpoint="localhost:8888",
+            topic_filter=["birthdays", "animal videos"],
+            max_attempts=None,
+        )
+        assert webhook_target.topic_filter == {"birthdays", "animal videos"}
+
+        webhook_target.topic_filter = []
+        assert webhook_target.topic_filter is None
+
+        webhook_target.topic_filter = ["duct cleaning", "*"]
+        assert webhook_target.topic_filter is None
 
 
 class TestAdminServer(AsyncTestCase):
@@ -130,7 +165,7 @@ class TestAdminServer(AsyncTestCase):
             conductor_stop=async_mock.CoroutineMock(),
             task_queue=TaskQueue(max_active=4) if task_queue else None,
             conductor_stats=(
-                None if task_queue else async_mock.CoroutineMock(return_value=[1, 2])
+                None if task_queue else async_mock.CoroutineMock(return_value={"a": 1})
             ),
         )
 
@@ -157,10 +192,12 @@ class TestAdminServer(AsyncTestCase):
 
         settings = {
             "admin.admin_insecure_mode": False,
+            "admin.admin_client_max_request_size": 4,
             "admin.admin_api_key": "test-api-key",
         }
         server = self.get_admin_server(settings)
         await server.start()
+        assert server.app._client_max_size == 4 * 1024 * 1024
         with async_mock.patch.object(
             server, "websocket_queues", async_mock.MagicMock()
         ) as mock_wsq:
@@ -184,6 +221,93 @@ class TestAdminServer(AsyncTestCase):
         await DefaultContextBuilder().load_plugins(context)
         server = self.get_admin_server({"admin.admin_insecure_mode": True}, context)
         app = await server.make_application()
+
+    async def test_import_routes_multitenant_middleware(self):
+        # imports all default admin routes
+        context = InjectionContext()
+        context.injector.bind_instance(ProtocolRegistry, ProtocolRegistry())
+        profile = InMemoryProfile.test_profile()
+        context.injector.bind_instance(
+            test_module.MultitenantManager,
+            test_module.MultitenantManager(profile),
+        )
+        await DefaultContextBuilder().load_plugins(context)
+        server = self.get_admin_server(
+            {
+                "admin.admin_insecure_mode": False,
+                "admin.admin_api_key": "test-api-key",
+            },
+            context,
+        )
+
+        # cover multitenancy start code
+        app = await server.make_application()
+        app["swagger_dict"] = {}
+        await server.on_startup(app)
+
+        # multitenant authz
+        [mt_authz_middle] = [
+            m for m in app.middlewares if ".check_multitenant_authorization" in str(m)
+        ]
+
+        mock_request = async_mock.MagicMock(
+            method="GET",
+            headers={"Authorization": "Bearer ..."},
+            path="/multitenancy/etc",
+            text=async_mock.CoroutineMock(return_value="abc123"),
+        )
+        with self.assertRaises(test_module.web.HTTPUnauthorized):
+            await mt_authz_middle(mock_request, None)
+
+        mock_request = async_mock.MagicMock(
+            method="GET",
+            headers={},
+            path="/protected/non-multitenancy/non-server",
+            text=async_mock.CoroutineMock(return_value="abc123"),
+        )
+        with self.assertRaises(test_module.web.HTTPUnauthorized):
+            await mt_authz_middle(mock_request, None)
+
+        mock_request = async_mock.MagicMock(
+            method="GET",
+            headers={"Authorization": "Bearer ..."},
+            path="/protected/non-multitenancy/non-server",
+            text=async_mock.CoroutineMock(return_value="abc123"),
+        )
+        mock_handler = async_mock.CoroutineMock()
+        await mt_authz_middle(mock_request, mock_handler)
+        assert mock_handler.called_once_with(mock_request)
+
+        # multitenant setup context exception paths
+        [setup_ctx_middle] = [m for m in app.middlewares if ".setup_context" in str(m)]
+
+        mock_request = async_mock.MagicMock(
+            method="GET",
+            headers={"Authorization": "Non-bearer ..."},
+            path="/protected/non-multitenancy/non-server",
+            text=async_mock.CoroutineMock(return_value="abc123"),
+        )
+        with self.assertRaises(test_module.web.HTTPUnauthorized):
+            await setup_ctx_middle(mock_request, None)
+
+        mock_request = async_mock.MagicMock(
+            method="GET",
+            headers={"Authorization": "Bearer ..."},
+            path="/protected/non-multitenancy/non-server",
+            text=async_mock.CoroutineMock(return_value="abc123"),
+        )
+        with async_mock.patch.object(
+            server.multitenant_manager,
+            "get_profile_for_token",
+            async_mock.CoroutineMock(),
+        ) as mock_get_profile:
+            mock_get_profile.side_effect = [
+                test_module.MultitenantManagerError("corrupt token"),
+                test_module.StorageNotFoundError("out of memory"),
+            ]
+            for i in range(2):
+                with self.assertRaises(test_module.web.HTTPUnauthorized):
+                    await setup_ctx_middle(mock_request, None)
 
     async def test_register_external_plugin_x(self):
         context = InjectionContext()
@@ -251,6 +375,42 @@ class TestAdminServer(AsyncTestCase):
             assert result["topic"] == "settings"
 
         await server.stop()
+
+    async def test_query_config(self):
+        settings = {
+            "admin.admin_insecure_mode": False,
+            "admin.admin_api_key": "test-api-key",
+            "admin.webhook_urls": ["localhost:8123/abc#secret", "localhost:8123/def"],
+            "multitenant.jwt_secret": "abc123",
+            "wallet.key": "abc123",
+            "wallet.rekey": "def456",
+            "wallet.seed": "00000000000000000000000000000000",
+            "wallet.storage.creds": "secret",
+        }
+        server = self.get_admin_server(settings)
+        await server.start()
+
+        async with self.client_session.get(
+            f"http://127.0.0.1:{self.port}/status/config",
+            headers={"x-api-key": "test-api-key"},
+        ) as response:
+            config = json.loads(await response.text())["config"]
+            assert "admin.admin_insecure_mode" in config
+            assert all(
+                k not in config
+                for k in [
+                    "admin.admin_api_key",
+                    "multitenant.jwt_secret",
+                    "wallet.key",
+                    "wallet.rekey",
+                    "wallet.seed",
+                    "wallet.storage.creds",
+                ]
+            )
+            assert config["admin.webhook_urls"] == [
+                "localhost:8123/abc",
+                "localhost:8123/def",
+            ]
 
     async def test_visit_shutting_down(self):
         settings = {

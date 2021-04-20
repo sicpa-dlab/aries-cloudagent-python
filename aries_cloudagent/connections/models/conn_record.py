@@ -181,7 +181,7 @@ class ConnRecord(BaseRecord):
         invitation_mode: str = None,
         alias: str = None,
         their_public_did: str = None,
-        rfc23_state=None,  # derived from state
+        rfc23_state: str = None,  # from state: formalism for base_record.from_storage()
         initiator: str = None,  # for backward compatibility with old ConnectionRecord
         **kwargs,
     ):
@@ -418,7 +418,7 @@ class ConnRecord(BaseRecord):
             session (ProfileSession): session used for storage
             key (str): key identifying metadata
             default (Any): default value to get; type should be a JSON
-            compatible value.
+                compatible value.
 
         Returns:
             Any: metadata stored by key

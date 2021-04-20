@@ -4,10 +4,6 @@ import logging
 
 from typing import Coroutine, Sequence, Tuple
 
-from aries_cloudagent.protocols.coordinate_mediation.v1_0.manager import (
-    MediationManager,
-)
-
 from ....cache.base import BaseCache
 from ....config.base import InjectionError
 from ....connections.base_manager import BaseConnectionManager
@@ -17,10 +13,12 @@ from ....connections.util import mediation_record_if_id
 from ....core.error import BaseError
 from ....core.profile import ProfileSession
 from ....messaging.responder import BaseResponder
+from ....protocols.coordinate_mediation.v1_0.manager import MediationManager
 from ....protocols.routing.v1_0.manager import RoutingManager
 from ....storage.error import StorageError, StorageNotFoundError
 from ....transport.inbound.receipt import MessageReceipt
-from ....wallet.base import BaseWallet, DIDInfo
+from ....wallet.base import BaseWallet
+from ....wallet.did_info import DIDInfo
 from ....wallet.crypto import create_keypair, seed_to_did
 from ....wallet.error import WalletNotFoundError
 from ....wallet.util import bytes_to_b58
@@ -480,7 +478,9 @@ class ConnectionManager(BaseConnectionManager):
                 )
             except StorageNotFoundError:
                 raise ConnectionManagerError(
-                    "No invitation found for pairwise connection"
+                    "No invitation found for pairwise connection "
+                    f"in state {ConnRecord.State.INVITATION.rfc160}: "
+                    "a prior connection request may have updated the connection state"
                 )
 
         invitation = None
@@ -809,6 +809,32 @@ class ConnectionManager(BaseConnectionManager):
             await responder.send(request, connection_id=connection.connection_id)
 
         return connection
+
+    async def get_endpoints(self, conn_id: str) -> Tuple[str, str]:
+        """
+        Get connection endpoints.
+
+        Args:
+            conn_id: connection identifier
+
+        Returns:
+            Their endpoint for this connection
+
+        """
+        connection = await ConnRecord.retrieve_by_id(self._session, conn_id)
+
+        wallet = self._session.inject(BaseWallet)
+        my_did_info = await wallet.get_local_did(connection.my_did)
+        my_endpoint = my_did_info.metadata.get(
+            "endpoint",
+            self._session.settings.get("default_endpoint"),
+        )
+
+        conn_targets = await self.get_connection_targets(
+            connection_id=connection.connection_id,
+            connection=connection,
+        )
+        return (my_endpoint, conn_targets[0].endpoint)
 
     async def create_static_connection(
         self,
