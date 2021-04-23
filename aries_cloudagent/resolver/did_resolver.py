@@ -46,7 +46,7 @@ class DIDResolver:
         """
         valid_resolvers = list(
             filter(
-                lambda resolver: resolver.supports(py_did.method),
+                lambda resolver: resolver.supports(py_did),
                 self.did_resolver_registry.resolvers,
             )
         )
