@@ -3,6 +3,7 @@
 from abc import ABC, abstractmethod
 from enum import Enum
 from typing import Sequence, Union
+import re
 
 from pydid import DID, DIDDocument
 from pydid.options import (
@@ -62,15 +63,23 @@ class BaseDIDResolver(ABC):
     def supported_methods(self) -> Sequence[str]:
         """Return list of DID methods supported by this resolver."""
 
-    def supports(self, method: str) -> bool:
+    def supports(self, did: Union[str, DID]) -> bool:
         """Return if this resolver supports the given method."""
-        return method in self.supported_methods
+        if isinstance(did, DID):
+            did = str(did)
+
+        for method in self.supported_methods:
+            method_pattern = re.compile(f"did:{method}:.*")
+            if method_pattern.match(did):
+                return True
+
+        return False
 
     async def resolve(self, profile: Profile, did: Union[str, DID]) -> DIDDocument:
         """Resolve a DID using this resolver."""
         py_did = DID(did) if isinstance(did, str) else did
 
-        if not self.supports(py_did.method):
+        if not self.supports(py_did):
             raise DIDMethodNotSupported(
                 f"{self.__class__.__name__} does not support DID method {py_did.method}"
             )

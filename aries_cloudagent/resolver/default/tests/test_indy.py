@@ -43,7 +43,7 @@ def profile(ledger):
 def test_supported_methods(resolver: IndyDIDResolver):
     """Test the supported_methods."""
     assert resolver.supported_methods == ["sov"]
-    assert resolver.supports("sov")
+    assert resolver.supports("did:sov:123")
 
 
 @pytest.mark.asyncio

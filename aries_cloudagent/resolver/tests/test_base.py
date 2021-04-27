@@ -45,7 +45,7 @@ def test_native_on_non_native(non_native_resolver):
 
 
 def test_supports(native_resolver):
-    assert native_resolver.supports("test") is True
+    assert native_resolver.supports("did:test:123") is True
     assert native_resolver.supports("not supported") is False
 
 
