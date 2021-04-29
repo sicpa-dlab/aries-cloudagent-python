@@ -63,7 +63,8 @@ class BaseDIDResolver(ABC):
     def supported_methods(self) -> Sequence[str]:
         """Return list of DID methods supported by this resolver."""
 
-    def supports(self, did: Union[str, DID]) -> bool:
+    @abstractmethod
+    async def supports(self, profile: Profile, did: Union[str, DID]) -> bool:
         """Return if this resolver supports the given method."""
         if isinstance(did, DID):
             did = str(did)
@@ -79,7 +80,7 @@ class BaseDIDResolver(ABC):
         """Resolve a DID using this resolver."""
         py_did = DID(did) if isinstance(did, str) else did
 
-        if not self.supports(py_did):
+        if not await self.supports(profile, py_did.method):
             raise DIDMethodNotSupported(
                 f"{self.__class__.__name__} does not support DID method {py_did.method}"
             )
