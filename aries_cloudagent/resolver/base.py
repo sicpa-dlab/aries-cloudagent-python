@@ -3,6 +3,7 @@
 from abc import ABC, abstractmethod
 from enum import Enum
 from typing import Sequence, Union
+from datetime import datetime
 import re
 
 from pydid import DID, DIDDocument
@@ -38,16 +39,23 @@ class ResolverType(Enum):
     NON_NATIVE = "non-native"
 
 
+class ResolverDriver(Enum):
+    """Resolver Type declarations."""
+
+    HTTP_DRIVER = "HttpDriver"
+
+
 class BaseDIDResolver(ABC):
     """Base Class for DID Resolvers."""
 
-    def __init__(self, type_: ResolverType = None):
+    def __init__(self, type_: ResolverType = None, driver: ResolverDriver = None):
         """Initialize BaseDIDResolver.
 
         Args:
             type_ (Type): Type of resolver, native or non-native
         """
         self.type = type_ or ResolverType.NON_NATIVE
+        self.driver = driver or ResolverDriver.HTTP_DRIVER
 
     @abstractmethod
     async def setup(self, context: InjectionContext):
@@ -75,7 +83,9 @@ class BaseDIDResolver(ABC):
 
         return False
 
-    async def resolve(self, profile: Profile, did: Union[str, DID]) -> DIDDocument:
+    async def resolve(
+        self, profile: Profile, did: Union[str, DID]
+    ) -> tuple(DIDDocument, dict):
         """Resolve a DID using this resolver."""
         py_did = DID(did) if isinstance(did, str) else did
 
@@ -83,8 +93,11 @@ class BaseDIDResolver(ABC):
             raise DIDMethodNotSupported(
                 f"{self.__class__.__name__} does not support DID method {py_did.method}"
             )
-
+        previous_time = datetime.utcnow()
         did_document = await self._resolve(profile, str(py_did))
+        resolver_metadata = self._retrieve_resolver_metadata(
+            py_did.method, previous_time
+        )
         result = DIDDocument.deserialize(
             did_document,
             options={
@@ -95,8 +108,22 @@ class BaseDIDResolver(ABC):
                 vm_allow_type_list,
             },
         )
-        return result
+        return result, resolver_metadata
 
     @abstractmethod
     async def _resolve(self, profile: Profile, did: str) -> dict:
         """Resolve a DID using this resolver."""
+
+    def _retrieve_resolver_metadata(self, method, previous_time):
+
+        time_now = datetime.utcnow()
+        time_now.strftime("%Y-%m-%dT%H:%M:%SZ")
+        duration = int((time_now - previous_time).total_seconds() * 1000)
+        resolver_metadata = {
+            "type": self.type,
+            "driverId": f"did:{method}",
+            "driver": self.driver,
+            "retrieved": time_now,
+            "duration": duration,
+        }
+        return resolver_metadata
