@@ -45,6 +45,20 @@ class ResolverDriver(Enum):
     HTTP_DRIVER = "HttpDriver"
 
 
+class Resolution:
+    """Resolution Class to pack the DID Doc and the resolution information."""
+
+    def __init__(self, did_doc: DIDDocument, resolver_metadata: dict):
+        """Initialize Resolution.
+
+        Args:
+            did_doc: DID Document resolved
+            resolver_metadata: Resolving details
+        """
+        self.did_doc = did_doc
+        self.resolver_metadata = resolver_metadata
+
+
 class BaseDIDResolver(ABC):
     """Base Class for DID Resolvers."""
 
@@ -83,9 +97,7 @@ class BaseDIDResolver(ABC):
 
         return False
 
-    async def resolve(
-        self, profile: Profile, did: Union[str, DID]
-    ) -> tuple(DIDDocument, dict):
+    async def resolve(self, profile: Profile, did: Union[str, DID]) -> Resolution:
         """Resolve a DID using this resolver."""
         py_did = DID(did) if isinstance(did, str) else did
 
@@ -108,7 +120,7 @@ class BaseDIDResolver(ABC):
                 vm_allow_type_list,
             },
         )
-        return result, resolver_metadata
+        return Resolution(result, resolver_metadata)
 
     @abstractmethod
     async def _resolve(self, profile: Profile, did: str) -> dict:
@@ -126,4 +138,5 @@ class BaseDIDResolver(ABC):
             "retrieved": time_now,
             "duration": duration,
         }
+
         return resolver_metadata
