@@ -59,11 +59,10 @@ class BaseDIDResolver(ABC):
         return self.type == ResolverType.NATIVE
 
     @property
-    @abstractmethod
     def supported_methods(self) -> Sequence[str]:
         """Return list of DID methods supported by this resolver."""
+        raise NotImplementedError()
 
-    @abstractmethod
     async def supports(self, profile: Profile, did: Union[str, DID]) -> bool:
         """Return if this resolver supports the given method."""
         if isinstance(did, DID):

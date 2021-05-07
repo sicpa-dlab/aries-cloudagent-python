@@ -2,15 +2,15 @@
 
 Resolution is performed using the IndyLedger class.
 """
-from typing import Sequence
+from typing import Sequence, Union
 
 from pydid import DID, DIDDocumentBuilder, VerificationSuite
 
 from ...config.injection_context import InjectionContext
 from ...core.profile import Profile
-from ...ledger.indy import IndySdkLedger
 from ...ledger.base import BaseLedger
 from ...ledger.error import LedgerError
+from ...ledger.indy import IndySdkLedger
 from ..base import BaseDIDResolver, DIDNotFound, ResolverError, ResolverType
 
 
@@ -36,6 +36,10 @@ class IndyDIDResolver(BaseDIDResolver):
     def supported_methods(self) -> Sequence[str]:
         """Return supported methods of Indy DID Resolver."""
         return ["sov"]
+
+    async def supports(self, profile: Profile, did: Union[str, DID]) -> bool:
+        """Return true or false depending on support of provided did."""
+        return await super().supports(profile, did)
 
     async def _resolve(self, profile: Profile, did: str) -> dict:
         """Resolve an indy DID."""
