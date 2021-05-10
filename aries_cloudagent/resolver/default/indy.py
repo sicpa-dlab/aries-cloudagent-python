@@ -50,6 +50,12 @@ class IndyDIDResolver(BaseDIDResolver):
         except LedgerError as err:
             raise DIDNotFound(f"DID {did} could not be resolved") from err
 
+        did_doc = self._did_doc_builder(did, endpoint, recipient_key)
+
+        return did_doc.serialize()
+
+    def _did_doc_builder(self, did, endpoint, recipient_key):
+        """Build DID Document."""
         builder = DIDDocumentBuilder(DID(did))
 
         vmethod = builder.verification_methods.add(
@@ -66,5 +72,4 @@ class IndyDIDResolver(BaseDIDResolver):
                 recipient_keys=[vmethod],
                 routing_keys=[],
             )
-        result = builder.build()
-        return result.serialize()
+        return builder.build()
