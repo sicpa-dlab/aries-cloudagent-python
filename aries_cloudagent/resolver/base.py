@@ -29,7 +29,7 @@ class ResolverType(Enum):
 
     NATIVE = "native"
     NON_NATIVE = "non-native"
-
+    supported_did_regex = None
 
 class BaseDIDResolver(ABC):
     """Base Class for DID Resolvers."""
@@ -52,21 +52,15 @@ class BaseDIDResolver(ABC):
         return self.type == ResolverType.NATIVE
 
     @property
-    def supported_methods(self) -> Sequence[str]:
-        """Return list of DID methods supported by this resolver."""
+    @abstractmethod
+    def supported_did_regex(self):
+        """Regex of DID methods supported by this resolver."""
         raise NotImplementedError()
 
-    async def supports(self, profile: Profile, did: Union[str, DID]) -> bool:
+    async def supports(self, profile: Profile, did: str) -> bool:
         """Return if this resolver supports the given method."""
-        if isinstance(did, DID):
-            did = str(did)
-
-        for method in self.supported_methods:
-            method_pattern = re.compile(f"did:{method}:.*")
-            if method_pattern.match(did):
-                return True
-
-        return False
+        method_pattern = re.compile(self.supported_did_regex)
+        return bool(method_pattern.match(did))
 
     async def resolve(self, profile: Profile, did: Union[str, DID]) -> DIDDocument:
         """Resolve a DID using this resolver."""
