@@ -16,6 +16,7 @@ CRED_20_OFFER = "issue-credential/2.0/offer-credential"
 CRED_20_REQUEST = "issue-credential/2.0/request-credential"
 CRED_20_ISSUE = "issue-credential/2.0/issue-credential"
 CRED_20_ACK = "issue-credential/2.0/ack"
+CRED_20_PROBLEM_REPORT = "issue-credential/2.0/problem-report"
 
 PROTOCOL_PACKAGE = "aries_cloudagent.protocols.issue_credential.v2_0"
 
@@ -28,6 +29,10 @@ MESSAGE_TYPES = DIDCommPrefix.qualify_all(
         CRED_20_REQUEST: f"{PROTOCOL_PACKAGE}.messages.cred_request.V20CredRequest",
         CRED_20_ISSUE: f"{PROTOCOL_PACKAGE}.messages.cred_issue.V20CredIssue",
         CRED_20_ACK: f"{PROTOCOL_PACKAGE}.messages.cred_ack.V20CredAck",
+        CRED_20_PROBLEM_REPORT: (
+            f"{PROTOCOL_PACKAGE}.messages.cred_problem_report."
+            "IssueCredentialV20ProblemReport"
+        ),
     }
 )
 
@@ -38,18 +43,18 @@ CRED_20_PREVIEW = "issue-credential/2.0/credential-preview"
 ATTACHMENT_FORMAT = {
     CRED_20_PROPOSAL: {
         V20CredFormat.Format.INDY.api: "hlindy/cred-filter@v2.0",
-        V20CredFormat.Format.DIF.api: "dif/credential-manifest@v1.0",
+        V20CredFormat.Format.LD_PROOF.api: "aries/ld-proof-vc-detail@v1.0",
     },
     CRED_20_OFFER: {
         V20CredFormat.Format.INDY.api: "hlindy/cred-abstract@v2.0",
-        V20CredFormat.Format.DIF.api: "dif/credential-manifest@v1.0",
+        V20CredFormat.Format.LD_PROOF.api: "aries/ld-proof-vc-detail@v1.0",
     },
     CRED_20_REQUEST: {
         V20CredFormat.Format.INDY.api: "hlindy/cred-req@v2.0",
-        V20CredFormat.Format.DIF.api: "dif/credential-manifest@v1.0",
+        V20CredFormat.Format.LD_PROOF.api: "aries/ld-proof-vc-detail@v1.0",
     },
     CRED_20_ISSUE: {
         V20CredFormat.Format.INDY.api: "hlindy/cred@v2.0",
-        V20CredFormat.Format.DIF.api: None,
+        V20CredFormat.Format.LD_PROOF.api: "aries/ld-proof-vc@v1.0",
     },
 }

@@ -84,7 +84,7 @@ class TransactionJobsSchema(OpenAPISchema):
     )
 
 
-class ConnIdMatchInfoSchema(OpenAPISchema):
+class TransactionConnIdMatchInfoSchema(OpenAPISchema):
     """Path parameters and validators for request taking connection id."""
 
     conn_id = fields.Str(
@@ -588,7 +588,7 @@ async def transaction_resend(request: web.BaseRequest):
     summary="Set transaction jobs",
 )
 @querystring_schema(AssignTransactionJobsSchema())
-@match_info_schema(ConnIdMatchInfoSchema())
+@match_info_schema(TransactionConnIdMatchInfoSchema())
 @response_schema(TransactionJobsSchema(), 200)
 async def set_endorser_role(request: web.BaseRequest):
     """
@@ -630,7 +630,7 @@ async def set_endorser_role(request: web.BaseRequest):
     summary="Set Endorser Info",
 )
 @querystring_schema(EndorserInfoSchema())
-@match_info_schema(ConnIdMatchInfoSchema())
+@match_info_schema(TransactionConnIdMatchInfoSchema())
 @response_schema(EndorserInfoSchema(), 200)
 async def set_endorser_info(request: web.BaseRequest):
     """
@@ -671,23 +671,12 @@ async def set_endorser_info(request: web.BaseRequest):
                 " in connection metadata for this connection record"
             )
         )
-    if "transaction_their_job" not in jobs.keys():
-        raise web.HTTPForbidden(
-            reason=(
-                'Ask the other agent to set up "transaction_my_job" in '
-                '"transaction_jobs" in connection metadata for their connection record'
-            )
-        )
     if jobs["transaction_my_job"] != TransactionJob.TRANSACTION_AUTHOR.name:
         raise web.HTTPForbidden(
             reason=(
                 "Only a TRANSACTION_AUTHOR can add endorser_info "
                 "to metadata of its connection record"
             )
-        )
-    if jobs["transaction_their_job"] != TransactionJob.TRANSACTION_ENDORSER.name:
-        raise web.HTTPForbidden(
-            reason="The Other agent should have job TRANSACTION_ENDORSER"
         )
     value = await record.metadata_get(session, "endorser_info")
     if value:

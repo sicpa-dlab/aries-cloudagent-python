@@ -37,13 +37,15 @@ from ..protocols.out_of_band.v1_0.messages.invitation import HSProto, Invitation
 from ..transport.inbound.manager import InboundTransportManager
 from ..transport.inbound.message import InboundMessage
 from ..transport.outbound.base import OutboundDeliveryError
-from ..transport.outbound.queue.base import BaseOutboundQueue
 from ..transport.outbound.manager import OutboundTransportManager, QueuedOutboundMessage
 from ..transport.outbound.message import OutboundMessage
+from ..transport.outbound.queue.base import BaseOutboundQueue
 from ..transport.outbound.queue.loader import get_outbound_queue
+from ..transport.outbound.status import OutboundSendStatus
 from ..transport.wire_format import BaseWireFormat
 from ..utils.stats import Collector
 from ..utils.task_queue import CompletedTask, TaskQueue
+from ..vc.ld_proofs.document_loader import DocumentLoader
 from ..wallet.did_info import DIDInfo
 from .dispatcher import Dispatcher
 
@@ -127,6 +129,11 @@ class Conductor:
         if context.settings.get("multitenant.enabled"):
             multitenant_mgr = MultitenantManager(self.root_profile)
             context.injector.bind_instance(MultitenantManager, multitenant_mgr)
+
+        # Bind default PyLD document loader
+        context.injector.bind_instance(
+            DocumentLoader, DocumentLoader(self.root_profile)
+        )
 
         self.outbound_queue = get_outbound_queue(context.settings)
 
@@ -448,7 +455,7 @@ class Conductor:
         profile: Profile,
         outbound: OutboundMessage,
         inbound: InboundMessage = None,
-    ) -> None:
+    ) -> OutboundSendStatus:
         """
         Route an outbound message.
 
@@ -462,10 +469,10 @@ class Conductor:
                 outbound.reply_from_verkey = inbound.receipt.recipient_verkey
             # return message to an inbound session
             if self.inbound_transport_manager.return_to_session(outbound):
-                return
+                return OutboundSendStatus.SENT_TO_SESSION
 
         if not outbound.to_session_only:
-            await self.queue_outbound(profile, outbound, inbound)
+            return await self.queue_outbound(profile, outbound, inbound)
 
     def handle_not_returned(self, profile: Profile, outbound: OutboundMessage):
         """Handle a message that failed delivery via an inbound session."""
@@ -482,7 +489,7 @@ class Conductor:
         profile: Profile,
         outbound: OutboundMessage,
         inbound: InboundMessage = None,
-    ):
+    ) -> OutboundSendStatus:
         """
         Queue an outbound message for transport.
 
@@ -518,15 +525,15 @@ class Conductor:
         # internal queue usually results in the message to be sent over
         # ACA-py `-ot` transport.
         if self.outbound_queue:
-            await self._queue_external(profile, outbound)
+            return await self._queue_external(profile, outbound)
         else:
-            self._queue_internal(profile, outbound)
+            return self._queue_internal(profile, outbound)
 
     async def _queue_external(
         self,
         profile: Profile,
         outbound: OutboundMessage,
-    ):
+    ) -> OutboundSendStatus:
         """Save the message to an external outbound queue."""
         async with self.outbound_queue:
             targets = (
@@ -537,17 +544,29 @@ class Conductor:
                     outbound.payload, target.endpoint
                 )
 
-    def _queue_internal(self, profile: Profile, outbound: OutboundMessage):
+            return OutboundSendStatus.SENT_TO_EXTERNAL_QUEUE
+
+    def _queue_internal(
+        self, profile: Profile, outbound: OutboundMessage
+    ) -> OutboundSendStatus:
         """Save the message to an internal outbound queue."""
         try:
             self.outbound_transport_manager.enqueue_message(profile, outbound)
+            return OutboundSendStatus.QUEUED_FOR_DELIVERY
         except OutboundDeliveryError:
             LOGGER.warning("Cannot queue message for delivery, no supported transport")
-            self.handle_not_delivered(profile, outbound)
+            return self.handle_not_delivered(profile, outbound)
 
-    def handle_not_delivered(self, profile: Profile, outbound: OutboundMessage):
+    def handle_not_delivered(
+        self, profile: Profile, outbound: OutboundMessage
+    ) -> OutboundSendStatus:
         """Handle a message that failed delivery via outbound transports."""
-        self.inbound_transport_manager.return_undelivered(outbound)
+        queued_for_inbound = self.inbound_transport_manager.return_undelivered(outbound)
+
+        if queued_for_inbound:
+            return OutboundSendStatus.WAITING_FOR_PICKUP
+        else:
+            return OutboundSendStatus.UNDELIVERABLE
 
     def webhook_router(
         self,

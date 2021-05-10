@@ -10,6 +10,8 @@ from ......connections.models.diddoc import (
 )
 from ......core.profile import ProfileSession
 from ......core.in_memory import InMemoryProfile
+from ......wallet.key_type import KeyType
+from ......wallet.did_method import DIDMethod
 from ......messaging.decorators.attach_decorator import AttachDecorator
 from ......messaging.request_context import RequestContext
 from ......messaging.responder import MockResponder
@@ -88,7 +90,9 @@ class TestDIDXRequestHandler(AsyncTestCase):
         await self.conn_rec.save(self.session)
 
         wallet = self.session.wallet
-        self.did_info = await wallet.create_local_did()
+        self.did_info = await wallet.create_local_did(
+            method=DIDMethod.SOV, key_type=KeyType.ED25519
+        )
 
         self.did_doc_attach = AttachDecorator.data_base64(self.did_doc().serialize())
         await self.did_doc_attach.data.sign(self.did_info.verkey, wallet)
@@ -171,7 +175,7 @@ class TestDIDXRequestHandler(AsyncTestCase):
         assert len(messages) == 1
         result, target = messages[0]
         assert isinstance(result, ProblemReport) and (
-            ProblemReportReason.REQUEST_NOT_ACCEPTED.value in result.problem_items[0]
+            result.description["code"] == ProblemReportReason.REQUEST_NOT_ACCEPTED.value
         )
         assert target == {"target_list": None}
 
@@ -198,7 +202,7 @@ class TestDIDXRequestHandler(AsyncTestCase):
         assert len(messages) == 1
         result, target = messages[0]
         assert isinstance(result, ProblemReport) and (
-            ProblemReportReason.REQUEST_NOT_ACCEPTED.value in result.problem_items[0]
+            result.description["code"] == ProblemReportReason.REQUEST_NOT_ACCEPTED.value
         )
         assert target == {"target_list": [mock_conn_target]}
 
@@ -229,6 +233,6 @@ class TestDIDXRequestHandler(AsyncTestCase):
         assert len(messages) == 1
         result, target = messages[0]
         assert isinstance(result, ProblemReport) and (
-            ProblemReportReason.REQUEST_NOT_ACCEPTED.value in result.problem_items[0]
+            result.description["code"] == ProblemReportReason.REQUEST_NOT_ACCEPTED.value
         )
         assert target == {"target_list": None}

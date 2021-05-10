@@ -6,13 +6,6 @@ from typing import Sequence, Union
 import re
 
 from pydid import DID, DIDDocument
-from pydid.options import (
-    doc_allow_public_key,
-    doc_insert_missing_ids,
-    vm_allow_controller_list,
-    vm_allow_missing_controller,
-    vm_allow_type_list,
-)
 
 from ..config.injection_context import InjectionContext
 from ..core.error import BaseError
@@ -85,16 +78,7 @@ class BaseDIDResolver(ABC):
             )
 
         did_document = await self._resolve(profile, str(py_did))
-        result = DIDDocument.deserialize(
-            did_document,
-            options={
-                doc_insert_missing_ids,
-                doc_allow_public_key,
-                vm_allow_controller_list,
-                vm_allow_missing_controller,
-                vm_allow_type_list,
-            },
-        )
+        result = DIDDocument.deserialize(did_document)
         return result
 
     @abstractmethod

@@ -29,6 +29,7 @@ from ..messaging.responder import BaseResponder
 from ..multitenant.manager import MultitenantManager, MultitenantManagerError
 from ..storage.error import StorageNotFoundError
 from ..transport.outbound.message import OutboundMessage
+from ..transport.outbound.status import OutboundSendStatus
 from ..transport.queue.basic import BasicMessageQueue
 from ..utils.stats import Collector
 from ..utils.task_queue import TaskQueue
@@ -40,7 +41,7 @@ from .request_context import AdminRequestContext
 LOGGER = logging.getLogger(__name__)
 
 EVENT_PATTERN_WEBHOOK = re.compile("^acapy::webhook::(.*)$")
-EVENT_PATTERN_RECORD = re.compile("^acapy::record::(.*)::(.*)$")
+EVENT_PATTERN_RECORD = re.compile("^acapy::record::([^:]*)(?:::.*)?$")
 
 EVENT_WEBHOOK_MAPPING = {
     "acapy::basicmessage::received": "basicmessages",
@@ -116,14 +117,14 @@ class AdminResponder(BaseResponder):
         self._profile = profile
         self._send = send
 
-    async def send_outbound(self, message: OutboundMessage):
+    async def send_outbound(self, message: OutboundMessage) -> OutboundSendStatus:
         """
         Send outbound message.
 
         Args:
             message: The `OutboundMessage` to be sent
         """
-        await self._send(self._profile, message)
+        return await self._send(self._profile, message)
 
     async def send_webhook(self, topic: str, payload: dict):
         """
@@ -450,8 +451,12 @@ class AdminServer(BaseAdminServer):
 
         event_bus = self.context.inject(EventBus, required=False)
         if event_bus:
-            event_bus.subscribe(EVENT_PATTERN_WEBHOOK, self.__on_webhook_event)
-            event_bus.subscribe(EVENT_PATTERN_RECORD, self.__on_record_event)
+            event_bus.subscribe(EVENT_PATTERN_WEBHOOK, self._on_webhook_event)
+            event_bus.subscribe(EVENT_PATTERN_RECORD, self._on_record_event)
+
+            # Only include forward webhook events if the option is enabled
+            if self.context.settings.get_bool("monitor_forward", False):
+                EVENT_WEBHOOK_MAPPING["acapy::forward::received"] = "forward"
 
             for event_topic, webhook_topic in EVENT_WEBHOOK_MAPPING.items():
                 event_bus.subscribe(
@@ -788,19 +793,19 @@ class AdminServer(BaseAdminServer):
 
         return ws
 
-    async def __on_webhook_event(self, profile: Profile, event: Event):
+    async def _on_webhook_event(self, profile: Profile, event: Event):
         match = EVENT_PATTERN_WEBHOOK.search(event.topic)
         webhook_topic = match.group(1) if match else None
         if webhook_topic:
             await self.send_webhook(profile, webhook_topic, event.payload)
 
-    async def __on_record_event(self, profile: Profile, event: Event):
+    async def _on_record_event(self, profile: Profile, event: Event):
         match = EVENT_PATTERN_RECORD.search(event.topic)
         webhook_topic = match.group(1) if match else None
         if webhook_topic:
             await self.send_webhook(profile, webhook_topic, event.payload)
 
-    async def send_webhook(self, profile: Profile, topic: str, payload: dict):
+    async def send_webhook(self, profile: Profile, topic: str, payload: dict = None):
         """Add a webhook to the queue, to send to all registered targets."""
         wallet_id = profile.settings.get("wallet.id")
         webhook_urls = profile.settings.get("admin.webhook_urls")

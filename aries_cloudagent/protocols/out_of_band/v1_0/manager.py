@@ -6,24 +6,24 @@ import logging
 
 from typing import Mapping, Sequence, Optional
 
-from aries_cloudagent.protocols.coordinate_mediation.v1_0.manager import (
-    MediationManager,
-)
-
 from ....connections.base_manager import BaseConnectionManager
 from ....connections.models.conn_record import ConnRecord
 from ....connections.util import mediation_record_if_id
 from ....core.error import BaseError
 from ....core.profile import ProfileSession
 from ....indy.holder import IndyHolder
+from ....indy.sdk.models.xform import indy_proof_req_preview2indy_requested_creds
 from ....messaging.responder import BaseResponder
 from ....messaging.decorators.attach_decorator import AttachDecorator
 from ....multitenant.manager import MultitenantManager
 from ....storage.error import StorageNotFoundError
 from ....transport.inbound.receipt import MessageReceipt
 from ....wallet.base import BaseWallet
-from ....wallet.util import naked_to_did_key, b64_to_bytes, did_key_to_naked
+from ....wallet.util import b64_to_bytes
+from ....wallet.key_type import KeyType
+from ....did.did_key import DIDKey
 
+from ...coordinate_mediation.v1_0.manager import MediationManager
 from ...connections.v1_0.manager import ConnectionManager
 from ...connections.v1_0.messages.connection_invitation import ConnectionInvitation
 from ...didcomm_prefix import DIDCommPrefix
@@ -31,7 +31,6 @@ from ...didexchange.v1_0.manager import DIDXManager
 from ...issue_credential.v1_0.models.credential_exchange import V10CredentialExchange
 from ...issue_credential.v2_0.messages.cred_offer import V20CredOffer
 from ...issue_credential.v2_0.models.cred_ex_record import V20CredExRecord
-from ...present_proof.indy.xform import indy_proof_req_preview2indy_requested_creds
 from ...present_proof.v1_0.manager import PresentationManager
 from ...present_proof.v1_0.message_types import PRESENTATION_REQUEST
 from ...present_proof.v1_0.models.presentation_exchange import V10PresentationExchange
@@ -42,7 +41,7 @@ from ...present_proof.v2_0.messages.pres_request import V20PresRequest
 from ...present_proof.v2_0.models.pres_exchange import V20PresExRecord
 
 from .messages.invitation import HSProto, InvitationMessage
-from .messages.problem_report import ProblemReport
+from .messages.problem_report import OOBProblemReport
 from .messages.reuse import HandshakeReuse
 from .messages.reuse_accept import HandshakeReuseAccept
 from .messages.service import Service as ServiceMessage
@@ -260,7 +259,7 @@ class OutOfBandManager(BaseConnectionManager):
                 my_endpoint = self._session.settings.get("default_endpoint")
 
             # Create and store new invitation key
-            connection_key = await wallet.create_signing_key()
+            connection_key = await wallet.create_signing_key(KeyType.ED25519)
             keylist_updates = await mediation_mgr.add_key(
                 connection_key.verkey, keylist_updates
             )
@@ -308,7 +307,9 @@ class OutOfBandManager(BaseConnectionManager):
                         keylist_updates, connection_id=mediation_record.connection_id
                     )
             routing_keys = [
-                key if len(key.split(":")) == 3 else naked_to_did_key(key)
+                key
+                if len(key.split(":")) == 3
+                else DIDKey.from_public_key_b58(key, KeyType.ED25519).did
                 for key in routing_keys
             ]
             # Create connection invitation message
@@ -323,7 +324,11 @@ class OutOfBandManager(BaseConnectionManager):
                     ServiceMessage(
                         _id="#inline",
                         _type="did-communication",
-                        recipient_keys=[naked_to_did_key(connection_key.verkey)],
+                        recipient_keys=[
+                            DIDKey.from_public_key_b58(
+                                connection_key.verkey, KeyType.ED25519
+                            ).did
+                        ],
                         service_endpoint=my_endpoint,
                         routing_keys=routing_keys,
                     )
@@ -394,6 +399,9 @@ class OutOfBandManager(BaseConnectionManager):
 
             service_did = invi_msg.service_dids[0]
 
+            # TODO: resolve_invitation should resolve key_info objects
+            # or something else that includes the key type. We now assume
+            # ED25519 keys
             endpoint, recipient_keys, routing_keys = await self.resolve_invitation(
                 service_did
             )
@@ -402,8 +410,14 @@ class OutOfBandManager(BaseConnectionManager):
                 {
                     "id": "#inline",
                     "type": "did-communication",
-                    "recipientKeys": [naked_to_did_key(key) for key in recipient_keys],
-                    "routingKeys": [naked_to_did_key(key) for key in routing_keys],
+                    "recipientKeys": [
+                        DIDKey.from_public_key_b58(key, KeyType.ED25519).did
+                        for key in recipient_keys
+                    ],
+                    "routingKeys": [
+                        DIDKey.from_public_key_b58(key, KeyType.ED25519).did
+                        for key in routing_keys
+                    ],
                     "serviceEndpoint": endpoint,
                 }
             )
@@ -510,10 +524,12 @@ class OutOfBandManager(BaseConnectionManager):
                     )
                 elif proto is HSProto.RFC160:
                     service.recipient_keys = [
-                        did_key_to_naked(key) for key in service.recipient_keys or []
+                        DIDKey.from_did(key).public_key_b58
+                        for key in service.recipient_keys or []
                     ]
                     service.routing_keys = [
-                        did_key_to_naked(key) for key in service.routing_keys
+                        DIDKey.from_did(key).public_key_b58
+                        for key in service.routing_keys
                     ] or []
                     connection_invitation = ConnectionInvitation.deserialize(
                         {
@@ -960,18 +976,18 @@ class OutOfBandManager(BaseConnectionManager):
 
     async def receive_problem_report(
         self,
-        problem_report: ProblemReport,
+        problem_report: OOBProblemReport,
         receipt: MessageReceipt,
         conn_record: ConnRecord,
     ) -> None:
         """
         Receive and process a ProblemReport message from the inviter to invitee.
 
-        Process a `ProblemReport` message by updating  the ConnRecord metadata
+        Process a `ProblemReport` message by updating the ConnRecord metadata
         state to `not_accepted`.
 
         Args:
-            problem_report: The `ProblemReport` to process
+            problem_report: The `OOBProblemReport` to process
             receipt: The message receipt
 
         Returns:

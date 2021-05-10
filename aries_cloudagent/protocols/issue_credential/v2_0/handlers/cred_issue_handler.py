@@ -1,11 +1,8 @@
 """Credential issue message handler."""
 
-from .....messaging.base_handler import (
-    BaseHandler,
-    BaseResponder,
-    HandlerException,
-    RequestContext,
-)
+from .....messaging.base_handler import BaseHandler, HandlerException
+from .....messaging.request_context import RequestContext
+from .....messaging.responder import BaseResponder
 
 from ..manager import V20CredManager
 from ..messages.cred_issue import V20CredIssue
@@ -55,6 +52,9 @@ class V20CredIssueHandler(BaseHandler):
                 cred_ex_record,
                 cred_ack_message,
             ) = await cred_manager.store_credential(cred_ex_record)
+
+            if cred_ex_record.auto_remove:
+                await cred_manager.delete_cred_ex_record(cred_ex_record.cred_ex_id)
 
             # Ack issuer that holder stored credential
             await responder.send_reply(cred_ack_message)

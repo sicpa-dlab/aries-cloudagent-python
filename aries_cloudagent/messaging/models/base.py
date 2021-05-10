@@ -111,25 +111,34 @@ class BaseModel(ABC):
         return self._get_schema_class()
 
     @classmethod
-    def deserialize(cls, obj):
+    def deserialize(cls, obj, unknown: str = None, none2none: str = False):
         """
         Convert from JSON representation to a model instance.
 
         Args:
             obj: The dict to load into a model instance
+            unknown: Behaviour for unknown attributes
+            none2none: Deserialize None to None
 
         Returns:
             A model instance for this data
 
         """
-        schema = cls._get_schema_class()(unknown=EXCLUDE)
+        if obj is None and none2none:
+            return None
+
+        schema = cls._get_schema_class()(unknown=unknown or EXCLUDE)
         try:
             return schema.loads(obj) if isinstance(obj, str) else schema.load(obj)
         except (AttributeError, ValidationError) as err:
             LOGGER.exception(f"{cls.__name__} message validation error:")
             raise BaseModelError(f"{cls.__name__} schema validation failed") from err
 
-    def serialize(self, as_string=False) -> dict:
+    def serialize(
+        self,
+        as_string=False,
+        unknown: str = None,
+    ) -> dict:
         """
         Create a JSON-compatible dict representation of the model instance.
 
@@ -140,7 +149,7 @@ class BaseModel(ABC):
             A dict representation of this model, or a JSON string if as_string is True
 
         """
-        schema = self.Schema(unknown=EXCLUDE)
+        schema = self.Schema(unknown=unknown or EXCLUDE)
         try:
             return (
                 schema.dumps(self, separators=(",", ":"))
@@ -153,16 +162,20 @@ class BaseModel(ABC):
                 f"{self.__class__.__name__} schema validation failed"
             ) from err
 
-    def validate(self):
+    def validate(self, unknown: str = None):
         """Validate a constructed model."""
-        schema = self.Schema(unknown=EXCLUDE)
+        schema = self.Schema(unknown=unknown)
         errors = schema.validate(self.serialize())
         if errors:
             raise ValidationError(errors)
         return self
 
     @classmethod
-    def from_json(cls, json_repr: Union[str, bytes]):
+    def from_json(
+        cls,
+        json_repr: Union[str, bytes],
+        unknown: str = None,
+    ):
         """
         Parse a JSON string into a model instance.
 
@@ -178,9 +191,9 @@ class BaseModel(ABC):
         except ValueError as e:
             LOGGER.exception(f"{cls.__name__} message parse error:")
             raise BaseModelError(f"{cls.__name__} JSON parsing failed") from e
-        return cls.deserialize(parsed)
+        return cls.deserialize(parsed, unknown=unknown)
 
-    def to_json(self) -> str:
+    def to_json(self, unknown: str = None) -> str:
         """
         Create a JSON representation of the model instance.
 
@@ -188,7 +201,7 @@ class BaseModel(ABC):
             A JSON representation of this message
 
         """
-        return json.dumps(self.serialize())
+        return json.dumps(self.serialize(unknown=unknown or EXCLUDE))
 
     def __repr__(self) -> str:
         """
@@ -302,12 +315,3 @@ class BaseModelSchema(Schema):
         """
         skip_vals = resolve_meta_property(self, "skip_values", [])
         return {key: value for key, value in data.items() if value not in skip_vals}
-
-
-class OpenAPISchema(Schema):
-    """Schema for OpenAPI artifacts: excluding unknown fields, not raising exception."""
-
-    class Meta:
-        """BaseModelSchema metadata."""
-
-        unknown = EXCLUDE
