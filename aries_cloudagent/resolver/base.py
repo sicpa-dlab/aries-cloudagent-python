@@ -85,12 +85,12 @@ class BaseDIDResolver(ABC):
             if not self.supported_methods:
                 raise error
             warnings.warn(
-                'BaseResolver.supported_methods is deprecated; use supported_did_regex instead',
+                "BaseResolver.supported_methods is deprecated; use supported_did_regex instead",
                 DeprecationWarning,
             )
 
             supported_did_regex = re.compile(
-                '^did:(?:{}):.*$'.format('|'.join(self.supported_methods))
+                "^did:(?:{}):.*$".format("|".join(self.supported_methods))
             )
 
         return bool(supported_did_regex.match(did))
