@@ -25,10 +25,10 @@ def profile():
     yield profile
 
 
-def test_supported_methods(resolver: KeyDIDResolver):
+def test_supported_methods(profile, resolver: KeyDIDResolver):
     """Test the supported_methods."""
     assert resolver.supported_methods == ["key"]
-    assert resolver.supports("key")
+    assert resolver.supports(profile, "key")
 
 
 @pytest.mark.asyncio

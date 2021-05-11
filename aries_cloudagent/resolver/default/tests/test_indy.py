@@ -41,9 +41,8 @@ def profile(ledger):
 
 
 @pytest.mark.asyncio
-async def test_supported_methods(profile: Profile, resolver: IndyDIDResolver):
-    """Test the supported_methods."""
-    assert resolver.supported_methods == ["sov"]
+async def test_supported_regex(profile: Profile, resolver: IndyDIDResolver):
+    """Test the supported methods regex."""
     assert await resolver.supports(profile, "did:sov:123")
 
 

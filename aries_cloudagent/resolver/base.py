@@ -29,7 +29,7 @@ class ResolverType(Enum):
 
     NATIVE = "native"
     NON_NATIVE = "non-native"
-    supported_did_regex = None
+
 
 class BaseDIDResolver(ABC):
     """Base Class for DID Resolvers."""
@@ -41,6 +41,7 @@ class BaseDIDResolver(ABC):
             type_ (Type): Type of resolver, native or non-native
         """
         self.type = type_ or ResolverType.NON_NATIVE
+        self.supported_did_regex = ""
 
     @abstractmethod
     async def setup(self, context: InjectionContext):
@@ -52,10 +53,15 @@ class BaseDIDResolver(ABC):
         return self.type == ResolverType.NATIVE
 
     @property
-    @abstractmethod
     def supported_did_regex(self):
-        """Regex of DID methods supported by this resolver."""
-        raise NotImplementedError()
+        """Override this property with a class var or similar to use regex matching on DIDs to determine supported resolvers"""
+        raise NotImplementedError(
+            "supported_did_regex must be overriden by subclasses of BaseResolver to use default supports method"
+        )
+
+    @supported_did_regex.setter
+    def supported_did_regex(self, value):
+        self.supported_did_regex = value
 
     async def supports(self, profile: Profile, did: str) -> bool:
         """Return if this resolver supports the given method."""

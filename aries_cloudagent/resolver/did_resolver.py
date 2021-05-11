@@ -45,17 +45,18 @@ class DIDResolver:
         raise DIDNotFound(f"DID {did} could not be resolved")
 
     async def _match_did_to_resolver(
-        self, profile: Profile, py_did: DID
+        self, profile: Profile, py_did: str
     ) -> Sequence[BaseDIDResolver]:
         """Generate supported DID Resolvers.
 
         Native resolvers are yielded first, in registered order followed by
         non-native resolvers in registered order.
         """
+
         valid_resolvers = [
             resolver
             for resolver in self.did_resolver_registry.resolvers
-            if (await resolver.supports(profile, py_did), resolver)
+            if await resolver.supports(profile, py_did)
         ]
 
         native_resolvers = filter(lambda resolver: resolver.native, valid_resolvers)

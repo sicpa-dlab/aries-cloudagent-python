@@ -31,11 +31,6 @@ class IndyDIDResolver(BaseDIDResolver):
     async def setup(self, context: InjectionContext):
         """Perform required setup for Indy DID resolution."""
 
-    @property
-    def supported_methods(self) -> Sequence[str]:
-        """Return supported methods of Indy DID Resolver."""
-        return ["sov"]
-
     async def supports(self, profile: Profile, did: Union[str, DID]) -> bool:
         """Return true or false depending on support of provided did."""
         return await super().supports(profile, did)

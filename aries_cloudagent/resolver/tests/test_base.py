@@ -14,16 +14,10 @@ class ExampleDIDResolver(BaseDIDResolver):
 
     def __init__(self):
         super().__init__()
+        self.supported_did_regex = "did:test:.*"
 
     async def setup(self, context):
         pass
-
-    @property
-    def supported_methods(self):
-        return ["test"]
-
-    async def supports(self, profile: Profile, did: Union[str, DID]) -> bool:
-        return await super().supports(profile, did)
 
     async def _resolve(self, profile, did) -> DIDDocument:
         return DIDDocument("did:example:123")
