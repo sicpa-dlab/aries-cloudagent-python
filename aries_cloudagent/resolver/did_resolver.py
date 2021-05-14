@@ -44,6 +44,7 @@ class DIDResolver:
                 resolution: ResolutionResult = await resolver.resolve(
                     profile,
                     py_did,
+                    retrieve_metadata
                 )
                 if resolution.metadata:
                     LOGGER.debug(
