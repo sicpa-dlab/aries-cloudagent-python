@@ -28,14 +28,15 @@ Resolve did document admin routes.
     }
 }
 """
+from distutils import util
 
 from aiohttp import web
-from aiohttp_apispec import docs, match_info_schema, response_schema
+from aiohttp_apispec import docs, match_info_schema, response_schema, querystring_schema
 from marshmallow import fields, validate
 
 from ..admin.request_context import AdminRequestContext
 from ..messaging.models.openapi import OpenAPISchema
-from .base import DIDMethodNotSupported, DIDNotFound, ResolverError
+from .base import DIDMethodNotSupported, DIDNotFound, ResolverError, ResolutionResult
 from pydid.common import DID_PATTERN
 from .did_resolver import DIDResolver
 
@@ -92,8 +93,17 @@ class DIDMatchInfoSchema(OpenAPISchema):
     )
 
 
+class VerboseSchema(OpenAPISchema):
+    """Request schema for signing a jsonld doc."""
+
+    verbose = fields.Boolean(
+        required=False, description="Verbose to show the resolver metadata"
+    )
+
+
 @docs(tags=["resolver"], summary="Retrieve doc for requested did")
 @match_info_schema(DIDMatchInfoSchema())
+@querystring_schema(VerboseSchema)
 @response_schema(DIDDocSchema(), 200)
 async def resolve_did(request: web.BaseRequest):
     """Retrieve a did document."""
@@ -103,8 +113,19 @@ async def resolve_did(request: web.BaseRequest):
     try:
         session = await context.session()
         resolver = session.inject(DIDResolver)
-        document = await resolver.resolve(context.profile, did)
-        result = document.serialize()
+        retrieve_metadata = False
+        query = request.rel_url.query
+        if query and util.strtobool(query["verbose"]):
+            retrieve_metadata = True
+        resolution: ResolutionResult = await resolver.resolve(
+            context.profile, did, retrieve_metadata
+        )
+        doc = resolution.did_doc.serialize()
+        result = {"did_doc": doc}
+
+        if resolution.metadata:
+            result["resolver_metadata"] = resolution.metadata._asdict()
+
     except DIDNotFound as err:
         raise web.HTTPNotFound(reason=err.roll_up) from err
     except DIDMethodNotSupported as err:

@@ -14,6 +14,7 @@ from ..base import (
     DIDNotFound,
     ResolverError,
     ResolverType,
+    ResolutionResult,
 )
 from ..did_resolver import DIDResolver
 from ..did_resolver_registry import DIDResolverRegistry
@@ -162,15 +163,15 @@ async def test_dereference_x(resolver, profile):
 @pytest.mark.asyncio
 @pytest.mark.parametrize("did", TEST_DIDS)
 async def test_resolve(resolver, profile, did):
-    did_doc = await resolver.resolve(profile, did)
-    assert isinstance(did_doc, DIDDocument)
+    resolution: ResolutionResult = await resolver.resolve(profile, did)
+    assert isinstance(resolution.did_doc, DIDDocument)
 
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("did", TEST_DIDS)
 async def test_resolve_did(resolver, profile, did):
-    did_doc = await resolver.resolve(profile, DID(did))
-    assert isinstance(did_doc, DIDDocument)
+    resolution: ResolutionResult = await resolver.resolve(profile, DID(did))
+    assert isinstance(resolution.did_doc, DIDDocument)
 
 
 @pytest.mark.asyncio
