@@ -44,6 +44,7 @@ class DIDResolver:
                 resolution: ResolutionResult = await resolver.resolve(
                     profile,
                     py_did,
+                    retrieve_metadata
                 )
                 if resolution.metadata:
                     LOGGER.debug(
@@ -52,7 +53,7 @@ class DIDResolver:
                         resolution.metadata._asdict(),
                     )
                 return resolution
-            except DIDNotFound:
+            except (DIDNotFound, DIDMethodNotSupported):
                 LOGGER.debug("DID %s not found by resolver %s", did, resolver)
 
         raise DIDNotFound(f"DID {did} could not be resolved")

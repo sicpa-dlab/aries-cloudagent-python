@@ -112,7 +112,7 @@ class BaseDIDResolver(ABC):
 
         py_did = DID(did) if isinstance(did, str) else did
 
-        if not await self.supports(profile, py_did.method):
+        if not await self.supports(profile, py_did):
             raise DIDMethodNotSupported(
                 f"{self.__class__.__name__} does not support DID method {py_did.method}"
             )

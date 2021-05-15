@@ -1,6 +1,7 @@
 """Test Base DID Resolver methods."""
 
 from typing import Union
+from unittest.mock import MagicMock
 
 import pytest
 from pydid import DID, DIDDocument
@@ -50,7 +51,8 @@ def test_native_on_non_native(non_native_resolver):
 
 
 @pytest.mark.asyncio
-async def test_supports(profile: Profile, native_resolver):
+async def test_supports(native_resolver):
+    profile = MagicMock()
     assert await native_resolver.supports(profile, "did:test:123") is True
     assert await native_resolver.supports(profile, "not supported") is False
 
