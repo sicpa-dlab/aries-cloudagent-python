@@ -1,17 +1,15 @@
 """Credential request message handler."""
 
-from .....messaging.base_handler import (
-    BaseHandler,
-    BaseResponder,
-    HandlerException,
-    RequestContext,
-)
-
-from ..manager import V20CredManager
-from ..messages.cred_proposal import V20CredProposal
-from ..messages.cred_request import V20CredRequest
-
+from .....indy.issuer import IndyIssuerError
+from .....ledger.error import LedgerError
+from .....messaging.base_handler import BaseHandler, HandlerException
+from .....messaging.request_context import RequestContext
+from .....messaging.responder import BaseResponder
+from .....storage.error import StorageError
 from .....utils.tracing import trace_event, get_timer
+
+from ..manager import V20CredManager, V20CredManagerError
+from ..messages.cred_request import V20CredRequest
 
 
 class V20CredRequestHandler(BaseHandler):
@@ -41,7 +39,7 @@ class V20CredRequestHandler(BaseHandler):
         cred_manager = V20CredManager(context.profile)
         cred_ex_record = await cred_manager.receive_request(
             context.message, context.connection_record.connection_id
-        )
+        )  # mgr only finds, saves record: on exception, saving state null is hopeless
 
         r_time = trace_event(
             context.settings,
@@ -52,30 +50,24 @@ class V20CredRequestHandler(BaseHandler):
 
         # If auto_issue is enabled, respond immediately
         if cred_ex_record.auto_issue:
-            if (
-                cred_ex_record.cred_proposal
-                and V20CredProposal.deserialize(
-                    cred_ex_record.cred_proposal
-                ).credential_preview
-            ):
+            cred_issue_message = None
+            try:
                 (
                     cred_ex_record,
                     cred_issue_message,
                 ) = await cred_manager.issue_credential(
-                    cred_ex_record=cred_ex_record, comment=context.message.comment
+                    cred_ex_record=cred_ex_record,
+                    comment=context.message.comment,
                 )
-
                 await responder.send_reply(cred_issue_message)
+            except (V20CredManagerError, IndyIssuerError, LedgerError) as err:
+                self._logger.exception(err)
+            except StorageError as err:
+                self._logger.exception(err)  # may be logging to wire, not dead disk
 
-                trace_event(
-                    context.settings,
-                    cred_issue_message,
-                    outcome="V20CredRequestHandler.issue.END",
-                    perf_counter=r_time,
-                )
-            else:
-                self._logger.warning(
-                    "Operation set for auto-issue but v2.0 credential exchange record "
-                    f"{cred_ex_record.cred_ex_id} "
-                    "has no attribute values"
-                )
+            trace_event(
+                context.settings,
+                cred_issue_message,
+                outcome="V20CredRequestHandler.issue.END",
+                perf_counter=r_time,
+            )

@@ -16,15 +16,20 @@ from ....messaging.credential_definitions.util import (
     CRED_DEF_TAGS,
     CRED_DEF_SENT_RECORD_TYPE,
 )
+from ....messaging.responder import BaseResponder
 from ....revocation.indy import IndyRevocation
 from ....revocation.models.revocation_registry import RevocationRegistry
 from ....revocation.models.issuer_rev_reg_record import IssuerRevRegRecord
 from ....storage.base import BaseStorage
-from ....storage.error import StorageNotFoundError
+from ....storage.error import StorageError, StorageNotFoundError
 
 from .messages.credential_ack import CredentialAck
 from .messages.credential_issue import CredentialIssue
 from .messages.credential_offer import CredentialOffer
+from .messages.credential_problem_report import (
+    CredentialProblemReport,
+    ProblemReportReason,
+)
 from .messages.credential_proposal import CredentialProposal
 from .messages.credential_request import CredentialRequest
 from .messages.inner.credential_preview import CredentialPreview
@@ -79,6 +84,7 @@ class CredentialManager:
         connection_id: str,
         credential_proposal: CredentialProposal,
         auto_remove: bool = None,
+        comment: str = None,
     ) -> Tuple[V10CredentialExchange, CredentialOffer]:
         """
         Set up a new credential exchange for an automated send.
@@ -106,7 +112,7 @@ class CredentialManager:
         (credential_exchange, credential_offer) = await self.create_offer(
             cred_ex_record=credential_exchange,
             counter_proposal=None,
-            comment="create automated credential exchange",
+            comment=comment,
         )
         return (credential_exchange, credential_offer)
 
@@ -707,7 +713,7 @@ class CredentialManager:
             credential_id: optional credential identifier to override default on storage
 
         Returns:
-            Tuple: (Updated credential exchange record, credential ack message)
+            Updated credential exchange record
 
         """
         if cred_ex_record.state != (V10CredentialExchange.STATE_CREDENTIAL_RECEIVED):
@@ -762,7 +768,6 @@ class CredentialManager:
         credential_json = await holder.get_credential(credential_id)
         credential = json.loads(credential_json)
 
-        cred_ex_record.state = V10CredentialExchange.STATE_ACKED
         cred_ex_record.credential_id = credential_id
         cred_ex_record.credential = credential
         cred_ex_record.revoc_reg_id = credential.get("rev_reg_id", None)
@@ -772,6 +777,21 @@ class CredentialManager:
             # FIXME - re-fetch record to check state, apply transactional update
             await cred_ex_record.save(session, reason="store credential")
 
+        return cred_ex_record
+
+    async def send_credential_ack(
+        self,
+        cred_ex_record: V10CredentialExchange,
+    ):
+        """
+        Create, send, and return ack message for input credential exchange record.
+
+        Delete credential exchange record if set to auto-remove.
+
+        Returns:
+            Tuple: cred ex record, credential ack message for tracing.
+
+        """
         credential_ack_message = CredentialAck()
         credential_ack_message.assign_thread_id(
             cred_ex_record.thread_id, cred_ex_record.parent_thread_id
@@ -780,11 +800,31 @@ class CredentialManager:
             self._profile.settings, cred_ex_record.trace
         )
 
-        if cred_ex_record.auto_remove:
+        cred_ex_record.state = V10CredentialExchange.STATE_ACKED
+        try:
             async with self._profile.session() as session:
-                await cred_ex_record.delete_record(session)  # all done: delete
+                # FIXME - re-fetch record to check state, apply transactional update
+                await cred_ex_record.save(session, reason="ack credential")
 
-        return (cred_ex_record, credential_ack_message)
+                if cred_ex_record.auto_remove:
+                    await cred_ex_record.delete_record(session)  # all done: delete
+
+        except StorageError as err:
+            LOGGER.exception(err)  # holder still owes an ack: carry on
+
+        responder = self._profile.inject(BaseResponder, required=False)
+        if responder:
+            await responder.send_reply(
+                credential_ack_message,
+                connection_id=cred_ex_record.connection_id,
+            )
+        else:
+            LOGGER.warning(
+                "Configuration has no BaseResponder: cannot ack credential on %s",
+                cred_ex_record.thread_id,
+            )
+
+        return cred_ex_record, credential_ack_message
 
     async def receive_credential_ack(
         self, message: CredentialAck, connection_id: str
@@ -812,5 +852,61 @@ class CredentialManager:
         if cred_ex_record.auto_remove:
             async with self._profile.session() as session:
                 await cred_ex_record.delete_record(session)  # all done: delete
+
+        return cred_ex_record
+
+    async def create_problem_report(
+        self,
+        cred_ex_record: V10CredentialExchange,
+        description: str,
+    ):
+        """
+        Update cred ex record; create and return problem report.
+
+        Returns:
+            problem report
+
+        """
+        cred_ex_record.state = None
+        async with self._profile.session() as session:
+            await cred_ex_record.save(session, reason="created problem report")
+
+        report = CredentialProblemReport(
+            description={
+                "en": description,
+                "code": ProblemReportReason.ISSUANCE_ABANDONED.value,
+            }
+        )
+        report.assign_thread_id(cred_ex_record.thread_id)
+
+        return report
+
+    async def receive_problem_report(
+        self, message: CredentialProblemReport, connection_id: str
+    ):
+        """
+        Receive problem report.
+
+        Returns:
+            credential exchange record, retrieved and updated
+
+        """
+        # FIXME use transaction, fetch for_update
+        async with self._profile.session() as session:
+            cred_ex_record = await (
+                V10CredentialExchange.retrieve_by_connection_and_thread(
+                    session,
+                    connection_id,
+                    message._thread_id,
+                )
+            )
+
+            cred_ex_record.state = None
+            code = message.description.get(
+                "code",
+                ProblemReportReason.ISSUANCE_ABANDONED.value,
+            )
+            cred_ex_record.error_msg = f"{code}: {message.description.get('en', code)}"
+            await cred_ex_record.save(session, reason="received problem report")
 
         return cred_ex_record

@@ -1,16 +1,14 @@
 """Credential issue message handler."""
 
-from .....messaging.base_handler import (
-    BaseHandler,
-    BaseResponder,
-    HandlerException,
-    RequestContext,
-)
-
-from ..manager import V20CredManager
-from ..messages.cred_issue import V20CredIssue
-
+from .....indy.holder import IndyHolderError
+from .....messaging.base_handler import BaseHandler, HandlerException
+from .....messaging.request_context import RequestContext
+from .....messaging.responder import BaseResponder
+from .....storage.error import StorageError
 from .....utils.tracing import trace_event, get_timer
+
+from ..manager import V20CredManager, V20CredManagerError
+from ..messages.cred_issue import V20CredIssue
 
 
 class V20CredIssueHandler(BaseHandler):
@@ -40,7 +38,7 @@ class V20CredIssueHandler(BaseHandler):
         cred_manager = V20CredManager(context.profile)
         cred_ex_record = await cred_manager.receive_credential(
             context.message, context.connection_record.connection_id
-        )
+        )  # mgr only finds, saves record: on exception, saving null state is hopeless
 
         r_time = trace_event(
             context.settings,
@@ -51,13 +49,13 @@ class V20CredIssueHandler(BaseHandler):
 
         # Automatically move to next state if flag is set
         if context.settings.get("debug.auto_store_credential"):
-            (
-                cred_ex_record,
-                cred_ack_message,
-            ) = await cred_manager.store_credential(cred_ex_record)
+            try:
+                cred_ex_record = await cred_manager.store_credential(cred_ex_record)
+            except (V20CredManagerError, IndyHolderError, StorageError) as err:
+                # protocol finished OK: do not set cred ex record state null
+                self._logger.exception(err)
 
-            # Ack issuer that holder stored credential
-            await responder.send_reply(cred_ack_message)
+            cred_ack_message = await cred_manager.send_cred_ack(cred_ex_record)
 
             trace_event(
                 context.settings,

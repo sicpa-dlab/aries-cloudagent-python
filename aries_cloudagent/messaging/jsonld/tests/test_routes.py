@@ -1,8 +1,10 @@
 import json
+import pytest
+
 from copy import deepcopy
+
 from pydid.doc.service import Service
 
-import pytest
 from aiohttp import web
 from asynctest import TestCase as AsyncTestCase
 from asynctest import mock as async_mock
@@ -10,13 +12,17 @@ from pydid import DIDDocument
 from pyld import jsonld
 
 from ....admin.request_context import AdminRequestContext
+from ....wallet.key_type import KeyType
+from ....wallet.did_method import DIDMethod
 from ....config.base import InjectionError
-from ....messaging.models.base import BaseModelError
 from ....resolver.base import DIDMethodNotSupported, DIDNotFound, ResolverError
 from ....resolver.did_resolver import DIDResolver
 from ....resolver.tests import DOC
 from ....wallet.base import BaseWallet
 from ....wallet.error import WalletError
+from ....vc.ld_proofs.document_loader import DocumentLoader
+from .document_loader import custom_document_loader
+
 from .. import routes as test_module
 from ..error import (
     BadJWSHeaderError,
@@ -228,7 +234,12 @@ def test_post_process_routes():
 class TestJSONLDRoutes(AsyncTestCase):
     async def setUp(self):
         self.context = AdminRequestContext.test_context()
-        self.did_info = await (await self.context.session()).wallet.create_local_did()
+        self.context.profile.context.injector.bind_instance(
+            DocumentLoader, custom_document_loader
+        )
+        self.did_info = await (await self.context.session()).wallet.create_local_did(
+            DIDMethod.SOV, KeyType.ED25519
+        )
         self.request_dict = {
             "context": self.context,
             "outbound_message_router": async_mock.CoroutineMock(),

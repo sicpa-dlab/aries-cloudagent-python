@@ -12,6 +12,7 @@ from .....cache.in_memory import InMemoryCache
 from .....indy.holder import IndyHolder
 from .....indy.issuer import IndyIssuer
 from .....messaging.credential_definitions.util import CRED_DEF_SENT_RECORD_TYPE
+from .....messaging.responder import BaseResponder, MockResponder
 from .....ledger.base import BaseLedger
 from .....storage.base import StorageRecord
 from .....storage.error import StorageNotFoundError
@@ -20,6 +21,7 @@ from ..manager import CredentialManager, CredentialManagerError
 from ..messages.credential_ack import CredentialAck
 from ..messages.credential_issue import CredentialIssue
 from ..messages.credential_offer import CredentialOffer
+from ..messages.credential_problem_report import CredentialProblemReport
 from ..messages.credential_proposal import CredentialProposal
 from ..messages.credential_request import CredentialRequest
 from ..messages.inner.credential_preview import CredentialPreview, CredAttrSpec
@@ -1359,7 +1361,7 @@ class TestCredentialManager(AsyncTestCase):
                     get_or_fetch_local_tails_path=async_mock.CoroutineMock()
                 )
             )
-            ret_exchange, ret_cred_ack = await self.manager.store_credential(
+            ret_exchange = await self.manager.store_credential(
                 stored_exchange, credential_id=cred_id
             )
 
@@ -1380,8 +1382,7 @@ class TestCredentialManager(AsyncTestCase):
 
             assert ret_exchange.credential_id == cred_id
             assert ret_exchange.credential == stored_cred
-            assert ret_exchange.state == V10CredentialExchange.STATE_ACKED
-            assert ret_cred_ack._thread_id == thread_id
+            assert ret_exchange.state == V10CredentialExchange.STATE_CREDENTIAL_RECEIVED
 
     async def test_store_credential_bad_state(self):
         connection_id = "test_conn_id"
@@ -1444,9 +1445,7 @@ class TestCredentialManager(AsyncTestCase):
         ) as save_ex, async_mock.patch.object(
             V10CredentialExchange, "delete_record", autospec=True
         ) as delete_ex:
-            ret_exchange, ret_cred_ack = await self.manager.store_credential(
-                stored_exchange
-            )
+            ret_exchange = await self.manager.store_credential(stored_exchange)
 
             save_ex.assert_called_once()
 
@@ -1465,8 +1464,7 @@ class TestCredentialManager(AsyncTestCase):
 
             assert ret_exchange.credential_id == cred_id
             assert ret_exchange.credential == stored_cred
-            assert ret_exchange.state == V10CredentialExchange.STATE_ACKED
-            assert ret_cred_ack._thread_id == thread_id
+            assert ret_exchange.state == V10CredentialExchange.STATE_CREDENTIAL_RECEIVED
 
     async def test_store_credential_holder_store_indy_error(self):
         connection_id = "test_conn_id"
@@ -1504,7 +1502,41 @@ class TestCredentialManager(AsyncTestCase):
                 cred_ex_record=stored_exchange, credential_id=cred_id
             )
 
-    async def test_credential_ack(self):
+    async def test_send_credential_ack(self):
+        connection_id = "connection-id"
+        stored_exchange = V10CredentialExchange(
+            credential_exchange_id="dummy-cxid",
+            connection_id=connection_id,
+            initiator=V10CredentialExchange.INITIATOR_SELF,
+            thread_id="thid",
+            parent_thread_id="pthid",
+            role=V10CredentialExchange.ROLE_ISSUER,
+            trace=False,
+            auto_remove=True,
+        )
+
+        with async_mock.patch.object(
+            V10CredentialExchange, "save", autospec=True
+        ) as mock_save_ex, async_mock.patch.object(
+            V10CredentialExchange, "delete_record", autospec=True
+        ) as mock_delete_ex, async_mock.patch.object(
+            test_module.LOGGER, "exception", async_mock.MagicMock()
+        ) as mock_log_exception, async_mock.patch.object(
+            test_module.LOGGER, "warning", async_mock.MagicMock()
+        ) as mock_log_warning:
+            mock_delete_ex.side_effect = test_module.StorageError()
+            (_, ack) = await self.manager.send_credential_ack(stored_exchange)
+            assert ack._thread
+            mock_log_exception.assert_called_once()  # cover exception log-and-continue
+            mock_log_warning.assert_called_once()  # no BaseResponder
+
+            mock_responder = MockResponder()  # cover with responder
+            self.context.injector.bind_instance(BaseResponder, mock_responder)
+            (cx_rec, ack) = await self.manager.send_credential_ack(stored_exchange)
+            assert ack._thread
+            assert cx_rec.state == V10CredentialExchange.STATE_ACKED
+
+    async def test_receive_credential_ack(self):
         connection_id = "connection-id"
         stored_exchange = V10CredentialExchange(
             credential_exchange_id="dummy-cxid",
@@ -1522,8 +1554,9 @@ class TestCredentialManager(AsyncTestCase):
         ) as delete_ex, async_mock.patch.object(
             V10CredentialExchange,
             "retrieve_by_connection_and_thread",
-            async_mock.CoroutineMock(return_value=stored_exchange),
+            async_mock.CoroutineMock(),
         ) as retrieve_ex:
+            retrieve_ex.return_value = stored_exchange
             ret_exchange = await self.manager.receive_credential_ack(ack, connection_id)
 
             retrieve_ex.assert_called_once_with(
@@ -1533,6 +1566,87 @@ class TestCredentialManager(AsyncTestCase):
 
             assert ret_exchange.state == V10CredentialExchange.STATE_ACKED
             delete_ex.assert_called_once()
+
+    async def test_create_problem_report(self):
+        connection_id = "connection-id"
+        stored_exchange = V10CredentialExchange(
+            credential_exchange_id="dummy-cxid",
+            connection_id=connection_id,
+            initiator=V10CredentialExchange.INITIATOR_SELF,
+            role=V10CredentialExchange.ROLE_ISSUER,
+            state=V10CredentialExchange.STATE_REQUEST_RECEIVED,
+            thread_id="dummy-thid",
+        )
+
+        with async_mock.patch.object(
+            V10CredentialExchange, "save", autospec=True
+        ) as save_ex:
+            report = await self.manager.create_problem_report(
+                stored_exchange,
+                "The front fell off",
+            )
+
+        assert stored_exchange.state is None
+        assert report._thread_id == stored_exchange.thread_id
+
+    async def test_receive_problem_report(self):
+        connection_id = "connection-id"
+        stored_exchange = V10CredentialExchange(
+            credential_exchange_id="dummy-cxid",
+            connection_id=connection_id,
+            initiator=V10CredentialExchange.INITIATOR_SELF,
+            role=V10CredentialExchange.ROLE_ISSUER,
+        )
+        problem = CredentialProblemReport(
+            description={
+                "code": test_module.ProblemReportReason.ISSUANCE_ABANDONED.value,
+                "en": "Insufficient privilege",
+            }
+        )
+
+        with async_mock.patch.object(
+            V10CredentialExchange, "save", autospec=True
+        ) as save_ex, async_mock.patch.object(
+            V10CredentialExchange,
+            "retrieve_by_connection_and_thread",
+            async_mock.CoroutineMock(),
+        ) as retrieve_ex:
+            retrieve_ex.return_value = stored_exchange
+
+            ret_exchange = await self.manager.receive_problem_report(
+                problem, connection_id
+            )
+            retrieve_ex.assert_called_once_with(
+                self.session, connection_id, problem._thread_id
+            )
+            save_ex.assert_called_once()
+
+            assert ret_exchange.state is None
+
+    async def test_receive_problem_report_x(self):
+        connection_id = "connection-id"
+        stored_exchange = V10CredentialExchange(
+            credential_exchange_id="dummy-cxid",
+            initiator=V10CredentialExchange.INITIATOR_SELF,
+            role=V10CredentialExchange.ROLE_ISSUER,
+            state=V10CredentialExchange.STATE_REQUEST_RECEIVED,
+        )
+        problem = CredentialProblemReport(
+            description={
+                "code": test_module.ProblemReportReason.ISSUANCE_ABANDONED.value,
+                "en": "Insufficient privilege",
+            }
+        )
+
+        with async_mock.patch.object(
+            V10CredentialExchange,
+            "retrieve_by_connection_and_thread",
+            async_mock.CoroutineMock(),
+        ) as retrieve_ex:
+            retrieve_ex.side_effect = test_module.StorageNotFoundError("No such record")
+
+            with self.assertRaises(test_module.StorageNotFoundError):
+                await self.manager.receive_problem_report(problem, connection_id)
 
     async def test_retrieve_records(self):
         self.cache = InMemoryCache()

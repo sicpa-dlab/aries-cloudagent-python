@@ -6,11 +6,16 @@ from marshmallow import EXCLUDE, fields
 from ....cache.base import BaseCache
 from ....core.event_bus import EventBus, MockEventBus, Event
 from ....core.in_memory import InMemoryProfile
-from ....storage.base import BaseStorage, StorageDuplicateError, StorageRecord
+from ....storage.base import (
+    BaseStorage,
+    StorageDuplicateError,
+    StorageError,
+    StorageRecord,
+)
 
 from ...util import time_now
 
-from ..base_record import BaseRecord, BaseRecordSchema
+from ..base_record import BaseRecord, BaseRecordSchema, LOGGER
 
 
 class BaseRecordImpl(BaseRecord):
@@ -260,16 +265,52 @@ class TestBaseRecord(AsyncTestCase):
         session.profile.context.injector.bind_instance(EventBus, mock_event_bus)
         record = BaseRecordImpl()
         payload = {"test": "payload"}
-        await record.emit_event(session, None)  # cover short circuit
-        await record.emit_event(session, payload)  # cover short circuit
-        record.RECORD_TOPIC = "topic"
-        await record.emit_event(session, payload)  # cover short circuit
+
+        # Records must have topic to emit events
+        record.RECORD_TOPIC = None
+        await record.emit_event(session, payload)
         assert mock_event_bus.events == []
+
+        record.RECORD_TOPIC = "topic"
+
+        # Stateless record with no payload emits event with serialized record
+        await record.emit_event(session)
+        assert mock_event_bus.events == [
+            (session.profile, Event("acapy::record::topic", {}))
+        ]
+        mock_event_bus.events.clear()
+
+        # Stateless record with payload emits event
+        await record.emit_event(session, payload)
+        assert mock_event_bus.events == [
+            (session.profile, Event("acapy::record::topic", payload))
+        ]
+        mock_event_bus.events.clear()
+
+        # Statefull record with payload emits event
         record.state = "test_state"
         await record.emit_event(session, payload)
         assert mock_event_bus.events == [
             (session.profile, Event("acapy::record::topic::test_state", payload))
         ]
+
+    async def test_save_error_state(self):
+        session = InMemoryProfile.test_session()
+        record = ARecordImpl(a="1", b="0", code="one")
+        assert record._last_state is None
+        await record.save_error_state(session)
+
+        record.state = "a-record-state"
+        await record.save(session)
+
+        with async_mock.patch.object(
+            record, "save", async_mock.CoroutineMock()
+        ) as mock_save, async_mock.patch.object(
+            LOGGER, "exception", async_mock.MagicMock()
+        ) as mock_log_exc:
+            mock_save.side_effect = StorageError()
+            await record.save_error_state(session)
+            mock_log_exc.assert_called_once()
 
     async def test_tag_prefix(self):
         tags = {"~x": "a", "y": "b"}

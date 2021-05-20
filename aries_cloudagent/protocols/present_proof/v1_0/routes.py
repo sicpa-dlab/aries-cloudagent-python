@@ -15,6 +15,10 @@ from marshmallow import fields, validate
 from ....admin.request_context import AdminRequestContext
 from ....connections.models.conn_record import ConnRecord
 from ....indy.holder import IndyHolder, IndyHolderError
+from ....indy.sdk.models.cred_precis import IndyCredPrecisSchema
+from ....indy.sdk.models.proof import IndyPresSpecSchema
+from ....indy.sdk.models.proof_request import IndyProofRequestSchema
+from ....indy.sdk.models.pres_preview import IndyPresPreview, IndyPresPreviewSchema
 from ....indy.util import generate_pr_nonce
 from ....ledger.error import LedgerError
 from ....messaging.decorators.attach_decorator import AttachDecorator
@@ -32,12 +36,6 @@ from ....utils.tracing import trace_event, get_timer, AdminAPIMessageTracingSche
 from ....wallet.error import WalletNotFoundError
 
 from ...problem_report.v1_0 import internal_error
-from ...problem_report.v1_0.message import ProblemReport
-
-from ..indy.cred_precis import IndyCredPrecisSchema
-from ..indy.proof import IndyPresSpecSchema
-from ..indy.proof_request import IndyProofRequestSchema
-from ..indy.pres_preview import IndyPresPreview, IndyPresPreviewSchema
 
 from .manager import PresentationManager
 from .message_types import ATTACH_DECO_IDS, PRESENTATION_REQUEST, SPEC_URI
@@ -178,7 +176,7 @@ class CredentialsFetchQueryStringSchema(OpenAPISchema):
 class V10PresentationProblemReportRequestSchema(OpenAPISchema):
     """Request schema for sending problem report."""
 
-    explain_ltxt = fields.Str(required=True)
+    description = fields.Str(required=True)
 
 
 class V10PresExIdMatchInfoSchema(OpenAPISchema):
@@ -635,11 +633,20 @@ async def presentation_exchange_send_bound_request(request: web.BaseRequest):
             presentation_request_message,
         ) = await presentation_manager.create_bound_request(pres_ex_record)
         result = pres_ex_record.serialize()
-    except (BaseModelError, StorageError) as err:
+    except (BaseModelError, LedgerError) as err:
+        async with context.session() as session:
+            await pres_ex_record.save_error_state(session, reason=err.message)
         return await internal_error(
             err,
             web.HTTPBadRequest,
-            pres_ex_record or connection_record,
+            pres_ex_record,
+            outbound_handler,
+        )
+    except StorageError as err:
+        return await internal_error(
+            err,
+            web.HTTPBadRequest,
+            pres_ex_record,
             outbound_handler,
         )
 
@@ -733,10 +740,12 @@ async def presentation_exchange_send_presentation(request: web.BaseRequest):
         StorageError,
         WalletNotFoundError,
     ) as err:
+        async with context.session() as session:
+            await pres_ex_record.save_error_state(session, reason=err.message)
         return await internal_error(
             err,
             web.HTTPBadRequest,
-            pres_ex_record or connection_record,
+            pres_ex_record,
             outbound_handler,
         )
 
@@ -814,7 +823,13 @@ async def presentation_exchange_verify_presentation(request: web.BaseRequest):
     try:
         pres_ex_record = await presentation_manager.verify_presentation(pres_ex_record)
         result = pres_ex_record.serialize()
-    except (LedgerError, BaseModelError) as err:
+    except (BaseModelError, LedgerError) as err:
+        async with context.session() as session:
+            await pres_ex_record.save_error_state(session, reason=err.message)
+        return await internal_error(
+            err, web.HTTPBadRequest, pres_ex_record, outbound_handler
+        )
+    except StorageError as err:
         return await internal_error(
             err, web.HTTPBadRequest, pres_ex_record, outbound_handler
         )
@@ -844,33 +859,29 @@ async def presentation_exchange_problem_report(request: web.BaseRequest):
         request: aiohttp request object
 
     """
-    r_time = get_timer()
-
     context: AdminRequestContext = request["context"]
     outbound_handler = request["outbound_message_router"]
 
     pres_ex_id = request.match_info["pres_ex_id"]
     body = await request.json()
 
+    presentation_manager = PresentationManager(context.profile)
+
     try:
         async with await context.session() as session:
             pres_ex_record = await V10PresentationExchange.retrieve_by_id(
                 session, pres_ex_id
             )
+        report = await presentation_manager.create_problem_report(
+            pres_ex_record,
+            body["description"],
+        )
     except StorageNotFoundError as err:
-        raise web.HTTPNotFound(reason=err.roll_up) from err
+        await internal_error(err, web.HTTPNotFound, None, outbound_handler)
+    except StorageError as err:
+        await internal_error(err, web.HTTPBadRequest, pres_ex_record, outbound_handler)
 
-    error_result = ProblemReport(explain_ltxt=body["explain_ltxt"])
-    error_result.assign_thread_id(pres_ex_record.thread_id)
-
-    await outbound_handler(error_result, connection_id=pres_ex_record.connection_id)
-
-    trace_event(
-        context.settings,
-        error_result,
-        outcome="presentation_exchange_problem_report.END",
-        perf_counter=r_time,
-    )
+    await outbound_handler(report, connection_id=pres_ex_record.connection_id)
 
     return web.json_response({})
 
