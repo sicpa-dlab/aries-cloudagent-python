@@ -3,10 +3,12 @@
 import logging
 
 from itertools import chain
-from typing import TYPE_CHECKING, Any, Callable, Dict, Pattern, Sequence
+from typing import TYPE_CHECKING, Any, Callable, Dict, Pattern, Sequence, Union
 
 if TYPE_CHECKING:  # To avoid circular import error
     from .profile import Profile
+
+from ..connections.models.connection_target import ConnectionTarget
 
 LOGGER = logging.getLogger(__name__)
 
@@ -29,6 +31,11 @@ class Event:
         """Return this event's payload."""
         return self._payload
 
+    @payload.setter
+    def payload(self, value):
+        """Set this event's payload."""
+        self._payload = value
+
     def __eq__(self, other):
         """Test equality."""
         if not isinstance(other, Event):
@@ -38,6 +45,53 @@ class Event:
     def __repr__(self):
         """Return debug representation."""
         return "<Event topic={}, payload={}>".format(self._topic, self._payload)
+
+
+class QueuedOutboundMessage(Event):
+    """Class representing an outbound message for EventBus"""
+
+    STATE_NEW = "new"
+    STATE_PENDING = "pending"
+    STATE_ENCODE = "encode"
+    STATE_DELIVER = "deliver"
+    STATE_RETRY = "retry"
+    STATE_DONE = "done"
+
+    @property
+    def topic(self):
+        """Return this event's topic."""
+        return self._topic
+
+    @topic.setter
+    def topic(self, value):
+        """Set this event's Topic."""
+        self._topic = f"outbound/message/target/{value}"
+
+    def __init__(
+        self,
+        profile: Profile,
+        message: Any,
+        target: ConnectionTarget,
+        transport_id: str,
+    ):
+        """Initialize the queued outbound message."""
+        self.profile = profile
+        self.endpoint = target and target.endpoint
+        self.error: Exception = None
+        self.message = message
+        self.payload = None
+        self.retries = None
+        self.retry_at: float = None
+        self.state = self.STATE_NEW
+        self.target = target
+        # TODO: task logic should be implemented in another way
+        self.task: asyncio.Task = None
+        self.transport_id: str = transport_id
+        self.metadata: dict = None
+        self.api_key: str = None
+        topic = f"outbound/message/did/{target.did}"
+        payload = message
+        super().__init__(topic, payload)
 
 
 class EventBus:

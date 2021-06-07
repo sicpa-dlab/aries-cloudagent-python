@@ -8,7 +8,6 @@ import time
 from typing import Callable, Type, Union
 from urllib.parse import urlparse
 
-from ...connections.models.connection_target import ConnectionTarget
 from ...config.injection_context import InjectionContext
 from ...core.profile import Profile
 from ...utils.classloader import ClassLoader, ModuleLoadError, ClassNotFoundError
@@ -26,41 +25,10 @@ from .base import (
 )
 from .message import OutboundMessage
 
+from ...core.event_bus import QueuedOutboundMessage
+
 LOGGER = logging.getLogger(__name__)
 MODULE_BASE_PATH = "aries_cloudagent.transport.outbound"
-
-
-class QueuedOutboundMessage:
-    """Class representing an outbound message pending delivery."""
-
-    STATE_NEW = "new"
-    STATE_PENDING = "pending"
-    STATE_ENCODE = "encode"
-    STATE_DELIVER = "deliver"
-    STATE_RETRY = "retry"
-    STATE_DONE = "done"
-
-    def __init__(
-        self,
-        profile: Profile,
-        message: OutboundMessage,
-        target: ConnectionTarget,
-        transport_id: str,
-    ):
-        """Initialize the queued outbound message."""
-        self.profile = profile
-        self.endpoint = target and target.endpoint
-        self.error: Exception = None
-        self.message = message
-        self.payload: Union[str, bytes] = None
-        self.retries = None
-        self.retry_at: float = None
-        self.state = self.STATE_NEW
-        self.target = target
-        self.task: asyncio.Task = None
-        self.transport_id: str = transport_id
-        self.metadata: dict = None
-        self.api_key: str = None
 
 
 class OutboundTransportManager:
@@ -254,9 +222,9 @@ class OutboundTransportManager:
                 break
         if not transport_id:
             raise OutboundDeliveryError("No supported transport for outbound message")
-
         queued = QueuedOutboundMessage(profile, outbound, target, transport_id)
         queued.retries = self.MAX_RETRY_COUNT
+        # TODO: QueuedOutboundMessage usage
         self.outbound_new.append(queued)
         self.process_queued()
 
@@ -290,10 +258,12 @@ class OutboundTransportManager:
             api_key = endpoint_hash_split[1]
             queued.api_key = api_key
         queued.endpoint = f"{endpoint}/topic/{topic}/"
+        queued.topic = topic
         queued.metadata = metadata
         queued.payload = json.dumps(payload)
         queued.state = QueuedOutboundMessage.STATE_PENDING
         queued.retries = 4 if max_attempts is None else max_attempts - 1
+        # TODO: QueuedOutboundMessage usage
         self.outbound_new.append(queued)
         self.process_queued()
 
@@ -413,6 +383,7 @@ class OutboundTransportManager:
             else:
                 break
 
+        # TODO: QueuedOutboundMessage usage
     def encode_queued_message(self, queued: QueuedOutboundMessage) -> asyncio.Task:
         """Kick off encoding of a queued message."""
         queued.task = self.task_queue.run(
@@ -421,6 +392,7 @@ class OutboundTransportManager:
         )
         return queued.task
 
+        # TODO: QueuedOutboundMessage usage
     async def perform_encode(self, queued: QueuedOutboundMessage):
         """Perform message encoding."""
         transport = self.get_transport_instance(queued.transport_id)
@@ -434,6 +406,7 @@ class OutboundTransportManager:
             queued.target.sender_key,
         )
 
+        # TODO: QueuedOutboundMessage usage
     def finished_encode(self, queued: QueuedOutboundMessage, completed: CompletedTask):
         """Handle completion of queued message encoding."""
         if completed.exc_info:
@@ -444,6 +417,7 @@ class OutboundTransportManager:
         queued.task = None
         self.process_queued()
 
+        # TODO: QueuedOutboundMessage usage
     def deliver_queued_message(self, queued: QueuedOutboundMessage) -> asyncio.Task:
         """Kick off delivery of a queued message."""
         transport = self.get_transport_instance(queued.transport_id)
@@ -459,6 +433,7 @@ class OutboundTransportManager:
         )
         return queued.task
 
+        # TODO: QueuedOutboundMessage usage
     def finished_deliver(self, queued: QueuedOutboundMessage, completed: CompletedTask):
         """Handle completion of queued message delivery."""
         if completed.exc_info:
