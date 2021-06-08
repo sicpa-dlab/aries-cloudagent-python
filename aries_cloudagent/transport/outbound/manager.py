@@ -244,9 +244,8 @@ class OutboundTransportManager:
         # TODO: QueuedOutboundMessage usage
         event_bus = self.context.inject(EventBus, required=False)        
         if event_bus:
-            topic = 
-            payload = 
-            await event_bus.notify(self, Event(topic, payload))
+            # OutboundMessage is a extension of Event
+            await event_bus.notify(self, outbound)
 
         self.process_queued()
 
@@ -289,7 +288,8 @@ class OutboundTransportManager:
         self.outbound_new.append(queued)
         event_bus = self.context.inject(EventBus, required=False)        
         if event_bus:
-            await event_bus.notify(self, Event(topic, payload))
+            # QueuedOutboundMessage is a extension of Event
+            await event_bus.notify(self, queued)
 
 
         #self.process_queued()

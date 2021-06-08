@@ -70,7 +70,7 @@ class QueuedOutboundMessage(Event):
     @topic.setter
     def topic(self, value):
         """Set this event's Topic."""
-        self._topic = f"outbound/queuedmessage/target/{value}"
+        self._topic = f"outbound::queuedmessage::target::{value}"
 
     def __init__(
         self,
@@ -94,7 +94,7 @@ class QueuedOutboundMessage(Event):
         self.transport_id: str = transport_id
         self.metadata: dict = None
         self.api_key: str = None
-        topic = f"outbound/queuedmessage/did/{target.did}"
+        topic = f"outbound::queuedmessage::did::{target.did}"
         payload = message
         super().__init__(topic, payload)
 
@@ -110,7 +110,7 @@ class OutboundMessage(Event):
     @topic.setter
     def topic(self, value):
         """Set this event's Topic."""
-        self._topic = f"outbound/message/target/{value}"
+        self._topic = f"outbound::message::target::{value}"
     
     def __init__(
         self,
@@ -139,7 +139,7 @@ class OutboundMessage(Event):
         self.target = target
         self.target_list = list(target_list) if target_list else []
         self.to_session_only = to_session_only
-        topic = f"outbound/message/did/{target.did}"
+        topic = f"outbound::message::did::{target.did}"
         payload = message
         super().__init__(topic, payload)
 
