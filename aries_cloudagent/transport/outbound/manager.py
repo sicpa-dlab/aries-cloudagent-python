@@ -23,9 +23,15 @@ from .base import (
     OutboundDeliveryError,
     OutboundTransportRegistrationError,
 )
-from .message import OutboundMessage
 
-from ...core.event_bus import QueuedOutboundMessage
+from ...core.event_bus import (
+    QueuedOutboundMessage,
+    Event,
+    EventBus,
+    EVENT_PATTERN_QUEUEDOUTBOUNDMESSAGE,
+    EVENT_PATTERN_OUTBOUNDMESSAGE,
+    OutboundMessage
+    )
 
 LOGGER = logging.getLogger(__name__)
 MODULE_BASE_PATH = "aries_cloudagent.transport.outbound"
@@ -68,6 +74,10 @@ class OutboundTransportManager:
         )
         for outbound_transport in outbound_transports:
             self.register(outbound_transport)
+        event_bus = self.context.inject(EventBus, required=False)
+        if event_bus:
+            event_bus.subscribe(EVENT_PATTERN_QUEUEDOUTBOUNDMESSAGE, self._enqueue)
+            event_bus.subscribe(EVENT_PATTERN_OUTBOUNDMESSAGE, self._enqueue)
 
     def register(self, module: str) -> str:
         """
@@ -202,7 +212,13 @@ class OutboundTransportManager:
         """Get an instance of a running transport by ID."""
         return self.running_transports[transport_id]
 
-    def enqueue_message(self, profile: Profile, outbound: OutboundMessage):
+    def _enqueue(self, profile: Profile, event: Event):
+        match = EVENT_PATTERN_QUEUEDOUTBOUNDMESSAGE.search(event.topic)
+        topic = match.group(1) if match else None
+        if topic:
+            self._enqueue_message(profile, event.payload)
+
+    def _enqueue_message(self, profile: Profile, outbound: OutboundMessage):
         """
         Add an outbound message to the queue.
 
@@ -224,8 +240,14 @@ class OutboundTransportManager:
             raise OutboundDeliveryError("No supported transport for outbound message")
         queued = QueuedOutboundMessage(profile, outbound, target, transport_id)
         queued.retries = self.MAX_RETRY_COUNT
-        # TODO: QueuedOutboundMessage usage
         self.outbound_new.append(queued)
+        # TODO: QueuedOutboundMessage usage
+        event_bus = self.context.inject(EventBus, required=False)        
+        if event_bus:
+            topic = 
+            payload = 
+            await event_bus.notify(self, Event(topic, payload))
+
         self.process_queued()
 
     def enqueue_webhook(
@@ -265,9 +287,20 @@ class OutboundTransportManager:
         queued.retries = 4 if max_attempts is None else max_attempts - 1
         # TODO: QueuedOutboundMessage usage
         self.outbound_new.append(queued)
-        self.process_queued()
+        event_bus = self.context.inject(EventBus, required=False)        
+        if event_bus:
+            await event_bus.notify(self, Event(topic, payload))
 
-    def process_queued(self) -> asyncio.Task:
+
+        #self.process_queued()
+
+    def _process(self, profile: Profile, event: Event):
+        match = EVENT_PATTERN_OUTBOUNDMESSAGE.search(event.topic)
+        topic = match.group(1) if match else None
+        if topic:
+            self._process_queued()
+
+    def _process_queued(self) -> asyncio.Task:
         """
         Start the process to deliver queued messages if necessary.
 
