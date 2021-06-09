@@ -1,18 +1,19 @@
 """Base classes for the queue module."""
-from abc import ABC, abstractmethod
+from abc import abstractmethod
 import asyncio
-from typing import Union
-
+from ....core.profile import Profile
 from ...error import TransportError
+from ....core.event_bus import EventBus, Event
 
 
-class BaseOutboundQueue(ABC):
+class BaseOutboundQueue(EventBus):
     """Base class for the outbound queue generic type."""
 
     protocol = None  # string value representing protocol, e.g. "redis"
 
     def __init__(self, connection: str, prefix: str = None):
         """Initialize base queue type."""
+        super().__init__()
         self.connection = connection
         self.prefix = prefix or "acapy"
 
@@ -39,13 +40,21 @@ class BaseOutboundQueue(ABC):
         """Push a ``message`` to queue on ``key``."""
 
     @abstractmethod
-    async def enqueue_message(
-        self,
-        payload: Union[str, bytes],
-        endpoint: str,
-    ):
-        """Prepare and send message to external queue."""
+    async def notify(self, profile: Profile, event: Event):
+        """Produce an Event in the queue."""
+
+    def subscribe(self, pattern, processor):
+        """Not implemented due it is an outbound class."""
+        raise OutboundQueueNotImplementedMethod("Not implemented for this class")
+
+    def unsubscribe(self, pattern, processor):
+        """Not implemented due it is an outbound class."""
+        raise OutboundQueueNotImplementedMethod("Not implemented for this class")
 
 
 class OutboundQueueError(TransportError):
+    """Generic outbound transport error."""
+
+
+class OutboundQueueNotImplementedMethod(TransportError):
     """Generic outbound transport error."""

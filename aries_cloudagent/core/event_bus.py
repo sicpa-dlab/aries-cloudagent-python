@@ -14,10 +14,11 @@ LOGGER = logging.getLogger(__name__)
 class Event:
     """A simple event object."""
 
-    def __init__(self, topic: str, payload: Any = None):
+    def __init__(self, topic: str, payload: Any = None, endpoint: str = None):
         """Create a new event."""
         self._topic = topic
         self._payload = payload
+        self._endpoint = endpoint
 
     @property
     def topic(self):
@@ -28,6 +29,11 @@ class Event:
     def payload(self):
         """Return this event's payload."""
         return self._payload
+
+    @property
+    def endpoint(self):
+        """Return this event's payload."""
+        return self._endpoint
 
     def __eq__(self, other):
         """Test equality."""

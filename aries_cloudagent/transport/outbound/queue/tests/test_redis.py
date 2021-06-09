@@ -19,7 +19,7 @@ from ....wire_format import JsonWireFormat
 from ...base import OutboundTransportError
 from ..base import OutboundQueueError
 from ..redis import RedisOutboundQueue
-
+from .....core.event_bus import Event
 
 ENDPOINT = "http://localhost:9000"
 KEYNAME = "acapy.outbound_transport"
@@ -156,8 +156,10 @@ class TestRedisConnection(AsyncTestCase):
                 with async_mock.patch.object(
                     transport.redis, "rpush", async_mock.CoroutineMock()
                 ) as mock_redis_push:
-                    await transport.enqueue_message("Hello", "localhost:8999")
-                    await transport.enqueue_message(b"Hello", "localhost:8999")
+                    event =Event("test", payload="Hello", endpoint="localhost:8999")
+                    await transport.notify(profile="profile", event=event)
+                    event_byte =Event("test", payload=b"Hello", endpoint="localhost:8999")
+                    await transport.notify("test", event=event_byte)
 
     async def test_enqueue_push_x(self):
         transport = RedisOutboundQueue(
@@ -177,7 +179,8 @@ class TestRedisConnection(AsyncTestCase):
                 ) as mock_redis_push:
                     mock_redis_push.side_effect = aioredis.RedisError()
                     with self.assertRaises(OutboundQueueError):
-                        await transport.enqueue_message("Hello", "localhost:8999")
+                        event = Event("test", payload="Hello", endpoint="localhost:8999")
+                        await transport.notify(profile="profile", event=event)
 
     async def test_enqueue_no_endpoint_x(self):
         transport = RedisOutboundQueue(
@@ -193,7 +196,8 @@ class TestRedisConnection(AsyncTestCase):
             )
             async with transport:
                 with self.assertRaises(OutboundQueueError):  # cover exc
-                    await transport.enqueue_message(None, None)
+                    event = Event("test", payload="Hello")
+                    await transport.notify(profile="profile", event=event)
 
 
 class AsyncMock(unittest.mock.MagicMock):

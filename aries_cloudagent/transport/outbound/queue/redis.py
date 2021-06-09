@@ -3,7 +3,8 @@
 import asyncio
 import logging
 import msgpack
-from typing import Union
+from ....core.event_bus import Event
+from ....core.profile import Profile
 
 import aioredis
 
@@ -54,30 +55,29 @@ class RedisOutboundQueue(BaseOutboundQueue):
         except aioredis.RedisError as e:
             raise OutboundQueueError(f"Unexpected redis client exception {e}")
 
-    async def enqueue_message(
-        self,
-        payload: Union[str, bytes],
-        endpoint: str,
-    ):
-        """Prepare and send message to external redis.
+    async def notify(self, profile: Profile, event: Event):
+        """Notify subscribers of event.
 
         Args:
-            payload: message payload in string or byte format
-            endpoint: URI endpoint for delivery
+            profile (Profile): context of the event
+            event (Event): event to emit
+
         """
-        if not endpoint:
+
+        if not event.endpoint:
             raise OutboundQueueError("No endpoint provided")
+        payload = event.payload
         if isinstance(payload, bytes):
             content_type = "application/ssi-agent-wire"
         else:
             content_type = "application/json"
-            payload = payload.encode(encoding="utf-8")
+            payload = event.payload.encode(encoding="utf-8")
         message = msgpack.packb(
-            {
-                "headers": {"Content-Type": content_type},
-                "endpoint": endpoint,
-                "payload": payload,
-            }
-        )
+                {
+                    "headers": {"Content-Type": content_type},
+                    "endpoint": event.endpoint,
+                    "payload": payload,
+                }
+            )
         key = f"{self.prefix}.outbound_transport".encode()
         return await self.push(key, message)

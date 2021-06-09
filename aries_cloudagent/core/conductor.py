@@ -12,6 +12,7 @@ import hashlib
 import json
 import logging
 
+from .event_bus import Event
 from ..admin.base_server import BaseAdminServer
 from ..admin.server import AdminResponder, AdminServer
 from ..config.default_context import ContextBuilder
@@ -538,9 +539,9 @@ class Conductor:
                 [outbound.target] if outbound.target else (outbound.target_list or [])
             )
             for target in targets:
-                await self.outbound_queue.enqueue_message(
-                    outbound.payload, target.endpoint
-                )
+                topic = None  # TODO: get the queue topic if it is necessary
+                event = Event(topic, outbound.payload, target.endpoint)
+                await self.outbound_queue.notify(profile, event)
 
             return OutboundSendStatus.SENT_TO_EXTERNAL_QUEUE
 

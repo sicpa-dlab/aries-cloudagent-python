@@ -429,7 +429,7 @@ class TestConductor(AsyncTestCase, Config, TestDIDs):
 
         await conductor.setup()
         conductor.outbound_queue = async_mock.MagicMock(
-            enqueue_message=async_mock.CoroutineMock()
+            notify=async_mock.CoroutineMock()
         )
 
         await conductor.queue_outbound(conductor.root_profile, message)
