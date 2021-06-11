@@ -106,6 +106,8 @@ class EventBus:
                 del self.topic_patterns_to_subscribers[pattern]
             LOGGER.debug("Unsubscribed: topic %s, processor %s", pattern, processor)
 
+    async def wait_for_event(self, topic: Pattern, opp: Callable) -> Event:
+        self.
 
 class MockEventBus(EventBus):
     """A mock EventBus for testing."""

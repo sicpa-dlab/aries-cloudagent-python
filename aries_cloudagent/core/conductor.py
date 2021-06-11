@@ -447,8 +447,24 @@ class Conductor:
             if m.state == QueuedOutboundMessage.STATE_DELIVER:
                 stats["out_deliver"] += 1
         return stats
-
+    
     async def outbound_message_router(
+        self,
+        profile: Profile,
+        outbound: OutboundMessage,
+        inbound: InboundMessage = None,
+    ) -> OutboundSendStatus:
+        if (
+            not outbound.target
+            and outbound.reply_to_verkey
+            and not outbound.reply_from_verkey
+            and inbound
+        ):
+            outbound.reply_from_verkey = inbound.receipt.recipient_verkey
+        await profile.notify(topic="acapy::outbound::message", payload=outbound)
+        await profile.wait_for_event(topic="acapy::outbound::message::status",condition = (payload)=>"status")
+
+    async def _outbound_message_router(
         self,
         profile: Profile,
         outbound: OutboundMessage,
@@ -470,7 +486,7 @@ class Conductor:
                 return OutboundSendStatus.SENT_TO_SESSION
 
         if not outbound.to_session_only:
-            return await self.queue_outbound(profile, outbound, inbound)
+            return await self.queue_outbound(profile, outbound)
 
     def handle_not_returned(self, profile: Profile, outbound: OutboundMessage):
         """Handle a message that failed delivery via an inbound session."""
@@ -486,7 +502,6 @@ class Conductor:
         self,
         profile: Profile,
         outbound: OutboundMessage,
-        inbound: InboundMessage = None,
     ) -> OutboundSendStatus:
         """
         Queue an outbound message for transport.

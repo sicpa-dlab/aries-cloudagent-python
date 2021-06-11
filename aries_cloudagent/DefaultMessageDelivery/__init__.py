@@ -1,4 +1,4 @@
-''' initialize Message Delivery plugin '''
+""" initialize Message Delivery plugin """
 import logging
 
 from ..config.injection_context import InjectionContext
@@ -7,11 +7,12 @@ from collections import OrderedDict
 
 
 LOGGER = logging.getLogger(__name__)
-topics: OrderedDict = {}  #TODO: add topics and listeners
+ACAPY_OUTBOUND_MESSAGE_EVENT_TOPIC = "acapy::outbound::message"
+topics: OrderedDict = {}  # TODO: add topics and listeners
 
 
 async def setup(context: InjectionContext):
-    ''' subscribe listeners to topics'''
+    """subscribe listeners to topics"""
     event_bus = context.inject(EventBus, required=False)
     if event_bus:
         for topic, listener in topics:
