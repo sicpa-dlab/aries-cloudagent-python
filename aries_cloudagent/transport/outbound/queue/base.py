@@ -1,9 +1,24 @@
 """Base classes for the queue module."""
 from abc import abstractmethod
 import asyncio
+from typing import Any
+
 from ....core.profile import Profile
 from ...error import TransportError
 from ....core.event_bus import EventBus, Event
+
+
+class OutboundMessageEvent(Event):
+    protocol = None
+    endpoint = None
+
+    def __init__(self, topic: str, payload: Any = None, endpoint: str =None):
+
+        super().__init__(topic, payload)
+        self.endpoint = endpoint
+
+
+
 
 
 class BaseOutboundQueue(EventBus):
