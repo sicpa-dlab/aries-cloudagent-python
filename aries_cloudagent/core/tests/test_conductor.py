@@ -14,6 +14,7 @@ from ...connections.models.diddoc import (
     PublicKeyType,
     Service,
 )
+from ...core.event_bus import EventBus
 from ...core.in_memory import InMemoryProfileManager
 from ...core.profile import ProfileManager
 from ...core.protocol_registry import ProtocolRegistry
@@ -84,6 +85,7 @@ class StubContextBuilder(ContextBuilder):
         context.injector.bind_instance(ProtocolRegistry, ProtocolRegistry())
         context.injector.bind_instance(BaseWireFormat, self.wire_format)
         context.injector.bind_instance(DIDResolver, DIDResolver(DIDResolverRegistry()))
+        context.injector.bind_instance(EventBus, EventBus())
         return context
 
 
