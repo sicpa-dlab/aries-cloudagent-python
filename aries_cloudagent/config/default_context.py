@@ -109,9 +109,10 @@ class DefaultContextBuilder(ContextBuilder):
 
         plugin_registry = PluginRegistry()
         context.injector.bind_instance(PluginRegistry, plugin_registry)
-
         # Register standard protocol plugins
         plugin_registry.register_package("aries_cloudagent.protocols")
+        # Register DefaultMessageDelivery
+        plugin_registry.register_plugin("aries_cloudagent.DefaultMessageDelivery")
 
         # Currently providing admin routes only
         plugin_registry.register_plugin("aries_cloudagent.holder")
