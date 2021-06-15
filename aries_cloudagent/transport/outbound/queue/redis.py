@@ -7,6 +7,7 @@ from typing import Union
 
 import aioredis
 
+from core.event_bus import Event
 from .base import BaseOutboundQueue, OutboundQueueError
 
 
@@ -81,3 +82,17 @@ class RedisOutboundQueue(BaseOutboundQueue):
         )
         key = f"{self.prefix}.outbound_transport".encode()
         return await self.push(key, message)
+
+    async def notify(
+            self,
+            event: Event
+    ):
+        """Prepare and send message to external queue.
+
+        Args:
+            event:
+        """
+        endpoint = event.payload.get("endpoint")
+        payload = event.payload.get("payload")
+
+        return await self.enqueue_message(payload, endpoint)
