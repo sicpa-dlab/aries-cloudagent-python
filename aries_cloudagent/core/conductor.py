@@ -86,7 +86,6 @@ class Conductor:
         self.outbound_transport_manager: OutboundTransportManager = None
         self.root_profile: Profile = None
         self.setup_public_did: DIDInfo = None
-        self.outbound_queue: BaseOutboundQueue = None
 
     @property
     def context(self) -> InjectionContext:
@@ -150,8 +149,6 @@ class Conductor:
         context.injector.bind_instance(
             DocumentLoader, DocumentLoader(self.root_profile)
         )
-
-        self.outbound_queue = get_outbound_queue(context.settings)
 
         # Admin API
         if context.settings.get("admin.enabled"):
@@ -236,7 +233,6 @@ class Conductor:
             default_label,
             self.inbound_transport_manager.registered_transports,
             self.outbound_transport_manager.registered_transports,
-            self.outbound_queue,
             self.setup_public_did and self.setup_public_did.did,
             self.admin_server,
         )
@@ -463,10 +459,6 @@ class Conductor:
             if m.state == QueuedOutboundMessage.STATE_DELIVER:
                 stats["out_deliver"] += 1
         return stats
-<<<<<<< HEAD
-
-    async def outbound_message_router(
-=======
 
     async def outbound_message_router(
         self,
@@ -578,7 +570,7 @@ class Conductor:
         # queue. Else save the message to an internal queue. This
         # internal queue usually results in the message to be sent over
         # ACA-py `-ot` transport.
-        if self.outbound_queue:
+        if profile.settings.get("transport.outbound_queue"):
             return await self._queue_external(profile, outbound)
         else:
             return self._queue_internal(profile, outbound)
@@ -589,16 +581,16 @@ class Conductor:
         outbound: OutboundMessage,
     ) -> OutboundSendStatus:
         """Save the message to an external outbound queue."""
-        async with self.outbound_queue:
-            targets = (
+
+        targets = (
                 [outbound.target] if outbound.target else (outbound.target_list or [])
             )
-            for target in targets:
-                await self.outbound_queue.enqueue_message(
-                    outbound.payload, target.endpoint
-                )
+        topic = "acapy::outbound::external_message"
+        for target in targets:
+            payload = {"payload": outbound.payload, "endpoint": target.endpoint}
+            await profile.notify(topic, payload)
 
-            return OutboundSendStatus.SENT_TO_EXTERNAL_QUEUE
+        return OutboundSendStatus.SENT_TO_EXTERNAL_QUEUE
 
     def _queue_internal(
         self, profile: Profile, outbound: OutboundMessage

@@ -12,6 +12,7 @@ from ..config.injection_context import InjectionContext
 from ..config.provider import BaseProvider
 from ..config.settings import BaseSettings
 from ..utils.classloader import ClassLoader, ClassNotFoundError
+from ..transport.outbound.queue.loader import get_outbound_queue
 
 from .error import ProfileSessionInactiveError
 
@@ -102,7 +103,11 @@ class Profile(ABC):
 
     async def notify(self, topic: str, payload: Any):
         """Signal an event."""
-        event_bus = self.inject(EventBus, required=False)
+        if topic != "acapy::outbound::external_message":
+            event_bus = self.inject(EventBus, required=False)
+        else:
+            # External queues
+            event_bus = get_outbound_queue(self.context.settings)
         if event_bus:
             await event_bus.notify(self, Event(topic, payload))
 
