@@ -5,3 +5,8 @@ from ..core.event_bus import Event
 class OutboundMessageStatusEvent(Event):
     ''' Event for Outbound Message Status'''
     pass
+
+
+class InboundMessageStatusEvent(Event):
+    ''' Event for Outbound Message Status'''
+    pass
