@@ -60,6 +60,9 @@ class OutboundStatusEventPayload(NamedTuple):
     status: OutboundSendStatus
     outbound: OutboundMessage
 
+class InboundEventPayload(NamedTuple):
+    outbound: InboundMessage
+
 
 class Conductor:
     """
@@ -410,12 +413,17 @@ class Conductor:
         # if this pod is too busy to process it
 
         try:
-            self.dispatcher.queue_message(
-                profile,
-                message,
-                self.outbound_message_router,
-                lambda completed: self.dispatch_complete(message, completed),
-            )
+            event_bus = profile.inject(EventBus)
+            # TODO change things that actually consume OutboundSendStatus topic
+            # themselves be a event listener
+            # TODO remove OutboundSendStatus return from this method
+            with event_bus.wait_for_event(
+                    profile,
+                    re.compile("acapy::inbbound::status::.*"),
+                    lambda e: e.payload.inbound == message,
+            ) as status:
+                await profile.notify(topic="acapy::inbound::message", payload=message)
+                return (await asyncio.wait_for(status, 1)).payload.status
         except (LedgerConfigError, LedgerTransactionError) as e:
             LOGGER.error("Shutdown on ledger error %s", str(e))
             if self.admin_server:
