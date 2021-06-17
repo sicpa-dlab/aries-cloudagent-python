@@ -9,11 +9,9 @@ wallet.
 """
 
 import asyncio
-import re
 import hashlib
 import json
 import logging
-from typing import NamedTuple, cast
 
 from ..admin.base_server import BaseAdminServer
 from ..admin.server import AdminResponder, AdminServer
@@ -23,8 +21,9 @@ from ..config.ledger import get_genesis_transactions, ledger_config
 from ..config.logging import LoggingConfigurator
 from ..config.wallet import wallet_config
 from ..connections.models.conn_record import ConnRecord
-from ..core.event_bus import Event, EventBus
+from ..core.event_bus import EventBus
 from ..core.profile import Profile
+from ..core.transport_events import OutboundMessageEvent, OutboundStatusEvent
 from ..ledger.error import LedgerConfigError, LedgerTransactionError
 from ..messaging.responder import BaseResponder
 from ..multitenant.manager import MultitenantManager
@@ -54,11 +53,6 @@ from ..wallet.did_info import DIDInfo
 from .dispatcher import Dispatcher
 
 LOGGER = logging.getLogger(__name__)
-
-
-class OutboundStatusEventPayload(NamedTuple):
-    status: OutboundSendStatus
-    outbound: OutboundMessage
 
 
 class Conductor:
@@ -129,7 +123,7 @@ class Conductor:
         # Register Outbound Message Event Listener
         event_bus = context.inject(EventBus)
         event_bus.subscribe(
-            re.compile("acapy::outbound::message"),
+            OutboundMessageEvent.topic_re,
             self._outbound_message_event_listener,
         )
 
@@ -485,16 +479,16 @@ class Conductor:
         # TODO remove OutboundSendStatus return from this method
         with event_bus.wait_for_event(
             profile,
-            re.compile("acapy::outbound::status::.*"),
+            OutboundStatusEvent.topic_re,
             lambda e: e.payload.outbound == outbound,
         ) as status:
-            await profile.notify(topic="acapy::outbound::message", payload=outbound)
+            await event_bus.notify(profile, OutboundMessageEvent(outbound))
             return (await asyncio.wait_for(status, 1)).payload.status
 
     async def _outbound_message_event_listener(
         self,
         profile: Profile,
-        event: Event,
+        event: OutboundMessageEvent,
     ):
         """Handle outbound message event.
 
@@ -506,24 +500,20 @@ class Conductor:
             message: An outbound message to be sent
             inbound: The inbound message that produced this response, if available
         """
-        outbound = cast(OutboundMessage, event.payload)
+        event_bus = profile.inject(EventBus)
+        outbound = event.outbound
         if not outbound.target and outbound.reply_to_verkey:
             # return message to an inbound session
             if self.inbound_transport_manager.return_to_session(outbound):
-                await profile.notify(
-                    f"acapy::outbound::status::{OutboundSendStatus.SENT_TO_SESSION}",
-                    OutboundStatusEventPayload(
-                        OutboundSendStatus.SENT_TO_SESSION, outbound
-                    ),
+                await event_bus.notify(
+                    profile,
+                    OutboundStatusEvent(OutboundSendStatus.SENT_TO_SESSION, outbound),
                 )
                 return
 
         if not outbound.to_session_only:
             status = await self.queue_outbound(profile, outbound)
-            await profile.notify(
-                f"acapy::outbound::status::{status}",
-                OutboundStatusEventPayload(status, outbound),
-            )
+            await event_bus.notify(profile, OutboundStatusEvent(status, outbound))
 
     def handle_not_returned(self, profile: Profile, outbound: OutboundMessage):
         """Handle a message that failed delivery via an inbound session."""

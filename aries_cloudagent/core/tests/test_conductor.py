@@ -19,6 +19,7 @@ from ...core.event_bus import Event, EventBus, MockEventBus
 from ...core.in_memory import InMemoryProfileManager
 from ...core.profile import ProfileManager
 from ...core.protocol_registry import ProtocolRegistry
+from ...core.transport_events import OutboundMessageEvent, OutboundStatusEvent
 from ...protocols.coordinate_mediation.v1_0.models.mediation_record import (
     MediationRecord,
 )
@@ -287,12 +288,7 @@ class TestConductor(AsyncTestCase, Config, TestDIDs):
         receipt = MessageReceipt()
         receipt.recipient_verkey = test_from_verkey
         inbound = InboundMessage("[]", receipt)
-        status = Event(
-            "acapy::outbound::status" + OutboundSendStatus.QUEUED_FOR_DELIVERY.value,
-            test_module.OutboundStatusEventPayload(
-                OutboundSendStatus.QUEUED_FOR_DELIVERY, message
-            ),
-        )
+        status = OutboundStatusEvent(OutboundSendStatus.QUEUED_FOR_DELIVERY, message)
 
         mock_event_bus = conductor.context.inject(EventBus)
         mock_event_bus = cast(MockEventBus, mock_event_bus)
@@ -301,9 +297,9 @@ class TestConductor(AsyncTestCase, Config, TestDIDs):
             conductor.root_profile, message, inbound
         )
         assert mock_event_bus.events
-        assert mock_event_bus.events[0][1].topic == "acapy::outbound::message"
+        assert mock_event_bus.events[0][1].topic == OutboundMessageEvent.topic
         assert mock_event_bus.events[0][1].payload.reply_from_verkey == test_from_verkey
-        assert returned == status.payload.status
+        assert returned == status.status
 
     async def test_outbound_message_router_events(self):
         builder: ContextBuilder = StubContextBuilder(self.test_settings_admin)
@@ -312,12 +308,7 @@ class TestConductor(AsyncTestCase, Config, TestDIDs):
 
         payload = "{}"
         message = OutboundMessage(payload=payload)
-        status = Event(
-            "acapy::outbound::status" + OutboundSendStatus.QUEUED_FOR_DELIVERY.value,
-            test_module.OutboundStatusEventPayload(
-                OutboundSendStatus.QUEUED_FOR_DELIVERY, message
-            ),
-        )
+        status = OutboundStatusEvent(OutboundSendStatus.QUEUED_FOR_DELIVERY, message)
 
         mock_event_bus = conductor.context.inject(EventBus)
         mock_event_bus = cast(MockEventBus, mock_event_bus)
@@ -326,8 +317,8 @@ class TestConductor(AsyncTestCase, Config, TestDIDs):
             conductor.root_profile, message
         )
         assert mock_event_bus.events
-        assert mock_event_bus.events[0][1].topic == "acapy::outbound::message"
-        assert returned == status.payload.status
+        assert mock_event_bus.events[0][1].topic == OutboundMessageEvent.topic
+        assert returned == status.status
 
     async def test_outbound_message_event_listener_return_route(self):
         builder: ContextBuilder = StubContextBuilder(self.test_settings)
@@ -349,7 +340,7 @@ class TestConductor(AsyncTestCase, Config, TestDIDs):
         ) as mock_queue:
             mock_return.return_value = True
             await conductor._outbound_message_event_listener(
-                conductor.root_profile, Event("acapy::outbound::message", message)
+                conductor.root_profile, OutboundMessageEvent(message)
             )
             mock_return.assert_called_once_with(message)
             mock_queue.assert_not_awaited()
@@ -371,7 +362,7 @@ class TestConductor(AsyncTestCase, Config, TestDIDs):
             message = OutboundMessage(payload=payload, target=target)
 
             await conductor._outbound_message_event_listener(
-                conductor.root_profile, Event("acapy::outbound::message", message)
+                conductor.root_profile, OutboundMessageEvent(message)
             )
 
             mock_outbound_mgr.return_value.enqueue_message.assert_called_once_with(
@@ -395,7 +386,7 @@ class TestConductor(AsyncTestCase, Config, TestDIDs):
             message = OutboundMessage(payload=payload, connection_id=connection_id)
 
             await conductor._outbound_message_event_listener(
-                conductor.root_profile, Event("acapy::outbound::message", message)
+                conductor.root_profile, OutboundMessageEvent(message)
             )
 
             conn_mgr.return_value.get_connection_targets.assert_awaited_once_with(
@@ -429,7 +420,7 @@ class TestConductor(AsyncTestCase, Config, TestDIDs):
 
             await conductor._outbound_message_event_listener(
                 conductor.root_profile,
-                Event("acapy::outbound::message", message),
+                OutboundMessageEvent(message),
             )
 
             mock_outbound_mgr.return_value.enqueue_message.assert_called_once_with(
