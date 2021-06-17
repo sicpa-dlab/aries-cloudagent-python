@@ -52,8 +52,8 @@ class TestForwardHandler(AsyncTestCase):
             await handler.handle(self.context, responder)
 
             mock_notify.assert_called_once_with(
-                "acapy::forward::received",
-                {
+                topic="acapy::forward::received",
+                payload={
                     "connection_id": "dummy",
                     "status": "queued_for_delivery",
                     "recipient_key": "sample-did",

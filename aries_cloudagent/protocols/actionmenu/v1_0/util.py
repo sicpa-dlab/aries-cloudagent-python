@@ -54,8 +54,8 @@ async def save_connection_menu(
                 await storage.delete_record(record)
 
     await context.profile.notify(
-        "acapy::actionmenu::received",
-        {
+        topic="acapy::actionmenu::received",
+        payload={
             "connection_id": connection_id,
             "menu": menu.serialize() if menu else None,
         },

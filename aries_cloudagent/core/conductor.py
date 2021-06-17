@@ -500,20 +500,20 @@ class Conductor:
             message: An outbound message to be sent
             inbound: The inbound message that produced this response, if available
         """
-        event_bus = profile.inject(EventBus)
         outbound = event.outbound
         if not outbound.target and outbound.reply_to_verkey:
             # return message to an inbound session
             if self.inbound_transport_manager.return_to_session(outbound):
-                await event_bus.notify(
-                    profile,
-                    OutboundStatusEvent(OutboundSendStatus.SENT_TO_SESSION, outbound),
+                await profile.notify(
+                    event=OutboundStatusEvent(
+                        OutboundSendStatus.SENT_TO_SESSION, outbound
+                    ),
                 )
                 return
 
         if not outbound.to_session_only:
             status = await self.queue_outbound(profile, outbound)
-            await event_bus.notify(profile, OutboundStatusEvent(status, outbound))
+            await profile.notify(event=OutboundStatusEvent(status, outbound))
 
     def handle_not_returned(self, profile: Profile, outbound: OutboundMessage):
         """Handle a message that failed delivery via an inbound session."""

@@ -61,8 +61,8 @@ class ForwardHandler(BaseHandler):
 
         # emit event that a forward message is received (may trigger webhook event)
         await context.profile.notify(
-            "acapy::forward::received",
-            {
+            topic="acapy::forward::received",
+            payload={
                 "connection_id": recipient.connection_id,
                 "status": send_status.value,
                 "recipient_key": context.message.to,

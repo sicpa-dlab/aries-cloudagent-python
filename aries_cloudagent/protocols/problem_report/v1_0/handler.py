@@ -31,5 +31,5 @@ class ProblemReportHandler(BaseHandler):
         )
 
         await context.profile.notify(
-            "acapy::problem_report", context.message.serialize()
+            topic="acapy::problem_report", payload=context.message.serialize()
         )

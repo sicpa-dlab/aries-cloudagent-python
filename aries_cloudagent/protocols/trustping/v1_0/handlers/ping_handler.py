@@ -44,8 +44,8 @@ class PingHandler(BaseHandler):
 
         if context.settings.get("debug.monitor_ping"):
             await context.profile.notify(
-                "acapy::ping::received",
-                {
+                topic="acapy::ping::received",
+                payload={
                     "comment": context.message.comment,
                     "connection_id": context.message_receipt.connection_id,
                     "responded": context.message.response_requested,

@@ -5,7 +5,7 @@ import logging
 from abc import ABC, abstractmethod
 from typing import Any, Mapping, Optional, Type
 
-from .event_bus import EventBus, Event
+from .event_bus import BaseEvent, EventBus, Event
 from ..config.base import InjectionError
 from ..config.injector import BaseInjector, InjectType
 from ..config.injection_context import InjectionContext
@@ -100,11 +100,21 @@ class Profile(ABC):
     async def remove(self):
         """Remove the profile."""
 
-    async def notify(self, topic: str, payload: Any):
+    async def notify(
+        self, *, topic: str = None, payload: Any = None, event: BaseEvent = None
+    ):
         """Signal an event."""
+        if (topic or payload) and event:
+            raise ValueError("Topic and payload are mutually exclusive with event")
+
+        if not event:
+            if not topic:
+                raise ValueError("Either topic or event must be specified")
+            event = Event(topic, payload)
+
         event_bus = self.inject(EventBus, required=False)
         if event_bus:
-            await event_bus.notify(self, Event(topic, payload))
+            await event_bus.notify(self, event)
 
     def __repr__(self) -> str:
         """Get a human readable string."""

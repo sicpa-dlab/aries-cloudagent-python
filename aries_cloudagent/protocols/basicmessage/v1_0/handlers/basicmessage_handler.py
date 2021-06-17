@@ -45,7 +45,9 @@ class BasicMessageHandler(BaseHandler):
         if "l10n" in context.message._decorators:
             payload["locale"] = context.message._decorators["l10n"].locale
 
-        await context.profile.notify("acapy::basicmessage::received", payload)
+        await context.profile.notify(
+            topic="acapy::basicmessage::received", payload=payload
+        )
 
         reply = None
         if body:
