@@ -463,10 +463,6 @@ class Conductor:
             if m.state == QueuedOutboundMessage.STATE_DELIVER:
                 stats["out_deliver"] += 1
         return stats
-<<<<<<< HEAD
-
-    async def outbound_message_router(
-=======
 
     async def outbound_message_router(
         self,
@@ -485,7 +481,7 @@ class Conductor:
 
         event_bus = profile.inject(EventBus)
         # TODO change things that actually consume OutboundSendStatus topic
-        # themselves be a event listener
+        # themselves be event listeners
         # TODO remove OutboundSendStatus return from this method
         with event_bus.wait_for_event(
             profile,
