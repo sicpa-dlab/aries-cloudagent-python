@@ -14,6 +14,7 @@ from typing import (
     Optional,
     Pattern,
     TYPE_CHECKING,
+    Tuple,
 )
 
 if TYPE_CHECKING:  # To avoid circular import error
@@ -151,8 +152,30 @@ class MockEventBus(EventBus):
     def __init__(self):
         """Initialize MockEventBus."""
         super().__init__()
-        self.events = []
+        self.events: List[Tuple["Profile", Event]] = []
+        self._wait_for_event_return = None
 
     async def notify(self, profile: "Profile", event: Event):
         """Append the event to MockEventBus.events."""
         self.events.append((profile, event))
+
+    @property
+    def wait_for_event_return(self):
+        """Get return value of wait for event."""
+        return self._wait_for_event_return
+
+    @wait_for_event_return.setter
+    def wait_for_event_return(self, value):
+        """Set return value of wait for event"""
+        self._wait_for_event_return = value
+
+    @contextmanager
+    def wait_for_event(
+        self,
+        waiting_profile: "Profile",
+        pattern: Pattern,
+        cond: Optional[Callable[[Event], bool]],
+    ) -> Iterator[Awaitable[Event]]:
+        future = asyncio.get_event_loop().create_future()
+        future.set_result(self.wait_for_event_return)
+        yield future

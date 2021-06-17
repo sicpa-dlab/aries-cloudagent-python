@@ -1,4 +1,5 @@
 from io import StringIO
+from typing import cast
 
 from asynctest import TestCase as AsyncTestCase
 from asynctest import mock as async_mock
@@ -14,7 +15,7 @@ from ...connections.models.diddoc import (
     PublicKeyType,
     Service,
 )
-from ...core.event_bus import EventBus
+from ...core.event_bus import Event, EventBus, MockEventBus
 from ...core.in_memory import InMemoryProfileManager
 from ...core.profile import ProfileManager
 from ...core.protocol_registry import ProtocolRegistry
@@ -28,6 +29,7 @@ from ...transport.inbound.receipt import MessageReceipt
 from ...transport.outbound.base import OutboundDeliveryError
 from ...transport.outbound.manager import QueuedOutboundMessage
 from ...transport.outbound.message import OutboundMessage
+from ...transport.outbound.status import OutboundSendStatus
 from ...transport.wire_format import BaseWireFormat
 from ...transport.pack_format import PackWireFormat
 from ...utils.stats import Collector
@@ -85,7 +87,7 @@ class StubContextBuilder(ContextBuilder):
         context.injector.bind_instance(ProtocolRegistry, ProtocolRegistry())
         context.injector.bind_instance(BaseWireFormat, self.wire_format)
         context.injector.bind_instance(DIDResolver, DIDResolver(DIDResolverRegistry()))
-        context.injector.bind_instance(EventBus, EventBus())
+        context.injector.bind_instance(EventBus, MockEventBus())
         return context
 
 
@@ -271,7 +273,63 @@ class TestConductor(AsyncTestCase, Config, TestDIDs):
             mock_dispatch_q.assert_called_once()
             mock_notify.assert_called_once()
 
-    async def test_outbound_message_handler_return_route(self):
+    async def test_outbound_message_router_events_inbound_assign_reply_from_verkey(
+        self,
+    ):
+        builder: ContextBuilder = StubContextBuilder(self.test_settings_admin)
+        conductor = test_module.Conductor(builder)
+        await conductor.setup()
+
+        test_to_verkey = "test-to-verkey"
+        test_from_verkey = "test-from-verkey"
+        payload = "{}"
+        message = OutboundMessage(payload=payload, reply_to_verkey=test_to_verkey)
+        receipt = MessageReceipt()
+        receipt.recipient_verkey = test_from_verkey
+        inbound = InboundMessage("[]", receipt)
+        status = Event(
+            "acapy::outbound::status" + OutboundSendStatus.QUEUED_FOR_DELIVERY.value,
+            test_module.OutboundStatusEventPayload(
+                OutboundSendStatus.QUEUED_FOR_DELIVERY, message
+            ),
+        )
+
+        mock_event_bus = conductor.context.inject(EventBus)
+        mock_event_bus = cast(MockEventBus, mock_event_bus)
+        mock_event_bus.wait_for_event_return = status
+        returned = await conductor.outbound_message_router(
+            conductor.root_profile, message, inbound
+        )
+        assert mock_event_bus.events
+        assert mock_event_bus.events[0][1].topic == "acapy::outbound::message"
+        assert mock_event_bus.events[0][1].payload.reply_from_verkey == test_from_verkey
+        assert returned == status.payload.status
+
+    async def test_outbound_message_router_events(self):
+        builder: ContextBuilder = StubContextBuilder(self.test_settings_admin)
+        conductor = test_module.Conductor(builder)
+        await conductor.setup()
+
+        payload = "{}"
+        message = OutboundMessage(payload=payload)
+        status = Event(
+            "acapy::outbound::status" + OutboundSendStatus.QUEUED_FOR_DELIVERY.value,
+            test_module.OutboundStatusEventPayload(
+                OutboundSendStatus.QUEUED_FOR_DELIVERY, message
+            ),
+        )
+
+        mock_event_bus = conductor.context.inject(EventBus)
+        mock_event_bus = cast(MockEventBus, mock_event_bus)
+        mock_event_bus.wait_for_event_return = status
+        returned = await conductor.outbound_message_router(
+            conductor.root_profile, message
+        )
+        assert mock_event_bus.events
+        assert mock_event_bus.events[0][1].topic == "acapy::outbound::message"
+        assert returned == status.payload.status
+
+    async def test_outbound_message_event_listener_return_route(self):
         builder: ContextBuilder = StubContextBuilder(self.test_settings)
         conductor = test_module.Conductor(builder)
         test_to_verkey = "test-to-verkey"
@@ -282,9 +340,7 @@ class TestConductor(AsyncTestCase, Config, TestDIDs):
         payload = "{}"
         message = OutboundMessage(payload=payload)
         message.reply_to_verkey = test_to_verkey
-        receipt = MessageReceipt()
-        receipt.recipient_verkey = test_from_verkey
-        inbound = InboundMessage("[]", receipt)
+        message.reply_from_verkey = test_from_verkey
 
         with async_mock.patch.object(
             conductor.inbound_transport_manager, "return_to_session"
@@ -292,11 +348,13 @@ class TestConductor(AsyncTestCase, Config, TestDIDs):
             conductor, "queue_outbound", async_mock.CoroutineMock()
         ) as mock_queue:
             mock_return.return_value = True
-            await conductor.outbound_message_router(conductor.context, message)
+            await conductor._outbound_message_event_listener(
+                conductor.root_profile, Event("acapy::outbound::message", message)
+            )
             mock_return.assert_called_once_with(message)
             mock_queue.assert_not_awaited()
 
-    async def test_outbound_message_handler_with_target(self):
+    async def test_outbound_message_listener_with_target(self):
         builder: ContextBuilder = StubContextBuilder(self.test_settings)
         conductor = test_module.Conductor(builder)
 
@@ -312,13 +370,15 @@ class TestConductor(AsyncTestCase, Config, TestDIDs):
             )
             message = OutboundMessage(payload=payload, target=target)
 
-            await conductor.outbound_message_router(conductor.context, message)
-
-            mock_outbound_mgr.return_value.enqueue_message.assert_called_once_with(
-                conductor.context, message
+            await conductor._outbound_message_event_listener(
+                conductor.root_profile, Event("acapy::outbound::message", message)
             )
 
-    async def test_outbound_message_handler_with_connection(self):
+            mock_outbound_mgr.return_value.enqueue_message.assert_called_once_with(
+                conductor.root_profile, message
+            )
+
+    async def test_outbound_message_listener_with_connection(self):
         builder: ContextBuilder = StubContextBuilder(self.test_settings)
         conductor = test_module.Conductor(builder)
 
@@ -334,7 +394,9 @@ class TestConductor(AsyncTestCase, Config, TestDIDs):
             connection_id = "connection_id"
             message = OutboundMessage(payload=payload, connection_id=connection_id)
 
-            await conductor.outbound_message_router(conductor.root_profile, message)
+            await conductor._outbound_message_event_listener(
+                conductor.root_profile, Event("acapy::outbound::message", message)
+            )
 
             conn_mgr.return_value.get_connection_targets.assert_awaited_once_with(
                 connection_id=connection_id
@@ -360,19 +422,18 @@ class TestConductor(AsyncTestCase, Config, TestDIDs):
 
             payload = "{}"
             message = OutboundMessage(
-                payload=payload, reply_to_verkey=TestDIDs.test_verkey
+                payload=payload,
+                reply_to_verkey=TestDIDs.test_verkey,
+                reply_from_verkey=TestDIDs.test_verkey,
             )
 
-            await conductor.outbound_message_router(
-                conductor.context,
-                message,
-                inbound=async_mock.MagicMock(
-                    receipt=async_mock.MagicMock(recipient_verkey=TestDIDs.test_verkey)
-                ),
+            await conductor._outbound_message_event_listener(
+                conductor.root_profile,
+                Event("acapy::outbound::message", message),
             )
 
             mock_outbound_mgr.return_value.enqueue_message.assert_called_once_with(
-                conductor.context, message
+                conductor.root_profile, message
             )
 
     async def test_handle_nots(self):

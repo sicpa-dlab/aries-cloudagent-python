@@ -13,7 +13,7 @@ import re
 import hashlib
 import json
 import logging
-from typing import NamedTuple
+from typing import NamedTuple, cast
 
 from ..admin.base_server import BaseAdminServer
 from ..admin.server import AdminResponder, AdminServer
@@ -23,7 +23,7 @@ from ..config.ledger import get_genesis_transactions, ledger_config
 from ..config.logging import LoggingConfigurator
 from ..config.wallet import wallet_config
 from ..connections.models.conn_record import ConnRecord
-from ..core.event_bus import EventBus
+from ..core.event_bus import Event, EventBus
 from ..core.profile import Profile
 from ..ledger.error import LedgerConfigError, LedgerTransactionError
 from ..messaging.responder import BaseResponder
@@ -494,7 +494,7 @@ class Conductor:
     async def _outbound_message_event_listener(
         self,
         profile: Profile,
-        outbound: OutboundMessage,
+        event: Event,
     ):
         """Handle outbound message event.
 
@@ -506,6 +506,7 @@ class Conductor:
             message: An outbound message to be sent
             inbound: The inbound message that produced this response, if available
         """
+        outbound = cast(OutboundMessage, event.payload)
         if not outbound.target and outbound.reply_to_verkey:
             # return message to an inbound session
             if self.inbound_transport_manager.return_to_session(outbound):
