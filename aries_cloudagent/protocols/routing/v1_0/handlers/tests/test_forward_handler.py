@@ -2,11 +2,15 @@ from asynctest import TestCase as AsyncTestCase
 from asynctest import mock as async_mock
 import json
 
+from ......core.transport_events import OutboundStatusEvent
+from ......core.event_bus import EventBus, MockEventBus
 from ......connections.models.connection_target import ConnectionTarget
 from ......messaging.base_handler import HandlerException
 from ......messaging.request_context import RequestContext
 from ......messaging.responder import MockResponder
 from ......transport.inbound.receipt import MessageReceipt
+from ......transport.outbound.message import OutboundMessage
+from ......transport.outbound.status import OutboundSendStatus
 
 from ...models.route_record import RouteRecord
 from ...messages.forward import Forward
@@ -21,7 +25,10 @@ TEST_ROUTE_VERKEY = "9WCgWKUaAJj3VWxxtzvvMQN3AoFxoBtBDo9ntwJnVVCC"
 class TestForwardHandler(AsyncTestCase):
     async def setUp(self):
         self.context = RequestContext.test_context()
+        self.event_bus = MockEventBus()
+        self.context.injector.bind_instance(EventBus, self.event_bus)
         self.context.connection_ready = True
+        self.payload = {"msg": "sample-message"}
         self.context.message = Forward(to="sample-did", msg={"msg": "sample-message"})
 
     async def test_handle(self):
@@ -47,6 +54,10 @@ class TestForwardHandler(AsyncTestCase):
                         )
                     ]
                 )
+            )
+            self.event_bus.wait_for_event_return = OutboundStatusEvent(
+                OutboundSendStatus.QUEUED_FOR_DELIVERY,
+                OutboundMessage(payload=self.payload),
             )
 
             await handler.handle(self.context, responder)

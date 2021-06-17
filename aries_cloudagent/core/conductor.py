@@ -8,7 +8,6 @@ wallet.
 
 """
 
-import asyncio
 import hashlib
 import json
 import logging
@@ -463,7 +462,7 @@ class Conductor:
         profile: Profile,
         outbound: OutboundMessage,
         inbound: InboundMessage = None,
-    ) -> OutboundSendStatus:
+    ):
         """Emit outbound message event and return outbound send status."""
         if (
             not outbound.target
@@ -473,17 +472,7 @@ class Conductor:
         ):
             outbound.reply_from_verkey = inbound.receipt.recipient_verkey
 
-        event_bus = profile.inject(EventBus)
-        # TODO change things that actually consume OutboundSendStatus topic
-        # themselves be event listeners
-        # TODO remove OutboundSendStatus return from this method
-        with event_bus.wait_for_event(
-            profile,
-            OutboundStatusEvent.topic_re,
-            lambda e: e.payload.outbound == outbound,
-        ) as status:
-            await event_bus.notify(profile, OutboundMessageEvent(outbound))
-            return (await asyncio.wait_for(status, 1)).payload.status
+        await profile.notify(event=OutboundMessageEvent(outbound))
 
     async def _outbound_message_event_listener(
         self,

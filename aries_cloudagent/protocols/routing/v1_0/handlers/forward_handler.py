@@ -1,7 +1,10 @@
 """Handler for incoming forward messages."""
 
+import asyncio
 import json
 
+from .....core.event_bus import EventBus
+from .....core.transport_events import OutboundStatusEvent
 from .....messaging.base_handler import (
     BaseHandler,
     BaseResponder,
@@ -52,12 +55,19 @@ class ForwardHandler(BaseHandler):
             f"Forwarding message to connection: {recipient.connection_id}"
         )
 
-        send_status = await responder.send(
-            packed,
-            connection_id=recipient.connection_id,
-            target_list=connection_targets,
-            reply_to_verkey=connection_verkey,
-        )
+        event_bus = context.inject(EventBus)
+        with event_bus.wait_for_event(
+            context.profile,
+            OutboundStatusEvent.topic_re,
+            lambda e: e.outbound.payload == packed,
+        ) as future_send_status:
+            await responder.send(
+                packed,
+                connection_id=recipient.connection_id,
+                target_list=connection_targets,
+                reply_to_verkey=connection_verkey,
+            )
+            send_status = (await asyncio.wait_for(future_send_status, 1)).payload.status
 
         # emit event that a forward message is received (may trigger webhook event)
         await context.profile.notify(
