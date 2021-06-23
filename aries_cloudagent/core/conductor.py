@@ -50,6 +50,7 @@ from ..utils.task_queue import CompletedTask, TaskQueue
 from ..vc.ld_proofs.document_loader import DocumentLoader
 from ..wallet.did_info import DIDInfo
 from .dispatcher import Dispatcher
+from ..DefaultMessageDelivery.OutboundMessageEmitter import OutboundMessageRouter
 
 LOGGER = logging.getLogger(__name__)
 
@@ -75,11 +76,8 @@ class Conductor:
         self.admin_server = None
         self.context_builder = context_builder
         self.dispatcher: Dispatcher = None
-        self.inbound_transport_manager: InboundTransportManager = None
-        self.outbound_transport_manager: OutboundTransportManager = None
         self.root_profile: Profile = None
         self.setup_public_did: DIDInfo = None
-        self.outbound_queue: BaseOutboundQueue = None
 
     @property
     def context(self) -> InjectionContext:
@@ -105,27 +103,22 @@ class Conductor:
             LOGGER.warning("No ledger configured")
 
         # Register all inbound transports
-        self.inbound_transport_manager = InboundTransportManager(
+        inbound_transport_manager = InboundTransportManager(
             self.root_profile, self.inbound_message_router, self.handle_not_returned
         )
-        await self.inbound_transport_manager.setup()
+        await inbound_transport_manager.setup()
         context.injector.bind_instance(
-            InboundTransportManager, self.inbound_transport_manager
+            InboundTransportManager, inbound_transport_manager
         )
 
         # Register all outbound transports
-        self.outbound_transport_manager = OutboundTransportManager(
+        outbound_transport_manager = OutboundTransportManager(
             context, self.handle_not_delivered
         )
-        await self.outbound_transport_manager.setup()
-
-        # Register Outbound Message Event Listener
-        event_bus = context.inject(EventBus)
-        event_bus.subscribe(
-            OutboundMessageEvent.topic_re,
-            self._outbound_message_event_listener,
+        await outbound_transport_manager.setup()
+        context.injector.bind_instance(
+            OutboundTransportManager, outbound_transport_manager
         )
-
         # Initialize dispatcher
         self.dispatcher = Dispatcher(self.root_profile)
         await self.dispatcher.setup()
@@ -144,7 +137,8 @@ class Conductor:
             DocumentLoader, DocumentLoader(self.root_profile)
         )
 
-        self.outbound_queue = get_outbound_queue(context.settings)
+        outbound_queue = get_outbound_queue(context.settings)
+        context.injector.bind_instance(BaseOutboundQueue, outbound_queue)
 
         # Admin API
         if context.settings.get("admin.enabled"):
@@ -156,7 +150,7 @@ class Conductor:
                     admin_port,
                     context,
                     self.root_profile,
-                    self.outbound_message_router,
+                    OutboundMessageRouter.outbound_message_router,
                     self.webhook_router,
                     self.stop,
                     self.dispatcher.task_queue,
@@ -193,15 +187,21 @@ class Conductor:
         """Start the agent."""
 
         context = self.root_profile.context
-
+        inbound_transport_manager = context.inject(
+            InboundTransportManager, required=False
+        )
+        outbound_transport_manager = context.inject(
+            OutboundTransportManager, required=False
+        )
+        outbound_queue = context.inject(BaseOutboundQueue, required=False)
         # Start up transports
         try:
-            await self.inbound_transport_manager.start()
+            await inbound_transport_manager.start()
         except Exception:
             LOGGER.exception("Unable to start inbound transports")
             raise
         try:
-            await self.outbound_transport_manager.start()
+            await outbound_transport_manager.start()
         except Exception:
             LOGGER.exception("Unable to start outbound transports")
             raise
@@ -227,9 +227,9 @@ class Conductor:
         # Show some details about the configuration to the user
         LoggingConfigurator.print_banner(
             default_label,
-            self.inbound_transport_manager.registered_transports,
-            self.outbound_transport_manager.registered_transports,
-            self.outbound_queue,
+            inbound_transport_manager.registered_transports,
+            outbound_transport_manager.registered_transports,
+            outbound_queue,
             self.setup_public_did and self.setup_public_did.did,
             self.admin_server,
         )
@@ -356,15 +356,22 @@ class Conductor:
 
     async def stop(self, timeout=1.0):
         """Stop the agent."""
+        context = self.root_profile.context
+        inbound_transport_manager = context.inject(
+            InboundTransportManager, required=False
+        )
+        outbound_transport_manager = context.inject(
+            OutboundTransportManager, required=False
+        )
         shutdown = TaskQueue()
         if self.dispatcher:
             shutdown.run(self.dispatcher.complete())
         if self.admin_server:
             shutdown.run(self.admin_server.stop())
-        if self.inbound_transport_manager:
-            shutdown.run(self.inbound_transport_manager.stop())
-        if self.outbound_transport_manager:
-            shutdown.run(self.outbound_transport_manager.stop())
+        if inbound_transport_manager:
+            shutdown.run(inbound_transport_manager.stop())
+        if outbound_transport_manager:
+            shutdown.run(outbound_transport_manager.stop())
 
         # close multitenant profiles
         multitenant_mgr = self.context.inject(MultitenantManager, required=False)
@@ -406,7 +413,7 @@ class Conductor:
             self.dispatcher.queue_message(
                 profile,
                 message,
-                self.outbound_message_router,
+                OutboundMessageRouter.outbound_message_router,
                 lambda completed: self.dispatch_complete(message, completed),
             )
         except (LedgerConfigError, LedgerTransactionError) as e:
@@ -421,8 +428,8 @@ class Conductor:
             LOGGER.exception(
                 "Exception in message handler:", exc_info=completed.exc_info
             )
-            if isinstance(completed.exc_info[1], LedgerConfigError) or isinstance(
-                completed.exc_info[1], LedgerTransactionError
+            if isinstance(
+                completed.exc_info[1], (LedgerConfigError, LedgerTransactionError)
             ):
                 LOGGER.error(
                     "%shutdown on ledger error %s",
@@ -437,12 +444,22 @@ class Conductor:
                     completed.exc_info[0].__name__,
                     str(completed.exc_info[1]),
                 )
-        self.inbound_transport_manager.dispatch_complete(message, completed)
+        inbound_transport_manager = self.root_profile.context.inject(
+            InboundTransportManager, required=False
+        )
+        inbound_transport_manager.dispatch_complete(message, completed)
 
     async def get_stats(self) -> dict:
         """Get the current stats tracked by the conductor."""
+        context = self.root_profile.context
+        inbound_transport_manager = context.inject(
+            InboundTransportManager, required=False
+        )
+        outbound_transport_manager = context.inject(
+            OutboundTransportManager, required=False
+        )
         stats = {
-            "in_sessions": len(self.inbound_transport_manager.sessions),
+            "in_sessions": len(inbound_transport_manager.sessions),
             "out_encode": 0,
             "out_deliver": 0,
             "task_active": self.dispatcher.task_queue.current_active,
@@ -450,59 +467,12 @@ class Conductor:
             "task_failed": self.dispatcher.task_queue.total_failed,
             "task_pending": self.dispatcher.task_queue.current_pending,
         }
-        for m in self.outbound_transport_manager.outbound_buffer:
+        for m in outbound_transport_manager.outbound_buffer:
             if m.state == QueuedOutboundMessage.STATE_ENCODE:
                 stats["out_encode"] += 1
             if m.state == QueuedOutboundMessage.STATE_DELIVER:
                 stats["out_deliver"] += 1
         return stats
-
-    async def outbound_message_router(
-        self,
-        profile: Profile,
-        outbound: OutboundMessage,
-        inbound: InboundMessage = None,
-    ):
-        """Emit outbound message event and return outbound send status."""
-        if (
-            not outbound.target
-            and outbound.reply_to_verkey
-            and not outbound.reply_from_verkey
-            and inbound
-        ):
-            outbound.reply_from_verkey = inbound.receipt.recipient_verkey
-
-        await profile.notify(event=OutboundMessageEvent(outbound))
-
-    async def _outbound_message_event_listener(
-        self,
-        profile: Profile,
-        event: OutboundMessageEvent,
-    ):
-        """Handle outbound message event.
-
-        Listens for outbound message events, processes them, and emits outbound
-        send status.
-
-        Args:
-            profile: The active profile for the request
-            message: An outbound message to be sent
-            inbound: The inbound message that produced this response, if available
-        """
-        outbound = event.outbound
-        if not outbound.target and outbound.reply_to_verkey:
-            # return message to an inbound session
-            if self.inbound_transport_manager.return_to_session(outbound):
-                await profile.notify(
-                    event=OutboundStatusEvent(
-                        OutboundSendStatus.SENT_TO_SESSION, outbound
-                    ),
-                )
-                return
-
-        if not outbound.to_session_only:
-            status = await self.queue_outbound(profile, outbound)
-            await profile.notify(event=OutboundStatusEvent(status, outbound))
 
     def handle_not_returned(self, profile: Profile, outbound: OutboundMessage):
         """Handle a message that failed delivery via an inbound session."""
@@ -554,7 +524,10 @@ class Conductor:
         # queue. Else save the message to an internal queue. This
         # internal queue usually results in the message to be sent over
         # ACA-py `-ot` transport.
-        if self.outbound_queue:
+        outbound_queue = self.root_profile.context.inject(
+            BaseOutboundQueue, required=False
+        )
+        if outbound_queue:
             return await self._queue_external(profile, outbound)
         else:
             return self._queue_internal(profile, outbound)
@@ -565,14 +538,15 @@ class Conductor:
         outbound: OutboundMessage,
     ) -> OutboundSendStatus:
         """Save the message to an external outbound queue."""
-        async with self.outbound_queue:
+        outbound_queue = self.root_profile.context.inject(
+            BaseOutboundQueue, required=False
+        )
+        async with outbound_queue:
             targets = (
                 [outbound.target] if outbound.target else (outbound.target_list or [])
             )
             for target in targets:
-                await self.outbound_queue.enqueue_message(
-                    outbound.payload, target.endpoint
-                )
+                await outbound_queue.enqueue_message(outbound.payload, target.endpoint)
 
             return OutboundSendStatus.SENT_TO_EXTERNAL_QUEUE
 
@@ -581,7 +555,10 @@ class Conductor:
     ) -> OutboundSendStatus:
         """Save the message to an internal outbound queue."""
         try:
-            self.outbound_transport_manager.enqueue_message(profile, outbound)
+            outbound_transport_manager = self.root_profile.context.inject(
+                OutboundTransportManager, required=False
+            )
+            outbound_transport_manager.enqueue_message(profile, outbound)
             return OutboundSendStatus.QUEUED_FOR_DELIVERY
         except OutboundDeliveryError:
             LOGGER.warning("Cannot queue message for delivery, no supported transport")
@@ -591,7 +568,10 @@ class Conductor:
         self, profile: Profile, outbound: OutboundMessage
     ) -> OutboundSendStatus:
         """Handle a message that failed delivery via outbound transports."""
-        queued_for_inbound = self.inbound_transport_manager.return_undelivered(outbound)
+        inbound_transport_manager = self.root_profile.context.inject(
+            InboundTransportManager, required=False
+        )
+        queued_for_inbound = inbound_transport_manager.return_undelivered(outbound)
 
         return (
             OutboundSendStatus.WAITING_FOR_PICKUP
@@ -618,7 +598,10 @@ class Conductor:
             metadata: Additional metadata associated with the payload
         """
         try:
-            self.outbound_transport_manager.enqueue_webhook(
+            outbound_transport_manager = self.root_profile.context.inject(
+                OutboundTransportManager, required=False
+            )
+            outbound_transport_manager.enqueue_webhook(
                 topic, payload, endpoint, max_attempts, metadata
             )
         except OutboundDeliveryError:
