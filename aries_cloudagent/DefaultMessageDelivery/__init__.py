@@ -14,10 +14,6 @@ topics = {
 
 async def setup(context: InjectionContext):
     ''' subscribe listeners to topics'''
-    try:
-        event_bus = context.inject(EventBus, required=False)
-        for topic, listener in topics:
-            event_bus.subscribe(topic, listener)
-    except Exception:
-        LOGGER.exception("Unable to register Default Message Delivery plugin")
-        raise
+    event_bus = context.inject(EventBus, required=False)
+    for topic, listener in topics:
+        event_bus.subscribe(topic, listener)
