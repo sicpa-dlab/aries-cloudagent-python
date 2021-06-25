@@ -422,6 +422,23 @@ class Conductor:
                 self.admin_server.notify_fatal_error()
             raise
 
+    async def outbound_message_router(
+        self,
+        profile: Profile,
+        outbound: OutboundMessage,
+        inbound: InboundMessage = None,
+    ):
+        """Emit outbound message event."""
+        if (
+            not outbound.target
+            and outbound.reply_to_verkey
+            and not outbound.reply_from_verkey
+            and inbound
+        ):
+            outbound.reply_from_verkey = inbound.receipt.recipient_verkey
+
+        await profile.notify(event=OutboundMessageEvent(outbound))
+
     def dispatch_complete(self, message: InboundMessage, completed: CompletedTask):
         """Handle completion of message dispatch."""
         if completed.exc_info:

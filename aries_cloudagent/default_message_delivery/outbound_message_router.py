@@ -17,23 +17,6 @@ class OutboundMessageRouter:
     def __init__(self):
         pass
 
-    async def outbound_message_router(
-        self,
-        profile: Profile,
-        outbound: OutboundMessage,
-        inbound: InboundMessage = None,
-    ):
-        """Emit outbound message event."""
-        if (
-            not outbound.target
-            and outbound.reply_to_verkey
-            and not outbound.reply_from_verkey
-            and inbound
-        ):
-            outbound.reply_from_verkey = inbound.receipt.recipient_verkey
-
-        await profile.notify(event=OutboundMessageEvent(outbound))
-
     async def outbound_message_event_listener(
         self,
         profile: Profile,
