@@ -1,7 +1,9 @@
 from aries_cloudagent.core.profile import Profile
-from aries_cloudagent.core.transport_events import (OutboundMessage,
-                                                    OutboundMessageEvent,
-                                                    OutboundStatusEvent)
+from aries_cloudagent.core.transport_events import (
+    OutboundMessage,
+    OutboundMessageEvent,
+    OutboundStatusEvent,
+)
 from aries_cloudagent.transport.inbound.manager import InboundTransportManager
 from aries_cloudagent.transport.inbound.message import InboundMessage
 from aries_cloudagent.transport.outbound.status import OutboundSendStatus
