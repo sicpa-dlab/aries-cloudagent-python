@@ -529,7 +529,7 @@ class Conductor:
                     LOGGER.exception(
                         "Error preparing outbound message for transmission"
                     )
-                    return
+                    return OutboundSendStatus.UNDELIVERABLE
                 except (LedgerConfigError, LedgerTransactionError) as e:
                     LOGGER.error("Shutdown on ledger error %s", str(e))
                     if self.admin_server:
@@ -581,20 +581,7 @@ class Conductor:
             LOGGER.warning("Cannot queue message for delivery, no supported transport")
             return self.handle_not_delivered(profile, outbound)
 
-    def handle_not_delivered(
-        self, profile: Profile, outbound: OutboundMessage
-    ) -> OutboundSendStatus:
-        """Handle a message that failed delivery via outbound transports."""
-        inbound_transport_manager = self.root_profile.context.inject(
-            InboundTransportManager, required=False
-        )
-        queued_for_inbound = inbound_transport_manager.return_undelivered(outbound)
-
-        return (
-            OutboundSendStatus.WAITING_FOR_PICKUP
-            if queued_for_inbound
-            else OutboundSendStatus.UNDELIVERABLE
-        )
+    
 
     def webhook_router(
         self,

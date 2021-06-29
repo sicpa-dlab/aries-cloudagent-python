@@ -50,3 +50,18 @@ class OutboundMessageRouter:
             queue_outbound = profile.inject(BaseOutboundQueue, required=False)
             status = await queue_outbound(profile, outbound)
             await profile.notify(event=OutboundStatusEvent(status, outbound))
+
+    def handle_not_delivered(
+        self, profile: Profile, outbound: OutboundMessage
+    ) -> OutboundSendStatus:
+        """Handle a message that failed delivery via outbound transports."""
+        inbound_transport_manager = profile.inject(
+            InboundTransportManager, required=False
+        )
+        queued_for_inbound = inbound_transport_manager.return_undelivered(outbound)
+
+        return (
+            OutboundSendStatus.WAITING_FOR_PICKUP
+            if queued_for_inbound
+            else OutboundSendStatus.UNDELIVERABLE
+        )
