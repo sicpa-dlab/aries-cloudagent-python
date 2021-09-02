@@ -302,18 +302,22 @@ class AdminServer(BaseAdminServer):
                 authorization_header = request.headers.get("Authorization")
                 path = request.path
 
-                is_multitenancy_path = path.startswith("/multitenancy")
+                authorized_fragments = ["/multitenancy", "/mediation", "/connections"]
+                is_authorized_path = any(
+                    path.startswith(authorized_fragment)
+                    for authorized_fragment in authorized_fragments
+                )
                 is_server_path = path in self.server_paths or path == "/features"
 
                 # subwallets are not allowed to access multitenancy routes
-                if authorization_header and is_multitenancy_path:
+                if authorization_header and is_authorized_path:
                     raise web.HTTPUnauthorized()
 
                 # base wallet is not allowed to perform ssi related actions.
                 # Only multitenancy and general server actions
                 if (
                     not authorization_header
-                    and not is_multitenancy_path
+                    and not is_authorized_path
                     and not is_server_path
                     and not is_unprotected_path(path)
                 ):
