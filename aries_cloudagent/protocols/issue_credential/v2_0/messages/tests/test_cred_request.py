@@ -1,12 +1,12 @@
-from asynctest import mock as async_mock, TestCase as AsyncTestCase
+from asynctest import TestCase as AsyncTestCase
 
 from ......messaging.decorators.attach_decorator import AttachDecorator
+from ......messaging.models.base import BaseModelError
 
 from .....didcomm_prefix import DIDCommPrefix
 
-from ...message_types import CRED_20_REQUEST
+from ...message_types import ATTACHMENT_FORMAT, CRED_20_REQUEST
 
-from .. import cred_request as test_module
 from ..cred_format import V20CredFormat
 from ..cred_request import V20CredRequest
 
@@ -34,76 +34,107 @@ class TestV20CredRequest(AsyncTestCase):
         },
     }
 
-    dif_cred_req = {
-        "credential-manifest": {
-            "issuer": "did:example:123",
-            "credential": {
-                "name": "Banana sticker",
-                "schema": "...",
-            },
-        }
+    ld_proof_cred_req = {
+        "credential": {
+            "@context": [
+                "https://www.w3.org/2018/credentials/v1",
+                "https://www.w3.org/2018/credentials/examples/v1",
+            ],
+            "type": ["VerifiableCredential", "UniversityDegreeCredential"],
+            "credentialSubject": {"test": "key"},
+            "issuanceDate": "2021-04-12",
+            "issuer": "did:sov:something",
+        },
+        "options": {"proofType": "Ed25519Signature2018"},
     }
+
+    CRED_REQUEST = V20CredRequest(
+        comment="Test",
+        formats=[
+            V20CredFormat(
+                attach_id="indy",
+                format_=ATTACHMENT_FORMAT[CRED_20_REQUEST][
+                    V20CredFormat.Format.INDY.api
+                ],
+            )
+        ],
+        requests_attach=[
+            AttachDecorator.data_base64(
+                ident="indy",
+                mapping=indy_cred_req,
+            )
+        ],
+    )
 
     async def test_init_type(self):
         """Test initializer and type."""
-        cred_request = V20CredRequest(
-            comment="Test",
-            formats=[
-                V20CredFormat(
-                    attach_id="abc",
-                    format_=V20CredFormat.Format.INDY,
-                )
-            ],
-            requests_attach=[
-                AttachDecorator.data_base64(
-                    mapping=TestV20CredRequest.indy_cred_req,
-                    ident="abc",
-                )
-            ],
+        assert (
+            TestV20CredRequest.CRED_REQUEST.requests_attach[0].content
+            == TestV20CredRequest.indy_cred_req
         )
         assert (
-            cred_request.requests_attach[0].content == TestV20CredRequest.indy_cred_req
+            TestV20CredRequest.CRED_REQUEST.attachment()
+            == TestV20CredRequest.indy_cred_req
         )
-        assert cred_request.cred_request() == TestV20CredRequest.indy_cred_req
-        assert cred_request._type == DIDCommPrefix.qualify_current(CRED_20_REQUEST)
+        assert TestV20CredRequest.CRED_REQUEST._type == DIDCommPrefix.qualify_current(
+            CRED_20_REQUEST
+        )
 
-    async def test_deserialize(self):
-        """Test deserialization."""
-        obj = TestV20CredRequest.indy_cred_req
+    async def test_attachment_no_target_format(self):
+        """Test attachment behaviour for only unknown formats."""
 
-        with async_mock.patch.object(
-            test_module.V20CredRequestSchema, "load", async_mock.MagicMock()
-        ) as mock_load:
-            cred_request = V20CredRequest.deserialize(obj)
-            mock_load.assert_called_once_with(obj)
-
-            assert cred_request is mock_load.return_value
-
-    async def test_serialize(self):
-        """Test serialization."""
-        cred_request = V20CredRequest(
+        x_cred_req = V20CredRequest(
             comment="Test",
-            formats=[
-                V20CredFormat(
-                    attach_id="abc",
-                    format_=V20CredFormat.Format.INDY,
-                )
-            ],
+            formats=[V20CredFormat(attach_id="not_indy", format_="not_indy")],
             requests_attach=[
                 AttachDecorator.data_base64(
-                    ident="abc",
+                    ident="not_indy",
                     mapping=TestV20CredRequest.indy_cred_req,
                 )
             ],
         )
+        assert x_cred_req.attachment() is None
 
-        with async_mock.patch.object(
-            test_module.V20CredRequestSchema, "dump", async_mock.MagicMock()
-        ) as mock_dump:
-            cred_request_dict = cred_request.serialize()
-            mock_dump.assert_called_once_with(cred_request)
+    async def test_serde(self):
+        """Test de/serialization."""
+        obj = TestV20CredRequest.CRED_REQUEST.serialize()
 
-            assert cred_request_dict is mock_dump.return_value
+        cred_request = V20CredRequest.deserialize(obj)
+        assert type(cred_request) == V20CredRequest
+
+        obj["requests~attach"][0]["data"]["base64"] = "eyJub3QiOiAiaW5keSJ9"
+        with self.assertRaises(BaseModelError):
+            V20CredRequest.deserialize(obj)
+
+        obj["requests~attach"][0]["@id"] = "xxx"
+        with self.assertRaises(BaseModelError):
+            V20CredRequest.deserialize(obj)
+
+        obj["requests~attach"].append(  # more attachments than formats
+            {
+                "@id": "def",
+                "mime-type": "application/json",
+                "data": {"base64": "eyJub3QiOiAiaW5keSJ9"},
+            }
+        )
+        with self.assertRaises(BaseModelError):
+            V20CredRequest.deserialize(obj)
+
+        cred_request.formats.append(  # unknown format: no validation
+            V20CredFormat(
+                attach_id="not_indy",
+                format_="not_indy",
+            )
+        )
+        obj = cred_request.serialize()
+        obj["requests~attach"].append(
+            {
+                "@id": "not_indy",
+                "mime-type": "application/json",
+                "data": {"base64": "eyJub3QiOiAiaW5keSJ9"},
+            }
+        )
+        V20CredRequest.deserialize(obj)
 
 
 class TestV20CredRequestSchema(AsyncTestCase):
@@ -116,11 +147,15 @@ class TestV20CredRequestSchema(AsyncTestCase):
             formats=[
                 V20CredFormat(
                     attach_id="indy",
-                    format_=V20CredFormat.Format.INDY,
+                    format_=ATTACHMENT_FORMAT[CRED_20_REQUEST][
+                        V20CredFormat.Format.INDY.api
+                    ],
                 ),
                 V20CredFormat(
-                    attach_id="dif-json",
-                    format_=V20CredFormat.Format.DIF,
+                    attach_id="ld-proof-json",
+                    format_=ATTACHMENT_FORMAT[CRED_20_REQUEST][
+                        V20CredFormat.Format.LD_PROOF.api
+                    ],
                 ),
             ],
             requests_attach=[
@@ -128,18 +163,18 @@ class TestV20CredRequestSchema(AsyncTestCase):
                     ident="indy", mapping=TestV20CredRequest.indy_cred_req
                 ),
                 AttachDecorator.data_json(
-                    ident="dif-json", mapping=TestV20CredRequest.dif_cred_req
+                    ident="ld-proof-json", mapping=TestV20CredRequest.ld_proof_cred_req
                 ),
             ],
         )
 
         assert (
-            cred_request.cred_request(V20CredFormat.Format.INDY)
+            cred_request.attachment(V20CredFormat.Format.INDY)
             == TestV20CredRequest.indy_cred_req
         )
         assert (
-            cred_request.cred_request(V20CredFormat.Format.DIF)
-            == TestV20CredRequest.dif_cred_req
+            cred_request.attachment(V20CredFormat.Format.LD_PROOF)
+            == TestV20CredRequest.ld_proof_cred_req
         )
         data = cred_request.serialize()
         model_instance = V20CredRequest.deserialize(data)
@@ -150,11 +185,15 @@ class TestV20CredRequestSchema(AsyncTestCase):
             formats=[
                 V20CredFormat(
                     attach_id="indy",
-                    format_=V20CredFormat.Format.INDY,
+                    format_=ATTACHMENT_FORMAT[CRED_20_REQUEST][
+                        V20CredFormat.Format.INDY.api
+                    ],
                 ),
                 V20CredFormat(
-                    attach_id="dif-links",
-                    format_=V20CredFormat.Format.DIF,
+                    attach_id="ld-proof-links",
+                    format_=ATTACHMENT_FORMAT[CRED_20_REQUEST][
+                        V20CredFormat.Format.LD_PROOF.api
+                    ],
                 ),
             ],
             requests_attach=[
@@ -162,11 +201,13 @@ class TestV20CredRequestSchema(AsyncTestCase):
                     ident="indy", mapping=TestV20CredRequest.indy_cred_req
                 ),
                 AttachDecorator.data_links(
-                    ident="dif-links",
+                    ident="ld-proof-links",
                     links="http://10.20.30.40/cred-req.json",
+                    sha256="00000000000000000000000000000000",
                 ),
             ],
         )
-        assert cred_request.cred_request(V20CredFormat.Format.DIF) == [
-            "http://10.20.30.40/cred-req.json"
-        ]
+        assert cred_request.attachment(V20CredFormat.Format.LD_PROOF) == (
+            ["http://10.20.30.40/cred-req.json"],
+            "00000000000000000000000000000000",
+        )

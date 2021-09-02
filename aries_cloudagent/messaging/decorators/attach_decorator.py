@@ -7,8 +7,9 @@ An attach decorator embeds content or specifies appended content.
 
 import json
 import uuid
+import copy
 
-from typing import Any, Mapping, Sequence, Union
+from typing import Any, Mapping, Sequence, Tuple, Union
 
 from marshmallow import EXCLUDE, fields, pre_load
 
@@ -23,6 +24,8 @@ from ...wallet.util import (
     str_to_b64,
     unpad,
 )
+from ...wallet.key_type import KeyType
+from ...did.did_key import DIDKey
 from ..models.base import BaseModel, BaseModelError, BaseModelSchema
 from ..valid import (
     BASE64,
@@ -32,9 +35,6 @@ from ..valid import (
     SHA256,
     UUIDFour,
 )
-
-MULTIBASE_B58_BTC = "z"
-MULTICODEC_ED25519_PUB = b"\xed"
 
 
 class AttachDecoratorDataJWSHeader(BaseModel):
@@ -198,19 +198,17 @@ class AttachDecoratorDataJWSSchema(BaseModelSchema):
 def did_key(verkey: str) -> str:
     """Qualify verkey into DID key if need be."""
 
-    if verkey.startswith(f"did:key:{MULTIBASE_B58_BTC}"):
+    if verkey.startswith("did:key:"):
         return verkey
 
-    return f"did:key:{MULTIBASE_B58_BTC}" + bytes_to_b58(
-        MULTICODEC_ED25519_PUB + b58_to_bytes(verkey)
-    )
+    return DIDKey.from_public_key_b58(verkey, KeyType.ED25519).did
 
 
 def raw_key(verkey: str) -> str:
     """Strip qualified key to raw key if need be."""
 
-    if verkey.startswith(f"did:key:{MULTIBASE_B58_BTC}"):
-        return bytes_to_b58(b58_to_bytes(verkey[9:])[1:])
+    if verkey.startswith("did:key:"):
+        return DIDKey.from_did(verkey).public_key_b58
 
     return verkey
 
@@ -256,7 +254,8 @@ class AttachDecoratorData(BaseModel):
         if base64_:
             self.base64_ = base64_
         elif json_:
-            self.json_ = json_
+            # prevent external manipulation of attachment data
+            self.json_ = copy.deepcopy(json_)
         else:
             assert isinstance(links_, (str, Sequence))
             self.links_ = [links_] if isinstance(links_, str) else list(links_)
@@ -316,8 +315,10 @@ class AttachDecoratorData(BaseModel):
     @property
     def json(self):
         """Accessor for json decorator data, or None."""
+        json_data = getattr(self, "json_", None)
 
-        return getattr(self, "json_", None)
+        # Prevent external manipulation of attachment data
+        return copy.deepcopy(json_data) if json_data else None
 
     @property
     def links(self):
@@ -437,7 +438,9 @@ class AttachDecoratorData(BaseModel):
             sign_input = (b64_protected + "." + b64_payload).encode("ascii")
             b_sig = b64_to_bytes(b64_sig, urlsafe=True)
             verkey = bytes_to_b58(b64_to_bytes(protected["jwk"]["x"], urlsafe=True))
-            if not await wallet.verify_message(sign_input, b_sig, verkey):
+            if not await wallet.verify_message(
+                sign_input, b_sig, verkey, KeyType.ED25519
+            ):
                 return False
         return True
 
@@ -546,11 +549,13 @@ class AttachDecorator(BaseModel):
         self.data = data
 
     @property
-    def content(self):
+    def content(self) -> Union[Mapping, Tuple[Sequence[str], str]]:
         """
         Return attachment content.
 
-        Returns: data attachment, decoded if necessary and json-loaded, or data links
+        Returns:
+            data attachment, decoded if necessary and json-loaded, or data links
+            and sha-256 hash.
 
         """
         if hasattr(self.data, "base64_"):
@@ -558,7 +563,10 @@ class AttachDecorator(BaseModel):
         elif hasattr(self.data, "json_"):
             return self.data.json
         elif hasattr(self.data, "links_"):
-            return self.data.links  # fetching would be async; we want a property here
+            return (  # fetching would be async; we want a property here
+                self.data.links,
+                self.data.sha256,
+            )
         else:
             return None
 

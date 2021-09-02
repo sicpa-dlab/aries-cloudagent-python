@@ -39,10 +39,14 @@ from ..transport.inbound.message import InboundMessage
 from ..transport.outbound.base import OutboundDeliveryError
 from ..transport.outbound.manager import OutboundTransportManager, QueuedOutboundMessage
 from ..transport.outbound.message import OutboundMessage
+from ..transport.outbound.queue.base import BaseOutboundQueue
+from ..transport.outbound.queue.loader import get_outbound_queue
+from ..transport.outbound.status import OutboundSendStatus
 from ..transport.wire_format import BaseWireFormat
 from ..utils.stats import Collector
 from ..utils.task_queue import CompletedTask, TaskQueue
-from ..wallet.base import DIDInfo
+from ..vc.ld_proofs.document_loader import DocumentLoader
+from ..wallet.did_info import DIDInfo
 from .dispatcher import Dispatcher
 
 LOGGER = logging.getLogger(__name__)
@@ -73,6 +77,7 @@ class Conductor:
         self.outbound_transport_manager: OutboundTransportManager = None
         self.root_profile: Profile = None
         self.setup_public_did: DIDInfo = None
+        self.outbound_queue: BaseOutboundQueue = None
 
     @property
     def context(self) -> InjectionContext:
@@ -102,6 +107,9 @@ class Conductor:
             self.root_profile, self.inbound_message_router, self.handle_not_returned
         )
         await self.inbound_transport_manager.setup()
+        context.injector.bind_instance(
+            InboundTransportManager, self.inbound_transport_manager
+        )
 
         # Register all outbound transports
         self.outbound_transport_manager = OutboundTransportManager(
@@ -113,7 +121,7 @@ class Conductor:
         self.dispatcher = Dispatcher(self.root_profile)
         await self.dispatcher.setup()
 
-        wire_format = context.inject(BaseWireFormat, required=False)
+        wire_format = context.inject_or(BaseWireFormat)
         if wire_format and hasattr(wire_format, "task_queue"):
             wire_format.task_queue = self.dispatcher.task_queue
 
@@ -121,6 +129,13 @@ class Conductor:
         if context.settings.get("multitenant.enabled"):
             multitenant_mgr = MultitenantManager(self.root_profile)
             context.injector.bind_instance(MultitenantManager, multitenant_mgr)
+
+        # Bind default PyLD document loader
+        context.injector.bind_instance(
+            DocumentLoader, DocumentLoader(self.root_profile)
+        )
+
+        self.outbound_queue = get_outbound_queue(context.settings)
 
         # Admin API
         if context.settings.get("admin.enabled"):
@@ -138,19 +153,13 @@ class Conductor:
                     self.dispatcher.task_queue,
                     self.get_stats,
                 )
-                webhook_urls = context.settings.get("admin.webhook_urls")
-                if webhook_urls:
-                    for url in webhook_urls:
-                        self.admin_server.add_webhook_target(url)
                 context.injector.bind_instance(BaseAdminServer, self.admin_server)
-                if "http" not in self.outbound_transport_manager.registered_schemes:
-                    self.outbound_transport_manager.register("http")
             except Exception:
                 LOGGER.exception("Unable to register admin server")
                 raise
 
         # Fetch stats collector, if any
-        collector = context.inject(Collector, required=False)
+        collector = context.inject_or(Collector)
         if collector:
             # add stats to our own methods
             collector.wrap(
@@ -200,7 +209,6 @@ class Conductor:
             responder = AdminResponder(
                 self.root_profile,
                 self.admin_server.outbound_message_router,
-                self.admin_server.send_webhook,
             )
             context.injector.bind_instance(BaseResponder, responder)
 
@@ -212,6 +220,7 @@ class Conductor:
             default_label,
             self.inbound_transport_manager.registered_transports,
             self.outbound_transport_manager.registered_transports,
+            self.outbound_queue,
             self.setup_public_did and self.setup_public_did.did,
             self.admin_server,
         )
@@ -266,9 +275,7 @@ class Conductor:
                         ),
                     )
                     base_url = context.settings.get("invite_base_url")
-                    invite_url = InvitationMessage.deserialize(
-                        invi_rec.invitation
-                    ).to_url(base_url)
+                    invite_url = invi_rec.invitation.to_url(base_url)
                     print("Invitation URL:")
                     print(invite_url, flush=True)
                     del mgr
@@ -351,7 +358,7 @@ class Conductor:
             shutdown.run(self.outbound_transport_manager.stop())
 
         # close multitenant profiles
-        multitenant_mgr = self.context.inject(MultitenantManager, required=False)
+        multitenant_mgr = self.context.inject_or(MultitenantManager)
         if multitenant_mgr:
             for profile in multitenant_mgr._instances.values():
                 shutdown.run(profile.close())
@@ -391,7 +398,6 @@ class Conductor:
                 profile,
                 message,
                 self.outbound_message_router,
-                self.admin_server and self.admin_server.send_webhook,
                 lambda completed: self.dispatch_complete(message, completed),
             )
         except (LedgerConfigError, LedgerTransactionError) as e:
@@ -447,7 +453,7 @@ class Conductor:
         profile: Profile,
         outbound: OutboundMessage,
         inbound: InboundMessage = None,
-    ) -> None:
+    ) -> OutboundSendStatus:
         """
         Route an outbound message.
 
@@ -461,10 +467,10 @@ class Conductor:
                 outbound.reply_from_verkey = inbound.receipt.recipient_verkey
             # return message to an inbound session
             if self.inbound_transport_manager.return_to_session(outbound):
-                return
+                return OutboundSendStatus.SENT_TO_SESSION
 
         if not outbound.to_session_only:
-            await self.queue_outbound(profile, outbound, inbound)
+            return await self.queue_outbound(profile, outbound, inbound)
 
     def handle_not_returned(self, profile: Profile, outbound: OutboundMessage):
         """Handle a message that failed delivery via an inbound session."""
@@ -481,9 +487,9 @@ class Conductor:
         profile: Profile,
         outbound: OutboundMessage,
         inbound: InboundMessage = None,
-    ):
+    ) -> OutboundSendStatus:
         """
-        Queue an outbound message.
+        Queue an outbound message for transport.
 
         Args:
             profile: The active profile
@@ -511,16 +517,55 @@ class Conductor:
                         self.admin_server.notify_fatal_error()
                     raise
                 del conn_mgr
+        # If ``self.outbound_queue`` is specified (usually set via
+        # outbound queue `-oq` commandline option), use that external
+        # queue. Else save the message to an internal queue. This
+        # internal queue usually results in the message to be sent over
+        # ACA-py `-ot` transport.
+        if self.outbound_queue:
+            return await self._queue_external(profile, outbound)
+        else:
+            return self._queue_internal(profile, outbound)
 
+    async def _queue_external(
+        self,
+        profile: Profile,
+        outbound: OutboundMessage,
+    ) -> OutboundSendStatus:
+        """Save the message to an external outbound queue."""
+        async with self.outbound_queue:
+            targets = (
+                [outbound.target] if outbound.target else (outbound.target_list or [])
+            )
+            for target in targets:
+                await self.outbound_queue.enqueue_message(
+                    outbound.payload, target.endpoint
+                )
+
+            return OutboundSendStatus.SENT_TO_EXTERNAL_QUEUE
+
+    def _queue_internal(
+        self, profile: Profile, outbound: OutboundMessage
+    ) -> OutboundSendStatus:
+        """Save the message to an internal outbound queue."""
         try:
             self.outbound_transport_manager.enqueue_message(profile, outbound)
+            return OutboundSendStatus.QUEUED_FOR_DELIVERY
         except OutboundDeliveryError:
             LOGGER.warning("Cannot queue message for delivery, no supported transport")
-            self.handle_not_delivered(profile, outbound)
+            return self.handle_not_delivered(profile, outbound)
 
-    def handle_not_delivered(self, profile: Profile, outbound: OutboundMessage):
+    def handle_not_delivered(
+        self, profile: Profile, outbound: OutboundMessage
+    ) -> OutboundSendStatus:
         """Handle a message that failed delivery via outbound transports."""
-        self.inbound_transport_manager.return_undelivered(outbound)
+        queued_for_inbound = self.inbound_transport_manager.return_undelivered(outbound)
+
+        return (
+            OutboundSendStatus.WAITING_FOR_PICKUP
+            if queued_for_inbound
+            else OutboundSendStatus.UNDELIVERABLE
+        )
 
     def webhook_router(
         self,

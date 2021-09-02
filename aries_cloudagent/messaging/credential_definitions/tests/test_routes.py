@@ -9,6 +9,7 @@ from ....storage.base import BaseStorage
 from ....tails.base import BaseTailsServer
 
 from .. import routes as test_module
+from ....connections.models.conn_record import ConnRecord
 
 
 SCHEMA_ID = "WgWxqztrNooG92RXvxSTWv:2:schema_name:1.0"
@@ -24,10 +25,14 @@ class TestCredentialDefinitionRoutes(AsyncTestCase):
         self.ledger = async_mock.create_autospec(BaseLedger)
         self.ledger.__aenter__ = async_mock.CoroutineMock(return_value=self.ledger)
         self.ledger.create_and_send_credential_definition = async_mock.CoroutineMock(
-            return_value=(CRED_DEF_ID, {"cred": "def"}, True)
+            return_value=(
+                CRED_DEF_ID,
+                {"cred": "def", "signed_txn": "..."},
+                True,
+            )
         )
         self.ledger.get_credential_definition = async_mock.CoroutineMock(
-            return_value={"cred": "def"}
+            return_value={"cred": "def", "signed_txn": "..."}
         )
         self.profile_injector.bind_instance(BaseLedger, self.ledger)
 
@@ -63,6 +68,8 @@ class TestCredentialDefinitionRoutes(AsyncTestCase):
             }
         )
 
+        self.request.query = {"create_transaction_for_endorser": "false"}
+
         with async_mock.patch.object(test_module.web, "json_response") as mock_response:
             result = (
                 await test_module.credential_definitions_send_credential_definition(
@@ -82,6 +89,9 @@ class TestCredentialDefinitionRoutes(AsyncTestCase):
                 "tag": "tag",
             }
         )
+
+        self.request.query = {"create_transaction_for_endorser": "false"}
+
         self.context.profile.settings.set_value(
             "tails_server_base_url", "http://1.2.3.4:8222"
         )
@@ -124,6 +134,8 @@ class TestCredentialDefinitionRoutes(AsyncTestCase):
             }
         )
 
+        self.request.query = {"create_transaction_for_endorser": "false"}
+
         with self.assertRaises(test_module.web.HTTPBadRequest):
             await test_module.credential_definitions_send_credential_definition(
                 self.request
@@ -137,6 +149,9 @@ class TestCredentialDefinitionRoutes(AsyncTestCase):
                 "tag": "tag",
             }
         )
+
+        self.request.query = {"create_transaction_for_endorser": "false"}
+
         self.context.profile.settings.set_value(
             "tails_server_base_url", "http://1.2.3.4:8222"
         )
@@ -162,6 +177,9 @@ class TestCredentialDefinitionRoutes(AsyncTestCase):
                 "tag": "tag",
             }
         )
+
+        self.request.query = {"create_transaction_for_endorser": "false"}
+
         self.context.profile.settings.set_value(
             "tails_server_base_url", "http://1.2.3.4:8222"
         )
@@ -200,6 +218,9 @@ class TestCredentialDefinitionRoutes(AsyncTestCase):
                 "tag": "tag",
             }
         )
+
+        self.request.query = {"create_transaction_for_endorser": "false"}
+
         self.context.profile.settings.set_value(
             "tails_server_base_url", "http://1.2.3.4:8222"
         )
@@ -230,6 +251,201 @@ class TestCredentialDefinitionRoutes(AsyncTestCase):
                     self.request
                 )
 
+    async def test_send_credential_definition_create_transaction_for_endorser(self):
+        self.request.json = async_mock.CoroutineMock(
+            return_value={
+                "schema_id": "WgWxqztrNooG92RXvxSTWv:2:schema_name:1.0",
+                "support_revocation": False,
+                "tag": "tag",
+            }
+        )
+
+        self.request.query = {
+            "create_transaction_for_endorser": "true",
+            "conn_id": "dummy",
+        }
+
+        with async_mock.patch.object(
+            ConnRecord, "retrieve_by_id", async_mock.CoroutineMock()
+        ) as mock_conn_rec_retrieve, async_mock.patch.object(
+            test_module, "TransactionManager", async_mock.MagicMock()
+        ) as mock_txn_mgr, async_mock.patch.object(
+            test_module.web, "json_response", async_mock.MagicMock()
+        ) as mock_response:
+            mock_txn_mgr.return_value = async_mock.MagicMock(
+                create_record=async_mock.CoroutineMock(
+                    return_value=async_mock.MagicMock(
+                        serialize=async_mock.MagicMock(return_value={"...": "..."})
+                    )
+                )
+            )
+            mock_conn_rec_retrieve.return_value = async_mock.MagicMock(
+                metadata_get=async_mock.CoroutineMock(
+                    return_value={
+                        "endorser_did": ("did"),
+                        "endorser_name": ("name"),
+                    }
+                )
+            )
+            result = (
+                await test_module.credential_definitions_send_credential_definition(
+                    self.request
+                )
+            )
+            assert result == mock_response.return_value
+            mock_response.assert_called_once_with({"txn": {"...": "..."}})
+
+    async def test_send_credential_definition_create_transaction_for_endorser_storage_x(
+        self,
+    ):
+        self.request.json = async_mock.CoroutineMock(
+            return_value={
+                "schema_id": "WgWxqztrNooG92RXvxSTWv:2:schema_name:1.0",
+                "support_revocation": False,
+                "tag": "tag",
+            }
+        )
+
+        self.request.query = {
+            "create_transaction_for_endorser": "true",
+            "conn_id": "dummy",
+        }
+
+        with async_mock.patch.object(
+            ConnRecord, "retrieve_by_id", async_mock.CoroutineMock()
+        ) as mock_conn_rec_retrieve, async_mock.patch.object(
+            test_module, "TransactionManager", async_mock.MagicMock()
+        ) as mock_txn_mgr:
+
+            mock_conn_rec_retrieve.return_value = async_mock.MagicMock(
+                metadata_get=async_mock.CoroutineMock(
+                    return_value={
+                        "endorser_did": ("did"),
+                        "endorser_name": ("name"),
+                    }
+                )
+            )
+            mock_txn_mgr.return_value = async_mock.MagicMock(
+                create_record=async_mock.CoroutineMock(
+                    side_effect=test_module.StorageError()
+                )
+            )
+
+            with self.assertRaises(test_module.web.HTTPBadRequest):
+                await test_module.credential_definitions_send_credential_definition(
+                    self.request
+                )
+
+    async def test_send_credential_definition_create_transaction_for_endorser_not_found_x(
+        self,
+    ):
+        self.request.json = async_mock.CoroutineMock(
+            return_value={
+                "schema_id": "WgWxqztrNooG92RXvxSTWv:2:schema_name:1.0",
+                "support_revocation": False,
+                "tag": "tag",
+            }
+        )
+
+        self.request.query = {
+            "create_transaction_for_endorser": "true",
+            "conn_id": "dummy",
+        }
+
+        with async_mock.patch.object(
+            ConnRecord, "retrieve_by_id", async_mock.CoroutineMock()
+        ) as mock_conn_rec_retrieve:
+            mock_conn_rec_retrieve.side_effect = test_module.StorageNotFoundError()
+
+            with self.assertRaises(test_module.web.HTTPNotFound):
+                await test_module.credential_definitions_send_credential_definition(
+                    self.request
+                )
+
+    async def test_send_credential_definition_create_transaction_for_endorser_base_model_x(
+        self,
+    ):
+        self.request.json = async_mock.CoroutineMock(
+            return_value={
+                "schema_id": "WgWxqztrNooG92RXvxSTWv:2:schema_name:1.0",
+                "support_revocation": False,
+                "tag": "tag",
+            }
+        )
+
+        self.request.query = {
+            "create_transaction_for_endorser": "true",
+            "conn_id": "dummy",
+        }
+
+        with async_mock.patch.object(
+            ConnRecord, "retrieve_by_id", async_mock.CoroutineMock()
+        ) as mock_conn_rec_retrieve:
+            mock_conn_rec_retrieve.side_effect = test_module.BaseModelError()
+
+            with self.assertRaises(test_module.web.HTTPBadRequest):
+                await test_module.credential_definitions_send_credential_definition(
+                    self.request
+                )
+
+    async def test_send_credential_definition_create_transaction_for_endorser_no_endorser_info_x(
+        self,
+    ):
+        self.request.json = async_mock.CoroutineMock(
+            return_value={
+                "schema_id": "WgWxqztrNooG92RXvxSTWv:2:schema_name:1.0",
+                "support_revocation": False,
+                "tag": "tag",
+            }
+        )
+
+        self.request.query = {
+            "create_transaction_for_endorser": "true",
+            "conn_id": "dummy",
+        }
+
+        with async_mock.patch.object(
+            ConnRecord, "retrieve_by_id", async_mock.CoroutineMock()
+        ) as mock_conn_rec_retrieve:
+            mock_conn_rec_retrieve.return_value = async_mock.MagicMock(
+                metadata_get=async_mock.CoroutineMock(return_value=None)
+            )
+            with self.assertRaises(test_module.web.HTTPForbidden):
+                await test_module.credential_definitions_send_credential_definition(
+                    self.request
+                )
+
+    async def test_send_credential_definition_create_transaction_for_endorser_no_endorser_did_x(
+        self,
+    ):
+        self.request.json = async_mock.CoroutineMock(
+            return_value={
+                "schema_id": "WgWxqztrNooG92RXvxSTWv:2:schema_name:1.0",
+                "support_revocation": False,
+                "tag": "tag",
+            }
+        )
+
+        self.request.query = {
+            "create_transaction_for_endorser": "true",
+            "conn_id": "dummy",
+        }
+
+        with async_mock.patch.object(
+            ConnRecord, "retrieve_by_id", async_mock.CoroutineMock()
+        ) as mock_conn_rec_retrieve:
+            mock_conn_rec_retrieve.return_value = async_mock.MagicMock(
+                metadata_get=async_mock.CoroutineMock(
+                    return_value={
+                        "endorser_name": ("name"),
+                    }
+                )
+            )
+            with self.assertRaises(test_module.web.HTTPForbidden):
+                await test_module.credential_definitions_send_credential_definition(
+                    self.request
+                )
+
     async def test_send_credential_definition_no_ledger(self):
         self.request.json = async_mock.CoroutineMock(
             return_value={
@@ -254,6 +470,8 @@ class TestCredentialDefinitionRoutes(AsyncTestCase):
                 "tag": "tag",
             }
         )
+
+        self.request.query = {"create_transaction_for_endorser": "false"}
 
         self.ledger.__aenter__ = async_mock.CoroutineMock(
             side_effect=test_module.LedgerError("oops")
@@ -282,7 +500,7 @@ class TestCredentialDefinitionRoutes(AsyncTestCase):
             )
             assert result == mock_response.return_value
             mock_response.assert_called_once_with(
-                {"credential_definition": {"cred": "def"}}
+                {"credential_definition": {"cred": "def", "signed_txn": "..."}}
             )
 
     async def test_get_credential_definition_no_ledger(self):

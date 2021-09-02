@@ -62,6 +62,14 @@ elif RUN_MODE == "pwd":
     DEFAULT_EXTERNAL_HOST = os.getenv("DOCKERHOST") or "host.docker.internal"
     DEFAULT_PYTHON_PATH = "."
 
+CRED_FORMAT_INDY = "indy"
+CRED_FORMAT_JSON_LD = "json-ld"
+DID_METHOD_SOV = "sov"
+DID_METHOD_KEY = "key"
+KEY_TYPE_ED255 = "ed25519"
+KEY_TYPE_BLS = "bls12381g2"
+SIG_TYPE_BLS = "BbsBlsSignature2020"
+
 
 class repr_json:
     def __init__(self, val):
@@ -110,7 +118,7 @@ class DemoAgent:
         internal_host: str = None,
         external_host: str = None,
         genesis_data: str = None,
-        seed: str = "random",
+        seed: str = None,
         label: str = None,
         color: str = None,
         prefix: str = None,
@@ -121,6 +129,8 @@ class DemoAgent:
         revocation: bool = False,
         multitenant: bool = False,
         mediation: bool = False,
+        aip: int = 10,
+        arg_file: str = None,
         extra_args=None,
         **params,
     ):
@@ -146,6 +156,8 @@ class DemoAgent:
         self.mediation = mediation
         self.mediator_connection_id = None
         self.mediator_request_id = None
+        self.aip = aip
+        self.arg_file = arg_file
 
         self.admin_url = f"http://{self.internal_host}:{admin_port}"
         if AGENT_ENDPOINT:
@@ -218,9 +230,10 @@ class DemoAgent:
             "attributes": schema_attrs,
         }
         schema_response = await self.admin_POST("/schemas", schema_body)
-        # log_json(json.dumps(schema_response), label="Schema:")
+        log_json(json.dumps(schema_response), label="Schema:")
         schema_id = schema_response["schema_id"]
         log_msg("Schema ID:", schema_id)
+        await asyncio.sleep(2.0)
 
         # Create a cred def for the schema
         cred_def_tag = (
@@ -326,6 +339,14 @@ class DemoAgent:
                 ]
             )
 
+        if self.arg_file:
+            result.extend(
+                (
+                    "--arg-file",
+                    self.arg_file,
+                )
+            )
+
         if self.extra_args:
             result.extend(self.extra_args)
 
@@ -342,29 +363,41 @@ class DemoAgent:
         alias: str = None,
         did: str = None,
         verkey: str = None,
+        role: str = "TRUST_ANCHOR",
+        cred_type: str = CRED_FORMAT_INDY,
     ):
-        self.log(f"Registering {self.ident} ...")
-        if not ledger_url:
-            ledger_url = LEDGER_URL
-        if not ledger_url:
-            ledger_url = f"http://{self.external_host}:9000"
-        data = {"alias": alias or self.ident, "role": "TRUST_ANCHOR"}
-        if did and verkey:
-            data["did"] = did
-            data["verkey"] = verkey
+        if cred_type == CRED_FORMAT_INDY:
+            # if registering a did for issuing indy credentials, publish the did on the ledger
+            self.log(f"Registering {self.ident} ...")
+            if not ledger_url:
+                ledger_url = LEDGER_URL
+            if not ledger_url:
+                ledger_url = f"http://{self.external_host}:9000"
+            data = {"alias": alias or self.ident, "role": role}
+            if did and verkey:
+                data["did"] = did
+                data["verkey"] = verkey
+            else:
+                data["seed"] = self.seed
+            async with self.client_session.post(
+                ledger_url + "/register", json=data
+            ) as resp:
+                if resp.status != 200:
+                    raise Exception(
+                        f"Error registering DID, response code {resp.status}"
+                    )
+                nym_info = await resp.json()
+                self.did = nym_info["did"]
+                self.log(f"nym_info: {nym_info}")
+                if self.multitenant:
+                    if not self.agency_wallet_did:
+                        self.agency_wallet_did = self.did
+            self.log(f"Registered DID: {self.did}")
+        elif cred_type == CRED_FORMAT_JSON_LD:
+            # TODO register a did:key with appropriate signature type
+            pass
         else:
-            data["seed"] = self.seed
-        async with self.client_session.post(
-            ledger_url + "/register", json=data
-        ) as resp:
-            if resp.status != 200:
-                raise Exception(f"Error registering DID, response code {resp.status}")
-            nym_info = await resp.json()
-            self.did = nym_info["did"]
-            if self.multitenant:
-                if not self.agency_wallet_did:
-                    self.agency_wallet_did = self.did
-        self.log(f"Registered DID: {self.did}")
+            raise Exception("Invalid credential type:" + cred_type)
 
     async def register_or_switch_wallet(
         self,
@@ -372,6 +405,7 @@ class DemoAgent:
         public_did=False,
         webhook_port: int = None,
         mediator_agent=None,
+        cred_type: str = CRED_FORMAT_INDY,
     ):
         if webhook_port is not None:
             await self.listen_webhooks(webhook_port)
@@ -382,6 +416,11 @@ class DemoAgent:
             self.seed = self.agency_wallet_seed
             self.did = self.agency_wallet_did
             self.wallet_key = self.agency_wallet_key
+
+            wallet_params = await self.get_id_and_token(self.wallet_name)
+            self.managed_wallet_params["wallet_id"] = wallet_params["id"]
+            self.managed_wallet_params["token"] = wallet_params["token"]
+
             self.log(f"Switching to AGENCY wallet {target_wallet_name}")
             return False
 
@@ -396,6 +435,11 @@ class DemoAgent:
                 self.ident = target_wallet_name
                 # we can't recover the seed so let's set it to None and see what happens
                 self.seed = None
+
+                wallet_params = await self.get_id_and_token(self.wallet_name)
+                self.managed_wallet_params["wallet_id"] = wallet_params["id"]
+                self.managed_wallet_params["token"] = wallet_params["token"]
+
                 self.log(f"Switching to EXISTING wallet {target_wallet_name}")
                 return False
 
@@ -415,13 +459,24 @@ class DemoAgent:
         self.log("New wallet params:", new_wallet)
         self.managed_wallet_params = new_wallet
         if public_did:
-            # assign public did
-            new_did = await self.admin_POST("/wallet/did/create")
-            self.did = new_did["result"]["did"]
-            await self.register_did(
-                did=new_did["result"]["did"], verkey=new_did["result"]["verkey"]
-            )
-            await self.admin_POST("/wallet/did/public?did=" + self.did)
+            if cred_type == CRED_FORMAT_INDY:
+                # assign public did
+                new_did = await self.admin_POST("/wallet/did/create")
+                self.did = new_did["result"]["did"]
+                await self.register_did(
+                    did=new_did["result"]["did"], verkey=new_did["result"]["verkey"]
+                )
+                await self.admin_POST("/wallet/did/public?did=" + self.did)
+            elif cred_type == CRED_FORMAT_JSON_LD:
+                # create did of appropriate type
+                data = {"method": DID_METHOD_KEY, "options": {"key_type": KEY_TYPE_BLS}}
+                new_did = await self.admin_POST("/wallet/did/create", data=data)
+                self.did = new_did["result"]["did"]
+
+                # did:key is not registered as a public did
+            else:
+                # todo ignore for now
+                pass
 
         # if mediation, mediate the wallet connections
         if mediator_agent:
@@ -431,6 +486,19 @@ class DemoAgent:
 
         self.log(f"Created NEW wallet {target_wallet_name}")
         return True
+
+    async def get_id_and_token(self, wallet_name):
+        wallet = await self.agency_admin_GET(
+            f"/multitenancy/wallets?wallet_name={wallet_name}"
+        )
+        wallet_id = wallet["results"][0]["wallet_id"]
+
+        wallet = await self.agency_admin_POST(
+            f"/multitenancy/wallet/{wallet_id}/token", {}
+        )
+        token = wallet["token"]
+
+        return {"id": wallet_id, "token": token}
 
     def handle_output(self, *output, source: str = None, **kwargs):
         end = "" if source else "\n"
@@ -458,6 +526,7 @@ class DemoAgent:
             stderr=subprocess.PIPE,
             env=env,
             encoding="utf-8",
+            close_fds=True,
         )
         loop.run_in_executor(
             None,
@@ -491,9 +560,8 @@ class DemoAgent:
 
         # start agent sub-process
         loop = asyncio.get_event_loop()
-        self.proc = await loop.run_in_executor(
-            None, self._process, agent_args, my_env, loop
-        )
+        future = loop.run_in_executor(None, self._process, agent_args, my_env, loop)
+        self.proc = await asyncio.wait_for(future, 20, loop=loop)
         if wait:
             await asyncio.sleep(1.0)
             await self.detect_process()
@@ -510,12 +578,17 @@ class DemoAgent:
                 raise Exception(msg)
 
     async def terminate(self):
-        loop = asyncio.get_event_loop()
-        if self.proc:
-            await loop.run_in_executor(None, self._terminate)
+        # close session to admin api
         await self.client_session.close()
+        # shut down web hooks first
         if self.webhook_site:
             await self.webhook_site.stop()
+            await asyncio.sleep(0.5)
+        # now shut down the agent
+        loop = asyncio.get_event_loop()
+        if self.proc:
+            future = loop.run_in_executor(None, self._terminate)
+            result = await asyncio.wait_for(future, 10, loop=loop)
 
     async def listen_webhooks(self, webhook_port):
         self.webhook_port = webhook_port
@@ -561,8 +634,12 @@ class DemoAgent:
 
     async def handle_problem_report(self, message):
         self.log(
-            f"Received problem report: {message['explain-ltxt']}\n", source="stderr"
+            f"Received problem report: {message['description']['en']}\n",
+            source="stderr",
         )
+
+    async def handle_endorse_transaction(self, message):
+        self.log(f"Received endorse transaction: {message}\n", source="stderr")
 
     async def handle_revocation_registry(self, message):
         reg_id = message.get("revoc_reg_id", "(undetermined)")
@@ -699,6 +776,15 @@ class DemoAgent:
             self.log(f"Error during PATCH {path}: {str(e)}")
             raise
 
+    async def admin_PUT(
+        self, path, data=None, text=False, params=None
+    ) -> ClientResponse:
+        try:
+            return await self.admin_request("PUT", path, data, text, params)
+        except ClientError as e:
+            self.log(f"Error during PUT {path}: {str(e)}")
+            raise
+
     async def admin_GET_FILE(self, path, params=None) -> bytes:
         try:
             params = {k: v for (k, v) in (params or {}).items() if v is not None}
@@ -823,7 +909,7 @@ class DemoAgent:
             database=self.wallet_name,
         )
 
-        tables = ("items", "tags_encrypted", "tags_plaintext")
+        tables = self._postgres_tables
         for t in tables:
             await conn.execute(f"VACUUM FULL {t}" if vacuum_full else f"VACUUM {t}")
 
@@ -851,21 +937,23 @@ class DemoAgent:
     def format_postgres_stats(self):
         if not self.wallet_stats:
             return
-        yield "{:30} | {:>17} | {:>17} | {:>17}".format(
-            f"{self.wallet_name} DB", "items", "tags_encrypted", "tags_plaintext"
+        tables = self._postgres_tables
+        yield ("{:30}" + " | {:>17}" * len(tables)).format(
+            f"{self.wallet_name} DB", *tables
         )
         yield "=" * 90
         for ident, stats in self.wallet_stats:
-            yield "{:30} | {:8d} {:>8} | {:8d} {:>8} | {:8d} {:>8}".format(
-                ident,
-                stats["items"][0],
-                stats["items"][1],
-                stats["tags_encrypted"][0],
-                stats["tags_encrypted"][1],
-                stats["tags_plaintext"][0],
-                stats["tags_plaintext"][1],
+            yield ("{:30}" + " | {:8d} {:>8}" * len(tables)).format(
+                ident, *flatten((stats[t][0], stats[t][1]) for t in tables)
             )
         yield ""
+
+    @property
+    def _postgres_tables(self):
+        if self.wallet_type == "askar":
+            return ("items", "items_tags")
+        else:
+            return ("items", "tags_encrypted", "tags_plaintext")
 
     def reset_postgres_stats(self):
         self.wallet_stats.clear()

@@ -4,9 +4,16 @@ import re
 
 from abc import ABC, abstractmethod, ABCMeta
 from enum import Enum
+from hashlib import sha256
+from time import time
 from typing import Sequence, Tuple, Union
 
 from ..indy.issuer import IndyIssuer
+from ..storage.base import StorageRecord
+from ..messaging.credential_definitions.util import CRED_DEF_SENT_RECORD_TYPE
+from ..messaging.schemas.util import SCHEMA_SENT_RECORD_TYPE
+from ..utils import sentinel
+from ..wallet.did_info import DIDInfo
 
 from .endpoint_type import EndpointType
 
@@ -56,6 +63,14 @@ class BaseLedger(ABC, metaclass=ABCMeta):
         Args:
             did: The DID to look up on the ledger or in the cache
             endpoint_type: The type of the endpoint (default 'endpoint')
+        """
+
+    @abstractmethod
+    async def get_all_endpoints_for_did(self, did: str) -> dict:
+        """Fetch all endpoints for a ledger DID.
+
+        Args:
+            did: The DID to look up on the ledger or in the cache
         """
 
     @abstractmethod
@@ -114,22 +129,47 @@ class BaseLedger(ABC, metaclass=ABCMeta):
         if did:
             return re.sub(r"^did:\w+:", "", did)
 
+    @abstractmethod
     async def get_txn_author_agreement(self, reload: bool = False):
         """Get the current transaction author agreement, fetching it if necessary."""
 
+    @abstractmethod
     async def fetch_txn_author_agreement(self):
         """Fetch the current AML and TAA from the ledger."""
 
+    @abstractmethod
     async def accept_txn_author_agreement(
         self, taa_record: dict, mechanism: str, accept_time: int = None
     ):
         """Save a new record recording the acceptance of the TAA."""
 
+    @abstractmethod
     async def get_latest_txn_author_acceptance(self):
         """Look up the latest TAA acceptance."""
 
     def taa_digest(self, version: str, text: str):
         """Generate the digest of a TAA record."""
+        if not version or not text:
+            raise ValueError("Bad input for TAA digest")
+        taa_plaintext = version + text
+        return sha256(taa_plaintext.encode("utf-8")).digest().hex()
+
+    @abstractmethod
+    async def txn_endorse(
+        self,
+        request_json: str,
+    ) -> str:
+        """Endorse (sign) the provided transaction."""
+
+    @abstractmethod
+    async def txn_submit(
+        self,
+        request_json: str,
+        sign: bool,
+        taa_accept: bool,
+        sign_did: DIDInfo = sentinel,
+    ) -> str:
+        """Write the provided (signed and possibly endorsed) transaction to the ledger."""
 
     @abstractmethod
     async def create_and_send_schema(
@@ -138,6 +178,8 @@ class BaseLedger(ABC, metaclass=ABCMeta):
         schema_name: str,
         schema_version: str,
         attribute_names: Sequence[str],
+        write_ledger: bool = True,
+        endorser_did: str = None,
     ) -> Tuple[str, dict]:
         """
         Send schema to ledger.
@@ -155,7 +197,13 @@ class BaseLedger(ABC, metaclass=ABCMeta):
         """Look up a revocation registry definition by ID."""
 
     @abstractmethod
-    async def send_revoc_reg_def(self, revoc_reg_def: dict, issuer_did: str = None):
+    async def send_revoc_reg_def(
+        self,
+        revoc_reg_def: dict,
+        issuer_did: str = None,
+        write_ledger: bool = True,
+        endorser_did: str = None,
+    ):
         """Publish a revocation registry definition to the ledger."""
 
     @abstractmethod
@@ -165,6 +213,8 @@ class BaseLedger(ABC, metaclass=ABCMeta):
         revoc_def_type: str,
         revoc_reg_entry: dict,
         issuer_did: str = None,
+        write_ledger: bool = True,
+        endorser_did: str = None,
     ):
         """Publish a revocation registry entry to the ledger."""
 
@@ -176,6 +226,8 @@ class BaseLedger(ABC, metaclass=ABCMeta):
         signature_type: str = None,
         tag: str = None,
         support_revocation: bool = False,
+        write_ledger: bool = True,
+        endorser_did: str = None,
     ) -> Tuple[str, dict, bool]:
         """
         Send credential definition to ledger and store relevant key matter in wallet.
@@ -205,7 +257,7 @@ class BaseLedger(ABC, metaclass=ABCMeta):
     @abstractmethod
     async def get_revoc_reg_delta(
         self, revoc_reg_id: str, timestamp_from=0, timestamp_to=None
-    ) -> (dict, int):
+    ) -> Tuple[dict, int]:
         """Look up a revocation registry delta by ID."""
 
     @abstractmethod
@@ -219,8 +271,62 @@ class BaseLedger(ABC, metaclass=ABCMeta):
         """
 
     @abstractmethod
-    async def get_revoc_reg_entry(self, revoc_reg_id: str, timestamp: int):
+    async def get_revoc_reg_entry(
+        self, revoc_reg_id: str, timestamp: int
+    ) -> Tuple[dict, int]:
         """Get revocation registry entry by revocation registry ID and timestamp."""
+
+    async def add_schema_non_secrets_record(self, schema_id: str, issuer_did: str):
+        """
+        Write the wallet non-secrets record for a schema (already written to the ledger).
+
+        Args:
+            schema_id: The schema id (or stringified sequence number)
+            issuer_did: The DID of the issuer
+
+        """
+        schema_id_parts = schema_id.split(":")
+        schema_tags = {
+            "schema_id": schema_id,
+            "schema_issuer_did": issuer_did,
+            "schema_name": schema_id_parts[-2],
+            "schema_version": schema_id_parts[-1],
+            "epoch": str(int(time())),
+        }
+        record = StorageRecord(SCHEMA_SENT_RECORD_TYPE, schema_id, schema_tags)
+        storage = self.get_indy_storage()
+        await storage.add_record(record)
+
+    async def add_cred_def_non_secrets_record(
+        self, schema_id: str, issuer_did: str, credential_definition_id: str
+    ):
+        """
+        Write the wallet non-secrets record for cred def (already written to the ledger).
+
+        Note that the cred def private key signing informtion must already exist in the
+        wallet.
+
+        Args:
+            schema_id: The schema id (or stringified sequence number)
+            issuer_did: The DID of the issuer
+            credential_definition_id: The credential definition id
+
+        """
+        schema_id_parts = schema_id.split(":")
+        cred_def_tags = {
+            "schema_id": schema_id,
+            "schema_issuer_did": schema_id_parts[0],
+            "schema_name": schema_id_parts[-2],
+            "schema_version": schema_id_parts[-1],
+            "issuer_did": issuer_did,
+            "cred_def_id": credential_definition_id,
+            "epoch": str(int(time())),
+        }
+        record = StorageRecord(
+            CRED_DEF_SENT_RECORD_TYPE, credential_definition_id, cred_def_tags
+        )
+        storage = self.get_indy_storage()
+        await storage.add_record(record)
 
 
 class Role(Enum):

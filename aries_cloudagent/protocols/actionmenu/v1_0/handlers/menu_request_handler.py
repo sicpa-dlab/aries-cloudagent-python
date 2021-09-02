@@ -26,10 +26,12 @@ class MenuRequestHandler(BaseHandler):
 
         self._logger.info("Received action menu request")
 
-        service: BaseMenuService = context.inject(BaseMenuService, required=False)
+        service: BaseMenuService = context.inject_or(BaseMenuService)
         if service:
             menu = await service.get_active_menu(
-                context.connection_record, context.message._thread_id
+                context.profile,
+                context.connection_record,
+                context.message._thread_id,
             )
             if menu:
                 await responder.send_reply(menu)

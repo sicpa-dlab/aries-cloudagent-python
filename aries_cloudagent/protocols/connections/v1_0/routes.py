@@ -102,6 +102,11 @@ class CreateInvitationRequestSchema(OpenAPISchema):
         required=False,
         description="List of routing keys",
     )
+    my_label = fields.Str(
+        description="Optional label for connection invitation",
+        required=False,
+        example="Bob",
+    )
     metadata = fields.Dict(
         description="Optional metadata to attach to the connection created with "
         "the invitation",
@@ -189,6 +194,14 @@ class ConnectionsListQueryStringSchema(OpenAPISchema):
         ),
         example=ConnRecord.Role.REQUESTER.rfc160,
     )
+    connection_protocol = fields.Str(
+        description="Connection protocol used",
+        required=False,
+        validate=validate.OneOf(
+            [proto.aries_protocol for proto in ConnRecord.Protocol]
+        ),
+        example=ConnRecord.Protocol.RFC_0160.aries_protocol,
+    )
 
 
 class CreateInvitationQueryStringSchema(OpenAPISchema):
@@ -250,7 +263,7 @@ class AcceptRequestQueryStringSchema(OpenAPISchema):
     my_endpoint = fields.Str(description="My URL endpoint", required=False, **ENDPOINT)
 
 
-class ConnIdMatchInfoSchema(OpenAPISchema):
+class ConnectionsConnIdMatchInfoSchema(OpenAPISchema):
     """Path parameters and validators for request taking connection id."""
 
     conn_id = fields.Str(
@@ -333,6 +346,8 @@ async def connections_list(request: web.BaseRequest):
         post_filter["their_role"] = [
             v for v in ConnRecord.Role.get(request.query["their_role"]).value
         ]
+    if request.query.get("connection_protocol"):
+        post_filter["connection_protocol"] = request.query["connection_protocol"]
 
     session = await context.session()
     try:
@@ -348,7 +363,7 @@ async def connections_list(request: web.BaseRequest):
 
 
 @docs(tags=["connection"], summary="Fetch a single connection record")
-@match_info_schema(ConnIdMatchInfoSchema())
+@match_info_schema(ConnectionsConnIdMatchInfoSchema())
 @response_schema(ConnRecordSchema(), 200, description="")
 async def connections_retrieve(request: web.BaseRequest):
     """
@@ -377,7 +392,7 @@ async def connections_retrieve(request: web.BaseRequest):
 
 
 @docs(tags=["connection"], summary="Fetch connection remote endpoint")
-@match_info_schema(ConnIdMatchInfoSchema())
+@match_info_schema(ConnectionsConnIdMatchInfoSchema())
 @response_schema(EndpointsResultSchema(), 200, description="")
 async def connections_endpoints(request: web.BaseRequest):
     """
@@ -406,7 +421,7 @@ async def connections_endpoints(request: web.BaseRequest):
 
 
 @docs(tags=["connection"], summary="Fetch connection metadata")
-@match_info_schema(ConnIdMatchInfoSchema())
+@match_info_schema(ConnectionsConnIdMatchInfoSchema())
 @querystring_schema(ConnectionMetadataQuerySchema())
 @response_schema(ConnectionMetadataSchema(), 200, description="")
 async def connections_metadata(request: web.BaseRequest):
@@ -427,11 +442,11 @@ async def connections_metadata(request: web.BaseRequest):
     except BaseModelError as err:
         raise web.HTTPBadRequest(reason=err.roll_up) from err
 
-    return web.json_response(result)
+    return web.json_response({"results": result})
 
 
 @docs(tags=["connection"], summary="Set connection metadata")
-@match_info_schema(ConnIdMatchInfoSchema())
+@match_info_schema(ConnectionsConnIdMatchInfoSchema())
 @request_schema(ConnectionMetadataSetRequestSchema())
 @response_schema(ConnectionMetadataSchema(), 200, description="")
 async def connections_metadata_set(request: web.BaseRequest):
@@ -451,7 +466,7 @@ async def connections_metadata_set(request: web.BaseRequest):
     except BaseModelError as err:
         raise web.HTTPBadRequest(reason=err.roll_up) from err
 
-    return web.json_response(result)
+    return web.json_response({"results": result})
 
 
 @docs(
@@ -478,6 +493,7 @@ async def connections_create_invitation(request: web.BaseRequest):
     public = json.loads(request.query.get("public", "false"))
     multi_use = json.loads(request.query.get("multi_use", "false"))
     body = await request.json() if request.body_exists else {}
+    my_label = body.get("my_label")
     recipient_keys = body.get("recipient_keys")
     service_endpoint = body.get("service_endpoint")
     routing_keys = body.get("routing_keys")
@@ -494,6 +510,7 @@ async def connections_create_invitation(request: web.BaseRequest):
     connection_mgr = ConnectionManager(session)
     try:
         (connection, invitation) = await connection_mgr.create_invitation(
+            my_label=my_label,
             auto_accept=auto_accept,
             public=public,
             multi_use=multi_use,
@@ -565,7 +582,7 @@ async def connections_receive_invitation(request: web.BaseRequest):
     tags=["connection"],
     summary="Accept a stored connection invitation",
 )
-@match_info_schema(ConnIdMatchInfoSchema())
+@match_info_schema(ConnectionsConnIdMatchInfoSchema())
 @querystring_schema(AcceptInvitationQueryStringSchema())
 @response_schema(ConnRecordSchema(), 200, description="")
 async def connections_accept_invitation(request: web.BaseRequest):
@@ -615,7 +632,7 @@ async def connections_accept_invitation(request: web.BaseRequest):
     tags=["connection"],
     summary="Accept a stored connection request",
 )
-@match_info_schema(ConnIdMatchInfoSchema())
+@match_info_schema(ConnectionsConnIdMatchInfoSchema())
 @querystring_schema(AcceptRequestQueryStringSchema())
 @response_schema(ConnRecordSchema(), 200, description="")
 async def connections_accept_request(request: web.BaseRequest):
@@ -682,7 +699,7 @@ async def connections_establish_inbound(request: web.BaseRequest):
 
 
 @docs(tags=["connection"], summary="Remove an existing connection record")
-@match_info_schema(ConnIdMatchInfoSchema())
+@match_info_schema(ConnectionsConnIdMatchInfoSchema())
 @response_schema(ConnectionModuleResponseSchema, 200, description="")
 async def connections_remove(request: web.BaseRequest):
     """

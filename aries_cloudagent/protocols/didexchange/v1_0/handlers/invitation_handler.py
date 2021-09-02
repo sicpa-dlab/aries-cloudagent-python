@@ -6,9 +6,10 @@ from .....messaging.base_handler import (
     RequestContext,
 )
 
-from .....protocols.out_of_band.v1_0.messages.invitation import InvitationMessage
+from ....out_of_band.v1_0.messages.invitation import InvitationMessage
+from ....problem_report.v1_0.message import ProblemReport
 
-from ..messages.problem_report import ProblemReport, ProblemReportReason
+from ..messages.problem_report_reason import ProblemReportReason
 
 
 class InvitationHandler(BaseHandler):
@@ -27,8 +28,14 @@ class InvitationHandler(BaseHandler):
         assert isinstance(context.message, InvitationMessage)
 
         report = ProblemReport(
-            problem_code=ProblemReportReason.INVITATION_NOT_ACCEPTED,
-            explain="Connection invitations cannot be submitted via agent messaging",
+            description={
+                "code": ProblemReportReason.INVITATION_NOT_ACCEPTED.value,
+                "en": (
+                    "Out-of-band invitations for DID exchange "
+                    "cannot be submitted via agent messaging"
+                ),
+            }
         )
+
         # client likely needs to be using direct responses to receive the problem report
         await responder.send_reply(report)

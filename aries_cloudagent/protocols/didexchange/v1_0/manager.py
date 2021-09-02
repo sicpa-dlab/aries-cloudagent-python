@@ -14,19 +14,24 @@ from ....messaging.responder import BaseResponder
 from ....storage.error import StorageNotFoundError
 from ....transport.inbound.receipt import MessageReceipt
 from ....wallet.base import BaseWallet
+from ....wallet.error import WalletError
+from ....wallet.key_type import KeyType
+from ....wallet.did_method import DIDMethod
 from ....wallet.did_posture import DIDPosture
-from ....wallet.util import did_key_to_naked
+from ....did.did_key import DIDKey
 from ....multitenant.manager import MultitenantManager
 
 from ...coordinate_mediation.v1_0.manager import MediationManager
 from ...out_of_band.v1_0.messages.invitation import (
     InvitationMessage as OOBInvitationMessage,
 )
+from ...out_of_band.v1_0.messages.service import Service as OOBService
 
+from .message_types import ARIES_PROTOCOL as DIDX_PROTO
 from .messages.complete import DIDXComplete
 from .messages.request import DIDXRequest
 from .messages.response import DIDXResponse
-from .messages.problem_report import ProblemReportReason
+from .messages.problem_report_reason import ProblemReportReason
 
 
 class DIDXManagerError(BaseError):
@@ -80,20 +85,18 @@ class DIDXManager(BaseConnectionManager):
             The new `ConnRecord` instance
 
         """
-        if not invitation.service_dids:
-            if invitation.service_blocks:
-                if not all(
-                    s.recipient_keys and s.service_endpoint
-                    for s in invitation.service_blocks
-                ):
-                    raise DIDXManagerError(
-                        "All service blocks in invitation with no service DIDs "
-                        "must contain recipient key(s) and service endpoint(s)"
-                    )
-            else:
-                raise DIDXManagerError(
-                    "Invitation must contain service blocks or service DIDs"
-                )
+        if not invitation.services:
+            raise DIDXManagerError(
+                "Invitation must contain service blocks or service DIDs"
+            )
+        else:
+            for s in invitation.services:
+                if isinstance(s, OOBService):
+                    if not s.recipient_keys or not s.service_endpoint:
+                        raise DIDXManagerError(
+                            "All service blocks in invitation with no service DIDs "
+                            "must contain recipient key(s) and service endpoint(s)"
+                        )
 
         accept = (
             ConnRecord.ACCEPT_AUTO
@@ -107,12 +110,12 @@ class DIDXManager(BaseConnectionManager):
             else ConnRecord.ACCEPT_MANUAL
         )
 
+        service_item = invitation.services[0]
         # Create connection record
         conn_rec = ConnRecord(
             invitation_key=(
-                # invitation.service_blocks[0].recipient_keys[0]
-                did_key_to_naked(invitation.service_blocks[0].recipient_keys[0])
-                if invitation.service_blocks
+                DIDKey.from_did(service_item.recipient_keys[0]).public_key_b58
+                if isinstance(service_item, OOBService)
                 else None
             ),
             invitation_msg_id=invitation._id,
@@ -122,6 +125,7 @@ class DIDXManager(BaseConnectionManager):
             accept=accept,
             alias=alias,
             their_public_did=their_public_did,
+            connection_protocol=DIDX_PROTO,
         )
 
         await conn_rec.save(
@@ -138,7 +142,7 @@ class DIDXManager(BaseConnectionManager):
 
         if conn_rec.accept == ConnRecord.ACCEPT_AUTO:
             request = await self.create_request(conn_rec, mediation_id=mediation_id)
-            responder = self._session.inject(BaseResponder, required=False)
+            responder = self._session.inject_or(BaseResponder)
             if responder:
                 await responder.send_reply(
                     request,
@@ -158,39 +162,57 @@ class DIDXManager(BaseConnectionManager):
         my_label: str = None,
         my_endpoint: str = None,
         mediation_id: str = None,
-    ) -> DIDXRequest:
+        use_public_did: bool = False,
+    ) -> ConnRecord:
         """
-        Create a request against a public DID only (no explicit invitation).
+        Create and send a request against a public DID only (no explicit invitation).
 
         Args:
             their_public_did: public DID to which to request a connection
             my_label: my label for request
             my_endpoint: my endpoint
             mediation_id: record id for mediation with routing_keys, service endpoint
+            use_public_did: use my public DID for this connection
 
         Returns:
-            DID exchange request
+            The new `ConnRecord` instance
 
         """
+        my_public_info = None
+        if use_public_did:
+            wallet = self._session.inject(BaseWallet)
+            my_public_info = await wallet.get_public_did()
+            if not my_public_info:
+                raise WalletError("No public DID configured")
 
         conn_rec = ConnRecord(
-            my_did=None,  # create-request will fill in on local DID creation
+            my_did=my_public_info.did
+            if my_public_info
+            else None,  # create-request will fill in on local DID creation
             their_did=their_public_did,
             their_label=None,
             their_role=ConnRecord.Role.RESPONDER.rfc23,
             invitation_key=None,
             invitation_msg_id=None,
-            state=ConnRecord.State.REQUEST.rfc23,
             accept=None,
             alias=my_label,
             their_public_did=their_public_did,
+            connection_protocol=DIDX_PROTO,
         )
-        return await self.create_request(  # saves and updates conn_rec
+        request = await self.create_request(  # saves and updates conn_rec
             conn_rec=conn_rec,
             my_label=my_label,
             my_endpoint=my_endpoint,
             mediation_id=mediation_id,
         )
+        conn_rec.request_id = request._id
+        conn_rec.state = ConnRecord.State.REQUEST.rfc23
+        await conn_rec.save(self._session, reason="Created connection request")
+        responder = self._session.inject_or(BaseResponder)
+        if responder:
+            await responder.send(request, connection_id=conn_rec.connection_id)
+
+        return conn_rec
 
     async def create_request(
         self,
@@ -224,7 +246,7 @@ class DIDXManager(BaseConnectionManager):
         base_mediation_record = None
 
         # Multitenancy setup
-        multitenant_mgr = self._session.inject(MultitenantManager, required=False)
+        multitenant_mgr = self._session.inject_or(MultitenantManager)
         wallet_id = self._session.settings.get("wallet.id")
         if multitenant_mgr and wallet_id:
             base_mediation_record = await multitenant_mgr.get_default_mediator()
@@ -234,7 +256,10 @@ class DIDXManager(BaseConnectionManager):
             my_info = await wallet.get_local_did(conn_rec.my_did)
         else:
             # Create new DID for connection
-            my_info = await wallet.create_local_did()
+            my_info = await wallet.create_local_did(
+                method=DIDMethod.SOV,
+                key_type=KeyType.ED25519,
+            )
             conn_rec.my_did = my_info.did
             keylist_updates = await mediation_mgr.add_key(
                 my_info.verkey, keylist_updates
@@ -260,7 +285,14 @@ class DIDXManager(BaseConnectionManager):
                 filter(None, [base_mediation_record, mediation_record])
             ),
         )
-        pthid = conn_rec.invitation_msg_id or f"did:sov:{conn_rec.their_public_did}"
+        if (
+            conn_rec.their_public_did is not None
+            and conn_rec.their_public_did.startswith("did:")
+        ):
+            qualified_did = conn_rec.their_public_did
+        else:
+            qualified_did = f"did:sov:{conn_rec.their_public_did}"
+        pthid = conn_rec.invitation_msg_id or qualified_did
         attach = AttachDecorator.data_base64(did_doc.serialize())
         await attach.data.sign(my_info.verkey, wallet)
         if not my_label:
@@ -279,7 +311,7 @@ class DIDXManager(BaseConnectionManager):
 
         # Notify Mediator
         if keylist_updates and mediation_record:
-            responder = self._session.inject(BaseResponder, required=False)
+            responder = self._session.inject_or(BaseResponder)
             await responder.send(
                 keylist_updates, connection_id=mediation_record.connection_id
             )
@@ -325,7 +357,7 @@ class DIDXManager(BaseConnectionManager):
         wallet = self._session.inject(BaseWallet)
 
         # Multitenancy setup
-        multitenant_mgr = self._session.inject(MultitenantManager, required=False)
+        multitenant_mgr = self._session.inject_or(MultitenantManager)
         wallet_id = self._session.settings.get("wallet.id")
 
         # Determine what key will need to sign the response
@@ -353,14 +385,19 @@ class DIDXManager(BaseConnectionManager):
         except StorageNotFoundError:
             if recipient_verkey:
                 raise DIDXManagerError(
-                    "No explicit invitation found for pairwise connection"
+                    "No explicit invitation found for pairwise connection "
+                    f"in state {ConnRecord.State.INVITATION.rfc23}: "
+                    "a prior connection request may have updated the connection state"
                 )
 
         if conn_rec:  # invitation was explicit
             connection_key = conn_rec.invitation_key
             if conn_rec.is_multiuse_invitation:
                 wallet = self._session.inject(BaseWallet)
-                my_info = await wallet.create_local_did()
+                my_info = await wallet.create_local_did(
+                    method=DIDMethod.SOV,
+                    key_type=KeyType.ED25519,
+                )
                 keylist_updates = await mediation_mgr.add_key(
                     my_info.verkey, keylist_updates
                 )
@@ -371,6 +408,7 @@ class DIDXManager(BaseConnectionManager):
                     state=ConnRecord.State.REQUEST.rfc23,
                     accept=conn_rec.accept,
                     their_role=conn_rec.their_role,
+                    connection_protocol=DIDX_PROTO,
                 )
 
                 await new_conn_rec.save(
@@ -410,7 +448,7 @@ class DIDXManager(BaseConnectionManager):
                     f"Connection DID {request.did} does not match "
                     f"DID Doc id {conn_did_doc.did}"
                 ),
-                error_code=ProblemReportReason.REQUEST_NOT_ACCEPTED,
+                error_code=ProblemReportReason.REQUEST_NOT_ACCEPTED.value,
             )
         await self.store_did_document(conn_did_doc)
 
@@ -420,7 +458,8 @@ class DIDXManager(BaseConnectionManager):
             )  # null=manual; oob-manager calculated at conn rec creation
 
             conn_rec.their_label = request.label
-            conn_rec.alias = alias
+            if alias:
+                conn_rec.alias = alias
             conn_rec.their_did = request.did
             conn_rec.state = ConnRecord.State.REQUEST.rfc23
             conn_rec.request_id = request._id
@@ -429,7 +468,10 @@ class DIDXManager(BaseConnectionManager):
             )
         else:
             # request is against implicit invitation on public DID
-            my_info = await wallet.create_local_did()
+            my_info = await wallet.create_local_did(
+                method=DIDMethod.SOV,
+                key_type=KeyType.ED25519,
+            )
 
             keylist_updates = await mediation_mgr.add_key(
                 my_info.verkey, keylist_updates
@@ -460,6 +502,7 @@ class DIDXManager(BaseConnectionManager):
                 invitation_msg_id=None,
                 request_id=request._id,
                 state=ConnRecord.State.REQUEST.rfc23,
+                connection_protocol=DIDX_PROTO,
             )
             await conn_rec.save(
                 self._session, reason="Received connection request from public DID"
@@ -471,7 +514,7 @@ class DIDXManager(BaseConnectionManager):
         # Send keylist updates to mediator
         mediation_record = await mediation_record_if_id(self._session, mediation_id)
         if keylist_updates and mediation_record:
-            responder = self._session.inject(BaseResponder, required=False)
+            responder = self._session.inject_or(BaseResponder)
             await responder.send(
                 keylist_updates, connection_id=mediation_record.connection_id
             )
@@ -482,7 +525,7 @@ class DIDXManager(BaseConnectionManager):
                 my_endpoint,
                 mediation_id=mediation_id,
             )
-            responder = self._session.inject(BaseResponder, required=False)
+            responder = self._session.inject_or(BaseResponder)
             if responder:
                 await responder.send_reply(
                     response, connection_id=conn_rec.connection_id
@@ -525,7 +568,7 @@ class DIDXManager(BaseConnectionManager):
         base_mediation_record = None
 
         # Multitenancy setup
-        multitenant_mgr = self._session.inject(MultitenantManager, required=False)
+        multitenant_mgr = self._session.inject_or(MultitenantManager)
         wallet_id = self._session.settings.get("wallet.id")
         if multitenant_mgr and wallet_id:
             base_mediation_record = await multitenant_mgr.get_default_mediator()
@@ -540,7 +583,10 @@ class DIDXManager(BaseConnectionManager):
         if conn_rec.my_did:
             my_info = await wallet.get_local_did(conn_rec.my_did)
         else:
-            my_info = await wallet.create_local_did()
+            my_info = await wallet.create_local_did(
+                method=DIDMethod.SOV,
+                key_type=KeyType.ED25519,
+            )
             conn_rec.my_did = my_info.did
             keylist_updates = await mediation_mgr.add_key(
                 my_info.verkey, keylist_updates
@@ -583,7 +629,7 @@ class DIDXManager(BaseConnectionManager):
 
         # Update Mediator if necessary
         if keylist_updates and mediation_record:
-            responder = self._session.inject(BaseResponder, required=False)
+            responder = self._session.inject_or(BaseResponder)
             await responder.send(
                 keylist_updates, connection_id=mediation_record.connection_id
             )
@@ -653,7 +699,7 @@ class DIDXManager(BaseConnectionManager):
         if not conn_rec:
             raise DIDXManagerError(
                 "No corresponding connection request found",
-                error_code=ProblemReportReason.RESPONSE_NOT_ACCEPTED,
+                error_code=ProblemReportReason.RESPONSE_NOT_ACCEPTED.value,
             )
 
         if ConnRecord.State.get(conn_rec.state) is not ConnRecord.State.REQUEST:
@@ -691,7 +737,7 @@ class DIDXManager(BaseConnectionManager):
         # create and send connection-complete message
         complete = DIDXComplete()
         complete.assign_thread_from(response)
-        responder = self._session.inject(BaseResponder, required=False)
+        responder = self._session.inject_or(BaseResponder)
         if responder:
             await responder.send_reply(complete, connection_id=conn_rec.connection_id)
 
@@ -733,7 +779,7 @@ class DIDXManager(BaseConnectionManager):
         except StorageNotFoundError:
             raise DIDXManagerError(
                 "No corresponding connection request found",
-                error_code=ProblemReportReason.COMPLETE_NOT_ACCEPTED,
+                error_code=ProblemReportReason.COMPLETE_NOT_ACCEPTED.value,
             )
 
         conn_rec.state = ConnRecord.State.COMPLETED.rfc23

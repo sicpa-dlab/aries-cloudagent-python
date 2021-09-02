@@ -5,11 +5,12 @@ from .....messaging.base_handler import (
     BaseResponder,
     RequestContext,
 )
-from .....protocols.trustping.v1_0.messages.ping import Ping
+
+from ....problem_report.v1_0.message import ProblemReport
+from ....trustping.v1_0.messages.ping import Ping
 
 from ..manager import DIDXManager, DIDXManagerError
 from ..messages.response import DIDXResponse
-from ..messages.problem_report import ProblemReport
 
 
 class DIDXResponseHandler(BaseHandler):
@@ -47,7 +48,7 @@ class DIDXResponseHandler(BaseHandler):
                             "Error parsing DIDDoc for problem report"
                         )
                 await responder.send_reply(
-                    ProblemReport(problem_code=e.error_code, explain=str(e)),
+                    ProblemReport(description={"en": e.message, "code": e.error_code}),
                     target_list=targets,
                 )
             return

@@ -22,13 +22,13 @@ cd aries-cloudagent-python/demo
 In one shell run Faber:
 
 ```bash
-./run_demo faber
+LEDGER_URL=http://dev.greenlight.bcovrin.vonx.io ./run_demo faber
 ```
 
 ... and in the second shell run Alice:
 
 ```bash
-./run_demo alice
+LEDGER_URL=http://dev.greenlight.bcovrin.vonx.io ./run_demo alice
 ```
 
 When Faber has produced an invitation, copy it over to Alice.
@@ -38,8 +38,7 @@ Then, in the Faber shell, select option ```1``` to issue a credential to Alice. 
 Then, in the Faber shell, enter ```X``` to exit the controller, and then run the Acme controller:
 
 ```bash
-X
-./run_demo acme
+LEDGER_URL=http://dev.greenlight.bcovrin.vonx.io ./run_demo acme
 ```
 
 In the Alice shell, select option ```4``` (to enter a new invitation) and then copy over Acme's invitation once it's available.
@@ -52,14 +51,15 @@ Then, in the Acme shell, you can select option ```2``` and then option ```1```, 
 In the Acme code ```acme.py``` we are going to add code to issue a proof request to Alice, and then validate the received proof.
 
 First the following import statements and constants that we will need near the top of acme.py:
-```
+
+``` python
 import random
 
 from datetime import date
 from uuid import uuid4
 ```
 
-```
+``` python
 TAILS_FILE_COUNT = int(os.getenv("TAILS_FILE_COUNT", 100))
 CRED_PREVIEW_TYPE = (
     "did:sov:BzCbsNYhMrjHiqZDTUASHg;spec/issue-credential/2.0/credential-preview"
@@ -68,7 +68,7 @@ CRED_PREVIEW_TYPE = (
 
 Next locate the code that is triggered by option ```2```:
 
-```
+``` python
             elif option == "2":
                 log_status("#20 Request proof of degree from alice")
                 # TODO presentation requests
@@ -76,7 +76,7 @@ Next locate the code that is triggered by option ```2```:
 
 Replace the ```# TODO``` comment with the following code:
 
-```
+``` python
                 req_attrs = [
                     {
                         "name": "name",
@@ -104,38 +104,38 @@ Replace the ```# TODO``` comment with the following code:
                 }
                 proof_request_web_request = {
                     "connection_id": agent.connection_id,
-                    "proof_request": indy_proof_request
+                    "presentation_request": {"indy": indy_proof_request},
                 }
                 # this sends the request to our agent, which forwards it to Alice
                 # (based on the connection_id)
                 await agent.admin_POST(
-                    "/present-proof/send-request",
+                    "/present-proof-2.0/send-request",
                     proof_request_web_request
                 )
 ```
 
 Now we need to handle receipt of the proof.  Locate the code that handles received proofs (this is in a webhook callback):
 
-```
-        if state == "presentation_received":
+``` python
+        if state == "presentation-received":
             # TODO handle received presentations
             pass
 ```
 
 then replace the ```# TODO``` comment and the ```pass``` statement:
 
-```
+``` python
             log_status("#27 Process the proof provided by X")
             log_status("#28 Check if proof is valid")
             proof = await self.admin_POST(
-                f"/present-proof/records/{pres_ex_id}/verify-presentation"
+                f"/present-proof-2.0/records/{pres_ex_id}/verify-presentation"
             )
             self.log("Proof = ", proof["verified"])
 
             # if presentation is a degree schema (proof of education),
             # check values received
-            pres_req = message["presentation_request"]
-            pres = message["presentation"]
+            pres_req = message["by_format"]["pres_request"]["indy"]
+            pres = message["by_format"]["pres"]["indy"]
             is_proof_of_education = (
                 pres_req["name"] == "Proof of Education"
             )
@@ -169,33 +169,21 @@ There are two options for this.  We can (a) add code under option ```1``` to iss
 
 We're going to do option (a), but you can try to implement option (b) as homework.  You have most of the information you need from the proof response!
 
-
 First though we need to register a schema and credential definition.  Find this code:
 
-```
-        with log_timer("Publish schema and cred def duration:"):
-            pass
-            # TODO define schema
-            # version = format(
-            #     "%d.%d.%d"
-            #     % (
-            #         random.randint(1, 101),
-            #         random.randint(1, 101),
-            #         random.randint(1, 101),
-            #     )
-            # )
-            # (schema_id, cred_def_id) = await agent.register_schema_and_creddef(
-            #     "employee id schema",
-            #     version,
-            #     ["employee_id", "name", "date", "position"],
-            #     support_revocation=False,
-            #     revocation_registry_size=TAILS_FILE_COUNT,
-            # )
+``` python
+        # TODO: Create schema
+        # acme_schema_name = "employee id schema"
+        # acme_schema_attrs = ["employee_id", "name", "date", "position"]
+        await acme_agent.initialize(
+            the_agent=agent,
+            # schema_name=acme_schema_name,
+            # schema_attrs=acme_schema_attrs,
 ```
 
-... and just remove the ```pass``` statement and ```TODO ```, then uncommment the rest.  Easy, no?
+... and just remove the ```TODO ```, then uncommment the rest.  Easy, no?
 
-```
+``` python
         with log_timer("Publish schema and cred def duration:"):
             # define schema
             version = format(
@@ -217,7 +205,7 @@ First though we need to register a schema and credential definition.  Find this 
 
 For option (1) we want to replace the ```# TODO``` comment here:
 
-```
+``` python
             elif option == "1":
                 log_status("#13 Issue credential offer to X")
                 # TODO credential offers
@@ -225,7 +213,7 @@ For option (1) we want to replace the ```# TODO``` comment here:
 
 with the following code:
 
-```
+``` python
                 agent.cred_attrs[cred_def_id] = {
                     "employee_id": "ACME0009",
                     "name": "Alice Smith",
@@ -245,12 +233,14 @@ with the following code:
                     "credential_preview": cred_preview,
                     "filter": {"indy": {"cred_def_id": cred_def_id}},
                 }
-                await agent.admin_POST("/issue-credential-2.0/send-offer", offer_request)
+                await agent.admin_POST(
+                    "/issue-credential-2.0/send-offer", offer_request
+                )
 ```
 
 ... and then locate the code that handles the credential request callback:
 
-```
+``` python
         if state == "request-received":
             # TODO issue credentials based on offer preview in cred ex record
             pass
@@ -258,12 +248,13 @@ with the following code:
 
 ... and replace the ```# TODO``` comment and ```pass``` statement with the following code to issue the credential as Acme offered it:
 
-```
+``` python
             # issue credentials based on offer preview in cred ex record
-            await self.admin_POST(
-                f"/issue-credential-2.0/records/{cred_ex_id}/issue",
-                {"comment": f"Issuing credential, exchange {cred_ex_id}"},
-            )
+            if not message.get("auto_issue"):
+                await self.admin_POST(
+                    f"/issue-credential-2.0/records/{cred_ex_id}/issue",
+                    {"comment": f"Issuing credential, exchange {cred_ex_id}"},
+                )
 ```
 
-Now you can run the Faber/Alice/Acme script again.  You should be able to receive a proof and then issue a credential to Alice.
+Now you can run the Faber/Alice/Acme steps again.  You should be able to receive a proof and then issue a credential to Alice.

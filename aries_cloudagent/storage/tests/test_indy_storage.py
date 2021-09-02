@@ -7,15 +7,15 @@ import indy.anoncreds
 import indy.crypto
 import indy.did
 import indy.wallet
-from indy.error import ErrorCode
 
+from indy.error import ErrorCode
 from asynctest import mock as async_mock
 
 from ...config.injection_context import InjectionContext
 from ...indy.sdk.profile import IndySdkProfileManager
 from ...storage.base import BaseStorage
 from ...storage.error import StorageError, StorageSearchError
-from ...storage.indy import IndySdkStorage, IndySdkStorageSearch
+from ...storage.indy import IndySdkStorage
 from ...storage.record import StorageRecord
 from ...wallet.indy import IndySdkWallet
 from ...ledger.indy import IndySdkLedgerPool

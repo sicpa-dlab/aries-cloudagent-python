@@ -1,4 +1,5 @@
 from io import StringIO
+
 from asynctest import TestCase as AsyncTestCase
 from asynctest import mock as async_mock
 
@@ -19,6 +20,7 @@ from ...core.protocol_registry import ProtocolRegistry
 from ...protocols.coordinate_mediation.v1_0.models.mediation_record import (
     MediationRecord,
 )
+from ...resolver.did_resolver import DIDResolver, DIDResolverRegistry
 from ...multitenant.manager import MultitenantManager
 from ...transport.inbound.message import InboundMessage
 from ...transport.inbound.receipt import MessageReceipt
@@ -29,6 +31,8 @@ from ...transport.wire_format import BaseWireFormat
 from ...transport.pack_format import PackWireFormat
 from ...utils.stats import Collector
 from ...wallet.base import BaseWallet
+from ...wallet.key_type import KeyType
+from ...wallet.did_method import DIDMethod
 
 from .. import conductor as test_module
 
@@ -79,6 +83,7 @@ class StubContextBuilder(ContextBuilder):
         context.injector.bind_instance(ProfileManager, InMemoryProfileManager())
         context.injector.bind_instance(ProtocolRegistry, ProtocolRegistry())
         context.injector.bind_instance(BaseWireFormat, self.wire_format)
+        context.injector.bind_instance(DIDResolver, DIDResolver(DIDResolverRegistry()))
         return context
 
 
@@ -107,7 +112,10 @@ class TestConductor(AsyncTestCase, Config, TestDIDs):
             session = await conductor.root_profile.session()
 
             wallet = session.inject(BaseWallet)
-            await wallet.create_public_did()
+            await wallet.create_public_did(
+                DIDMethod.SOV,
+                KeyType.ED25519,
+            )
 
             mock_inbound_mgr.return_value.setup.assert_awaited_once()
             mock_outbound_mgr.return_value.setup.assert_awaited_once()
@@ -126,6 +134,24 @@ class TestConductor(AsyncTestCase, Config, TestDIDs):
 
             mock_inbound_mgr.return_value.stop.assert_awaited_once_with()
             mock_outbound_mgr.return_value.stop.assert_awaited_once_with()
+
+    async def test_startup_admin_server_x(self):
+        builder: ContextBuilder = StubContextBuilder(self.test_settings_admin)
+        conductor = test_module.Conductor(builder)
+
+        with async_mock.patch.object(
+            test_module, "InboundTransportManager", autospec=True
+        ) as mock_inbound_mgr, async_mock.patch.object(
+            test_module, "OutboundTransportManager", autospec=True
+        ) as mock_outbound_mgr, async_mock.patch.object(
+            test_module, "LoggingConfigurator", autospec=True
+        ) as mock_logger, async_mock.patch.object(
+            test_module, "AdminServer", async_mock.MagicMock()
+        ) as mock_admin_server:
+
+            mock_admin_server.side_effect = ValueError()
+            with self.assertRaises(ValueError):
+                await conductor.setup()
 
     async def test_startup_no_public_did(self):
         builder: ContextBuilder = StubContextBuilder(self.test_settings)
@@ -194,30 +220,6 @@ class TestConductor(AsyncTestCase, Config, TestDIDs):
                 ]
             )
 
-    async def test_setup_x(self):
-        builder: ContextBuilder = StubContextBuilder(self.test_settings)
-        builder.update_settings(
-            {"admin.enabled": "1", "admin.webhook_urls": ["http://sample.webhook.ca"]}
-        )
-        conductor = test_module.Conductor(builder)
-
-        mock_om = async_mock.MagicMock(
-            setup=async_mock.CoroutineMock(),
-            register=async_mock.MagicMock(side_effect=KeyError("sample error")),
-            registered_schemes={},
-        )
-        with async_mock.patch.object(
-            test_module, "InboundTransportManager", autospec=True
-        ) as mock_inbound_mgr, async_mock.patch.object(
-            test_module, "OutboundTransportManager", autospec=True
-        ) as mock_outbound_mgr, async_mock.patch.object(
-            test_module, "LoggingConfigurator", async_mock.MagicMock()
-        ) as mock_logger:
-            mock_outbound_mgr.return_value = mock_om
-
-            with self.assertRaises(KeyError):
-                await conductor.setup()
-
     async def test_inbound_message_handler(self):
         builder: ContextBuilder = StubContextBuilder(self.test_settings)
         conductor = test_module.Conductor(builder)
@@ -240,8 +242,7 @@ class TestConductor(AsyncTestCase, Config, TestDIDs):
             assert mock_dispatch_q.call_args[0][0] is conductor.context
             assert mock_dispatch_q.call_args[0][1] is message
             assert mock_dispatch_q.call_args[0][2] == conductor.outbound_message_router
-            assert mock_dispatch_q.call_args[0][3] is None  # admin webhook router
-            assert callable(mock_dispatch_q.call_args[0][4])
+            assert callable(mock_dispatch_q.call_args[0][3])
 
     async def test_inbound_message_handler_ledger_x(self):
         builder: ContextBuilder = StubContextBuilder(self.test_settings_admin)
@@ -414,6 +415,25 @@ class TestConductor(AsyncTestCase, Config, TestDIDs):
                 await conductor.queue_outbound(conductor.root_profile, message)
                 mock_run_task.assert_called_once()
 
+    async def test_handle_outbound_queue(self):
+        builder: ContextBuilder = StubContextBuilder(self.test_settings)
+        conductor = test_module.Conductor(builder)
+
+        payload = "{}"
+        message = OutboundMessage(
+            payload=payload,
+            connection_id="dummy-conn-id",
+            target=async_mock.MagicMock(),
+            reply_to_verkey=TestDIDs.test_verkey,
+        )
+
+        await conductor.setup()
+        conductor.outbound_queue = async_mock.MagicMock(
+            enqueue_message=async_mock.CoroutineMock()
+        )
+
+        await conductor.queue_outbound(conductor.root_profile, message)
+
     async def test_handle_not_returned_ledger_x(self):
         builder: ContextBuilder = StubContextBuilder(self.test_settings_admin)
         conductor = test_module.Conductor(builder)
@@ -486,7 +506,10 @@ class TestConductor(AsyncTestCase, Config, TestDIDs):
 
         session = await conductor.root_profile.session()
         wallet = session.inject(BaseWallet)
-        await wallet.create_public_did()
+        await wallet.create_public_did(
+            DIDMethod.SOV,
+            KeyType.ED25519,
+        )
 
         with async_mock.patch.object(
             admin, "start", autospec=True
@@ -516,7 +539,10 @@ class TestConductor(AsyncTestCase, Config, TestDIDs):
 
         session = await conductor.root_profile.session()
         wallet = session.inject(BaseWallet)
-        await wallet.create_public_did()
+        await wallet.create_public_did(
+            DIDMethod.SOV,
+            KeyType.ED25519,
+        )
 
         with async_mock.patch.object(
             admin, "start", autospec=True
@@ -564,7 +590,10 @@ class TestConductor(AsyncTestCase, Config, TestDIDs):
 
             session = await conductor.root_profile.session()
             wallet = session.inject(BaseWallet)
-            await wallet.create_public_did()
+            await wallet.create_public_did(
+                DIDMethod.SOV,
+                KeyType.ED25519,
+            )
 
             mock_mgr.return_value.create_static_connection = async_mock.CoroutineMock()
             await conductor.start()
@@ -682,7 +711,10 @@ class TestConductor(AsyncTestCase, Config, TestDIDs):
 
             session = await conductor.root_profile.session()
             wallet = session.inject(BaseWallet)
-            await wallet.create_public_did()
+            await wallet.create_public_did(
+                DIDMethod.SOV,
+                KeyType.ED25519,
+            )
 
             await conductor.start()
             await conductor.stop()

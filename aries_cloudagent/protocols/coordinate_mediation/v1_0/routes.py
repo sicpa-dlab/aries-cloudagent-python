@@ -1,7 +1,5 @@
 """coordinate mediation admin routes."""
 
-# https://github.com/hyperledger/aries-rfcs/tree/master/features/0211-route-coordination#0211-mediator-coordination-protocol
-
 from aiohttp import web
 from aiohttp_apispec import (
     docs,
@@ -18,8 +16,10 @@ from ....messaging.models.base import BaseModelError
 from ....messaging.models.openapi import OpenAPISchema
 from ....messaging.valid import UUIDFour
 from ....storage.error import StorageError, StorageNotFoundError
-from ...connections.v1_0.routes import ConnIdMatchInfoSchema
+
+from ...connections.v1_0.routes import ConnectionsConnIdMatchInfoSchema
 from ...routing.v1_0.models.route_record import RouteRecord, RouteRecordSchema
+
 from .manager import MediationManager, MediationManagerError
 from .message_types import SPEC_URI
 from .messages.inner.keylist_update_rule import (
@@ -56,14 +56,15 @@ MEDIATION_STATE_SCHEMA = fields.Str(
             if m.startswith("STATE_")
         ]
     ),
-    example="request, granted, or denied",
+    example=MediationRecord.STATE_GRANTED,
 )
 
 
 MEDIATOR_TERMS_SCHEMA = fields.List(
     fields.Str(
-        description="Indicate terms that the mediator "
-        "requires the recipient to agree to"
+        description=(
+            "Indicate terms to which the mediator requires the recipient to agree"
+        )
     ),
     required=False,
     description="List of mediator rules for recipient",
@@ -72,8 +73,9 @@ MEDIATOR_TERMS_SCHEMA = fields.List(
 
 RECIPIENT_TERMS_SCHEMA = fields.List(
     fields.Str(
-        description="Indicate terms that the recipient "
-        "requires the mediator to agree to"
+        description=(
+            "Indicate terms to which the recipient requires the mediator to agree"
+        )
     ),
     required=False,
     description="List of recipient rules for mediation",
@@ -146,7 +148,10 @@ class KeylistSchema(OpenAPISchema):
 class KeylistQueryFilterRequestSchema(OpenAPISchema):
     """Request schema for keylist query filtering."""
 
-    filter = fields.Dict(required=False, description="Filter for keylist query.")
+    filter = fields.Dict(
+        required=False,
+        description="Filter for keylist query",
+    )
 
 
 class KeylistQueryPaginateQuerySchema(OpenAPISchema):
@@ -202,7 +207,7 @@ async def list_mediation_requests(request: web.BaseRequest):
         results.sort(key=mediation_sort_key)
     except (StorageError, BaseModelError) as err:
         raise web.HTTPBadRequest(reason=err.roll_up) from err
-    return web.json_response(results)
+    return web.json_response({"results": results})
 
 
 @docs(tags=["mediation"], summary="Retrieve mediation request record")
@@ -248,7 +253,7 @@ async def delete_mediation_request(request: web.BaseRequest):
 
 
 @docs(tags=["mediation"], summary="Request mediation from connection")
-@match_info_schema(ConnIdMatchInfoSchema())
+@match_info_schema(ConnectionsConnIdMatchInfoSchema())
 @request_schema(MediationCreateRequestSchema())
 @response_schema(MediationRecordSchema(), 201)
 async def request_mediation(request: web.BaseRequest):
@@ -368,7 +373,7 @@ async def get_keylist(request: web.BaseRequest):
         results = [record.serialize() for record in keylists]
     except (StorageError, BaseModelError) as err:
         raise web.HTTPBadRequest(reason=err.roll_up) from err
-    return web.json_response(results, status=200)
+    return web.json_response({"results": results}, status=200)
 
 
 @docs(
@@ -396,7 +401,7 @@ async def send_keylist_query(request: web.BaseRequest):
         async with context.session() as session:
             record = await MediationRecord.retrieve_by_id(session, mediation_id)
         mediation_manager = MediationManager(context.profile)
-        request = await mediation_manager.prepare_keylist_query(
+        keylist_query_request = await mediation_manager.prepare_keylist_query(
             filter_=filter_,
             paginate_limit=paginate_limit,
             paginate_offset=paginate_offset,
@@ -406,8 +411,8 @@ async def send_keylist_query(request: web.BaseRequest):
     except (StorageError, BaseModelError) as err:
         raise web.HTTPBadRequest(reason=err.roll_up) from err
 
-    await outbound_handler(request, connection_id=record.connection_id)
-    return web.json_response(request.serialize(), status=201)
+    await outbound_handler(keylist_query_request, connection_id=record.connection_id)
+    return web.json_response(keylist_query_request.serialize(), status=201)
 
 
 @docs(tags=["mediation"], summary="Send keylist update to mediator")

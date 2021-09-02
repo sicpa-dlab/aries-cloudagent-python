@@ -1,6 +1,7 @@
 """Introduction service admin routes."""
 
 import logging
+from typing import Optional
 
 from aiohttp import web
 from aiohttp_apispec import docs, match_info_schema, querystring_schema, response_schema
@@ -34,7 +35,7 @@ class IntroStartQueryStringSchema(OpenAPISchema):
     )
 
 
-class ConnIdMatchInfoSchema(OpenAPISchema):
+class IntroConnIdMatchInfoSchema(OpenAPISchema):
     """Path parameters and validators for request taking connection id."""
 
     conn_id = fields.Str(
@@ -46,7 +47,7 @@ class ConnIdMatchInfoSchema(OpenAPISchema):
     tags=["introduction"],
     summary="Start an introduction between two connections",
 )
-@match_info_schema(ConnIdMatchInfoSchema())
+@match_info_schema(IntroConnIdMatchInfoSchema())
 @querystring_schema(IntroStartQueryStringSchema())
 @response_schema(IntroModuleResponseSchema, description="")
 async def introduction_start(request: web.BaseRequest):
@@ -64,15 +65,19 @@ async def introduction_start(request: web.BaseRequest):
     target_connection_id = request.query.get("target_connection_id")
     message = request.query.get("message")
 
-    service: BaseIntroductionService = context.inject(
-        BaseIntroductionService, required=False
+    service: Optional[BaseIntroductionService] = context.inject_or(
+        BaseIntroductionService
     )
     if not service:
         raise web.HTTPForbidden(reason="Introduction service not available")
 
     try:
         await service.start_introduction(
-            init_connection_id, target_connection_id, message, outbound_handler
+            init_connection_id,
+            target_connection_id,
+            message,
+            await context.session(),
+            outbound_handler,
         )
     except (IntroductionError, StorageError) as err:
         raise web.HTTPBadRequest(reason=err.roll_up) from err

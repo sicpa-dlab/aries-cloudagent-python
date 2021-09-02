@@ -8,12 +8,15 @@ lifecycle hook callbacks storing state for message threads, etc.
 import asyncio
 import logging
 import os
+import warnings
+
 from typing import Callable, Coroutine, Union
 
 from aiohttp.web import HTTPException
 
 from ..core.profile import Profile
 from ..messaging.agent_message import AgentMessage
+from ..messaging.base_message import BaseMessage
 from ..messaging.error import MessageParseError
 from ..messaging.models.base import BaseModelError
 from ..messaging.request_context import RequestContext
@@ -23,14 +26,19 @@ from ..protocols.connections.v1_0.manager import ConnectionManager
 from ..protocols.problem_report.v1_0.message import ProblemReport
 from ..transport.inbound.message import InboundMessage
 from ..transport.outbound.message import OutboundMessage
+from ..transport.outbound.status import OutboundSendStatus
 from ..utils.stats import Collector
 from ..utils.task_queue import CompletedTask, PendingTask, TaskQueue
-from ..utils.tracing import trace_event, get_timer
+from ..utils.tracing import get_timer, trace_event
 
 from .error import ProtocolMinorVersionNotSupported
 from .protocol_registry import ProtocolRegistry
 
 LOGGER = logging.getLogger(__name__)
+
+
+class ProblemReportParseError(MessageParseError):
+    """Error to raise on failure to parse problem-report message."""
 
 
 class Dispatcher:
@@ -49,7 +57,7 @@ class Dispatcher:
 
     async def setup(self):
         """Perform async instance setup."""
-        self.collector = self.profile.inject(Collector, required=False)
+        self.collector = self.profile.inject_or(Collector)
         max_active = int(os.getenv("DISPATCHER_MAX_ACTIVE", 50))
         self.task_queue = TaskQueue(
             max_active=max_active, timed=bool(self.collector), trace_fn=self.log_task
@@ -88,7 +96,6 @@ class Dispatcher:
         profile: Profile,
         inbound_message: InboundMessage,
         send_outbound: Coroutine,
-        send_webhook: Coroutine = None,
         complete: Callable = None,
     ) -> PendingTask:
         """
@@ -98,7 +105,6 @@ class Dispatcher:
             profile: The profile associated with the inbound message
             inbound_message: The inbound message instance
             send_outbound: Async function to send outbound messages
-            send_webhook: Async function to dispatch a webhook
             complete: Function to call when the handler has completed
 
         Returns:
@@ -106,7 +112,7 @@ class Dispatcher:
 
         """
         return self.put_task(
-            self.handle_message(profile, inbound_message, send_outbound, send_webhook),
+            self.handle_message(profile, inbound_message, send_outbound),
             complete,
         )
 
@@ -115,7 +121,6 @@ class Dispatcher:
         profile: Profile,
         inbound_message: InboundMessage,
         send_outbound: Coroutine,
-        send_webhook: Coroutine = None,
     ):
         """
         Configure responder and message context and invoke the message handler.
@@ -124,7 +129,6 @@ class Dispatcher:
             profile: The profile associated with the inbound message
             inbound_message: The inbound message instance
             send_outbound: Async function to send outbound messages
-            send_webhook: Async function to dispatch a webhook
 
         Returns:
             The response from the handler
@@ -133,14 +137,21 @@ class Dispatcher:
         r_time = get_timer()
 
         error_result = None
+        message = None
         try:
             message = await self.make_message(inbound_message.payload)
+        except ProblemReportParseError:
+            pass  # avoid problem report recursion
         except MessageParseError as e:
             LOGGER.error(f"Message parsing failed: {str(e)}, sending problem report")
-            error_result = ProblemReport(explain_ltxt=str(e))
+            error_result = ProblemReport(
+                description={
+                    "en": str(e),
+                    "code": "message-parse-failure",
+                }
+            )
             if inbound_message.receipt.thread_id:
                 error_result.assign_thread_id(inbound_message.receipt.thread_id)
-            message = None
 
         trace_event(
             self.profile.settings,
@@ -156,7 +167,6 @@ class Dispatcher:
             context,
             inbound_message,
             send_outbound,
-            send_webhook,
             reply_session_id=inbound_message.session_id,
             reply_to_verkey=inbound_message.receipt.sender_verkey,
         )
@@ -178,13 +188,14 @@ class Dispatcher:
 
         if error_result:
             await responder.send_reply(error_result)
-            return
+        elif context.message:
+            context.injector.bind_instance(BaseResponder, responder)
 
-        handler_cls = context.message.Handler
-        handler = handler_cls().handle
-        if self.collector:
-            handler = self.collector.wrap_coro(handler, [handler.__qualname__])
-        await handler(context, responder)
+            handler_cls = context.message.Handler
+            handler = handler_cls().handle
+            if self.collector:
+                handler = self.collector.wrap_coro(handler, [handler.__qualname__])
+            await handler(context, responder)
 
         trace_event(
             self.profile.settings,
@@ -193,7 +204,7 @@ class Dispatcher:
             perf_counter=r_time,
         )
 
-    async def make_message(self, parsed_msg: dict) -> AgentMessage:
+    async def make_message(self, parsed_msg: dict) -> BaseMessage:
         """
         Deserialize a message dict into the appropriate message instance.
 
@@ -212,13 +223,14 @@ class Dispatcher:
             the given type
 
         """
-
-        registry: ProtocolRegistry = self.profile.inject(ProtocolRegistry)
+        if not isinstance(parsed_msg, dict):
+            raise MessageParseError("Expected a JSON object")
         message_type = parsed_msg.get("@type")
 
         if not message_type:
             raise MessageParseError("Message does not contain '@type' parameter")
 
+        registry: ProtocolRegistry = self.profile.inject(ProtocolRegistry)
         try:
             message_cls = registry.resolve_message_class(message_type)
         except ProtocolMinorVersionNotSupported as e:
@@ -230,6 +242,8 @@ class Dispatcher:
         try:
             instance = message_cls.deserialize(parsed_msg)
         except BaseModelError as e:
+            if "/problem-report" in message_type:
+                raise ProblemReportParseError("Error parsing problem report message")
             raise MessageParseError(f"Error deserializing message: {e}") from e
 
         return instance
@@ -247,7 +261,6 @@ class DispatcherResponder(BaseResponder):
         context: RequestContext,
         inbound_message: InboundMessage,
         send_outbound: Coroutine,
-        send_webhook: Coroutine = None,
         **kwargs,
     ):
         """
@@ -257,17 +270,15 @@ class DispatcherResponder(BaseResponder):
             context: The request context of the incoming message
             inbound_message: The inbound message triggering this handler
             send_outbound: Async function to send outbound message
-            send_webhook: Async function to dispatch a webhook
 
         """
         super().__init__(**kwargs)
         self._context = context
         self._inbound_message = inbound_message
         self._send = send_outbound
-        self._webhook = send_webhook
 
     async def create_outbound(
-        self, message: Union[AgentMessage, str, bytes], **kwargs
+        self, message: Union[AgentMessage, BaseMessage, str, bytes], **kwargs
     ) -> OutboundMessage:
         """
         Create an OutboundMessage from a message body.
@@ -287,24 +298,28 @@ class DispatcherResponder(BaseResponder):
                     "in_time": in_time,
                     "out_time": datetime_now(),
                 }
+
         return await super().create_outbound(message, **kwargs)
 
-    async def send_outbound(self, message: OutboundMessage):
+    async def send_outbound(self, message: OutboundMessage) -> OutboundSendStatus:
         """
         Send outbound message.
 
         Args:
             message: The `OutboundMessage` to be sent
         """
-        await self._send(self._context.profile, message, self._inbound_message)
+        return await self._send(self._context.profile, message, self._inbound_message)
 
     async def send_webhook(self, topic: str, payload: dict):
         """
-        Dispatch a webhook.
+        Dispatch a webhook. DEPRECATED: use the event bus instead.
 
         Args:
             topic: the webhook topic identifier
             payload: the webhook payload value
         """
-        if self._webhook:
-            await self._webhook(self._context.profile, topic, payload)
+        warnings.warn(
+            "responder.send_webhook is deprecated; please use the event bus instead.",
+            DeprecationWarning,
+        )
+        await self._context.profile.notify("acapy::webhook::" + topic, payload)

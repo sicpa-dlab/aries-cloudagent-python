@@ -1,5 +1,4 @@
-from asynctest import TestCase as AsyncTestCase
-from asynctest import mock as async_mock
+from asynctest import mock as asyn_mock, TestCase as AsyncTestCase
 
 from ...core.in_memory import InMemoryProfile
 from ...core.profile import ProfileSession
@@ -23,4 +22,4 @@ class TestAdminRequestContext(AsyncTestCase):
         test_ctx = test_module.AdminRequestContext.test_context({Collector: None})
         async with test_ctx.session() as test_sesn:
             with self.assertRaises(test_module.InjectionError):
-                test_sesn.inject(Collector, required=True)
+                test_sesn.inject(Collector)

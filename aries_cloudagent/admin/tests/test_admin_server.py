@@ -1,3 +1,6 @@
+import json
+import pytest
+
 from aiohttp import ClientSession, DummyCookieJar, TCPConnector, web
 from aiohttp.test_utils import unused_port
 
@@ -6,6 +9,7 @@ from asynctest import mock as async_mock
 
 from ...config.default_context import DefaultContextBuilder
 from ...config.injection_context import InjectionContext
+from ...core.event_bus import Event
 from ...core.in_memory import InMemoryProfile
 from ...core.protocol_registry import ProtocolRegistry
 from ...transport.outbound.message import OutboundMessage
@@ -130,7 +134,7 @@ class TestAdminServer(AsyncTestCase):
             conductor_stop=async_mock.CoroutineMock(),
             task_queue=TaskQueue(max_active=4) if task_queue else None,
             conductor_stats=(
-                None if task_queue else async_mock.CoroutineMock(return_value=[1, 2])
+                None if task_queue else async_mock.CoroutineMock(return_value={"a": 1})
             ),
         )
 
@@ -157,10 +161,12 @@ class TestAdminServer(AsyncTestCase):
 
         settings = {
             "admin.admin_insecure_mode": False,
+            "admin.admin_client_max_request_size": 4,
             "admin.admin_api_key": "test-api-key",
         }
         server = self.get_admin_server(settings)
         await server.start()
+        assert server.app._client_max_size == 4 * 1024 * 1024
         with async_mock.patch.object(
             server, "websocket_queues", async_mock.MagicMock()
         ) as mock_wsq:
@@ -184,6 +190,93 @@ class TestAdminServer(AsyncTestCase):
         await DefaultContextBuilder().load_plugins(context)
         server = self.get_admin_server({"admin.admin_insecure_mode": True}, context)
         app = await server.make_application()
+
+    async def test_import_routes_multitenant_middleware(self):
+        # imports all default admin routes
+        context = InjectionContext()
+        context.injector.bind_instance(ProtocolRegistry, ProtocolRegistry())
+        profile = InMemoryProfile.test_profile()
+        context.injector.bind_instance(
+            test_module.MultitenantManager,
+            test_module.MultitenantManager(profile),
+        )
+        await DefaultContextBuilder().load_plugins(context)
+        server = self.get_admin_server(
+            {
+                "admin.admin_insecure_mode": False,
+                "admin.admin_api_key": "test-api-key",
+            },
+            context,
+        )
+
+        # cover multitenancy start code
+        app = await server.make_application()
+        app["swagger_dict"] = {}
+        await server.on_startup(app)
+
+        # multitenant authz
+        [mt_authz_middle] = [
+            m for m in app.middlewares if ".check_multitenant_authorization" in str(m)
+        ]
+
+        mock_request = async_mock.MagicMock(
+            method="GET",
+            headers={"Authorization": "Bearer ..."},
+            path="/multitenancy/etc",
+            text=async_mock.CoroutineMock(return_value="abc123"),
+        )
+        with self.assertRaises(test_module.web.HTTPUnauthorized):
+            await mt_authz_middle(mock_request, None)
+
+        mock_request = async_mock.MagicMock(
+            method="GET",
+            headers={},
+            path="/protected/non-multitenancy/non-server",
+            text=async_mock.CoroutineMock(return_value="abc123"),
+        )
+        with self.assertRaises(test_module.web.HTTPUnauthorized):
+            await mt_authz_middle(mock_request, None)
+
+        mock_request = async_mock.MagicMock(
+            method="GET",
+            headers={"Authorization": "Bearer ..."},
+            path="/protected/non-multitenancy/non-server",
+            text=async_mock.CoroutineMock(return_value="abc123"),
+        )
+        mock_handler = async_mock.CoroutineMock()
+        await mt_authz_middle(mock_request, mock_handler)
+        assert mock_handler.called_once_with(mock_request)
+
+        # multitenant setup context exception paths
+        [setup_ctx_middle] = [m for m in app.middlewares if ".setup_context" in str(m)]
+
+        mock_request = async_mock.MagicMock(
+            method="GET",
+            headers={"Authorization": "Non-bearer ..."},
+            path="/protected/non-multitenancy/non-server",
+            text=async_mock.CoroutineMock(return_value="abc123"),
+        )
+        with self.assertRaises(test_module.web.HTTPUnauthorized):
+            await setup_ctx_middle(mock_request, None)
+
+        mock_request = async_mock.MagicMock(
+            method="GET",
+            headers={"Authorization": "Bearer ..."},
+            path="/protected/non-multitenancy/non-server",
+            text=async_mock.CoroutineMock(return_value="abc123"),
+        )
+        with async_mock.patch.object(
+            server.multitenant_manager,
+            "get_profile_for_token",
+            async_mock.CoroutineMock(),
+        ) as mock_get_profile:
+            mock_get_profile.side_effect = [
+                test_module.MultitenantManagerError("corrupt token"),
+                test_module.StorageNotFoundError("out of memory"),
+            ]
+            for i in range(2):
+                with self.assertRaises(test_module.web.HTTPUnauthorized):
+                    await setup_ctx_middle(mock_request, None)
 
     async def test_register_external_plugin_x(self):
         context = InjectionContext()
@@ -252,6 +345,42 @@ class TestAdminServer(AsyncTestCase):
 
         await server.stop()
 
+    async def test_query_config(self):
+        settings = {
+            "admin.admin_insecure_mode": False,
+            "admin.admin_api_key": "test-api-key",
+            "admin.webhook_urls": ["localhost:8123/abc#secret", "localhost:8123/def"],
+            "multitenant.jwt_secret": "abc123",
+            "wallet.key": "abc123",
+            "wallet.rekey": "def456",
+            "wallet.seed": "00000000000000000000000000000000",
+            "wallet.storage.creds": "secret",
+        }
+        server = self.get_admin_server(settings)
+        await server.start()
+
+        async with self.client_session.get(
+            f"http://127.0.0.1:{self.port}/status/config",
+            headers={"x-api-key": "test-api-key"},
+        ) as response:
+            config = json.loads(await response.text())["config"]
+            assert "admin.admin_insecure_mode" in config
+            assert all(
+                k not in config
+                for k in [
+                    "admin.admin_api_key",
+                    "multitenant.jwt_secret",
+                    "wallet.key",
+                    "wallet.rekey",
+                    "wallet.seed",
+                    "wallet.storage_creds",
+                ]
+            )
+            assert config["admin.webhook_urls"] == [
+                "localhost:8123/abc",
+                "localhost:8123/def",
+            ]
+
     async def test_visit_shutting_down(self):
         settings = {
             "admin.admin_insecure_mode": True,
@@ -307,3 +436,25 @@ class TestAdminServer(AsyncTestCase):
         ) as response:
             assert response.status == 503
         await server.stop()
+
+
+@pytest.fixture
+async def server():
+    test_class = TestAdminServer()
+    await test_class.setUp()
+    yield test_class.get_admin_server()
+    await test_class.tearDown()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "event_topic, webhook_topic",
+    [("acapy::record::topic", "topic"), ("acapy::record::topic::state", "topic")],
+)
+async def test_on_record_event(server, event_topic, webhook_topic):
+    profile = InMemoryProfile.test_profile()
+    with async_mock.patch.object(
+        server, "send_webhook", async_mock.CoroutineMock()
+    ) as mock_send_webhook:
+        await server._on_record_event(profile, Event(event_topic, None))
+        mock_send_webhook.assert_called_once_with(profile, webhook_topic, None)

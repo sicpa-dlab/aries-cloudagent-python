@@ -1,13 +1,17 @@
 """Command line option parsing."""
 
 import abc
+from functools import reduce
+from itertools import chain
 from os import environ
 
+import deepmerge
+import yaml
 from configargparse import ArgumentParser, Namespace, YAMLConfigFileParser
 from typing import Type
 
 from .error import ArgsParseError
-from .util import ByteSize
+from .util import BoundedInt, ByteSize
 from ..utils.tracing import trace_event
 
 CAT_PROVISION = "general"
@@ -99,54 +103,73 @@ class AdminGroup(ArgumentGroup):
             nargs=2,
             metavar=("<host>", "<port>"),
             env_var="ACAPY_ADMIN",
-            help="Specify the host and port on which to run the administrative server.\
-            If not provided, no admin server is made available.",
+            help=(
+                "Specify the host and port on which to run the administrative server. "
+                "If not provided, no admin server is made available."
+            ),
         )
         parser.add_argument(
             "--admin-api-key",
             type=str,
             metavar="<api-key>",
             env_var="ACAPY_ADMIN_API_KEY",
-            help="Protect all admin endpoints with the provided API key.\
-            API clients (e.g. the controller) must pass the key in the HTTP\
-            header using 'X-API-Key: <api key>'. Either this parameter or the\
-            '--admin-insecure-mode' parameter MUST be specified.",
+            help=(
+                "Protect all admin endpoints with the provided API key. "
+                "API clients (e.g. the controller) must pass the key in the HTTP "
+                "header using 'X-API-Key: <api key>'. Either this parameter or the "
+                "'--admin-insecure-mode' parameter MUST be specified."
+            ),
         )
         parser.add_argument(
             "--admin-insecure-mode",
             action="store_true",
             env_var="ACAPY_ADMIN_INSECURE_MODE",
-            help="Run the admin web server in insecure mode. DO NOT USE FOR\
-            PRODUCTION DEPLOYMENTS. The admin server will be publicly available\
-            to anyone who has access to the interface. Either this parameter or\
-            the '--api-key' parameter MUST be specified.",
+            help=(
+                "Run the admin web server in insecure mode. DO NOT USE FOR "
+                "PRODUCTION DEPLOYMENTS. The admin server will be publicly available "
+                "to anyone who has access to the interface. Either this parameter or "
+                "the '--api-key' parameter MUST be specified."
+            ),
         )
         parser.add_argument(
             "--no-receive-invites",
             action="store_true",
             env_var="ACAPY_NO_RECEIVE_INVITES",
-            help="Prevents an agent from receiving invites by removing the\
-            '/connections/receive-invite' route from the administrative\
-            interface. Default: false.",
+            help=(
+                "Prevents an agent from receiving invites by removing the "
+                "'/connections/receive-invite' route from the administrative "
+                "interface. Default: false."
+            ),
         )
         parser.add_argument(
             "--help-link",
             type=str,
             metavar="<help-url>",
             env_var="ACAPY_HELP_LINK",
-            help="A URL to an administrative interface help web page that a controller\
-            user interface can get from the agent and provide as a link to users.",
+            help=(
+                "A URL to an administrative interface help web page that a controller "
+                "user interface can get from the agent and provide as a link to users."
+            ),
         )
         parser.add_argument(
             "--webhook-url",
             action="append",
             metavar="<url#api_key>",
             env_var="ACAPY_WEBHOOK_URL",
-            help="Send webhooks containing internal state changes to the specified\
-            URL. Optional API key to be passed in the request body can be appended using\
-            a hash separator [#]. This is useful for a controller to monitor agent events\
-            and respond to those events using the admin API. If not specified, \
-            webhooks are not published by the agent.",
+            help=(
+                "Send webhooks containing internal state changes to the specified "
+                "URL. Optional API key to be passed in the request body can be "
+                "appended using a hash separator [#]. This is useful for a controller "
+                "to monitor agent events and respond to those events using the "
+                "admin API. If not specified, webhooks are not published by the agent."
+            ),
+        )
+        parser.add_argument(
+            "--admin-client-max-request-size",
+            default=1,
+            type=BoundedInt(min=1, max=16),
+            env_var="ACAPY_ADMIN_CLIENT_MAX_REQUEST_SIZE",
+            help="Maximum client request size to admin server, in megabytes: default 1",
         )
 
     def get_settings(self, args: Namespace):
@@ -161,7 +184,7 @@ class AdminGroup(ArgumentGroup):
             ):
                 raise ArgsParseError(
                     "Either --admin-api-key or --admin-insecure-mode "
-                    + "must be set but not both."
+                    "must be set but not both."
                 )
 
             settings["admin.admin_api_key"] = admin_api_key
@@ -179,6 +202,10 @@ class AdminGroup(ArgumentGroup):
             if hook_url:
                 hook_urls.append(hook_url)
             settings["admin.webhook_urls"] = hook_urls
+
+            settings["admin.admin_client_max_request_size"] = (
+                args.admin_client_max_request_size or 1
+            )
         return settings
 
 
@@ -194,9 +221,11 @@ class DebugGroup(ArgumentGroup):
             "--debug",
             action="store_true",
             env_var="ACAPY_DEBUG",
-            help="Enables a remote debugging service that can be accessed\
-            using ptvsd for Visual Studio Code. The framework will wait\
-            for the debugger to connect at start-up. Default: false.",
+            help=(
+                "Enables a remote debugging service that can be accessed "
+                "using ptvsd for Visual Studio Code. The framework will wait "
+                "for the debugger to connect at start-up. Default: false."
+            ),
         )
         parser.add_argument(
             "--debug-seed",
@@ -216,29 +245,37 @@ class DebugGroup(ArgumentGroup):
             "--debug-credentials",
             action="store_true",
             env_var="ACAPY_DEBUG_CREDENTIALS",
-            help="Enable additional logging around credential exchanges.\
-            Default: false.",
+            help=(
+                "Enable additional logging around credential exchanges. "
+                "Default: false."
+            ),
         )
         parser.add_argument(
             "--debug-presentations",
             action="store_true",
             env_var="ACAPY_DEBUG_PRESENTATIONS",
-            help="Enable additional logging around presentation exchanges.\
-            Default: false.",
+            help=(
+                "Enable additional logging around presentation exchanges. "
+                "Default: false."
+            ),
         )
         parser.add_argument(
             "--invite",
             action="store_true",
             env_var="ACAPY_INVITE",
-            help="After startup, generate and print a new out-of-band connection invitation\
-            URL. Default: false.",
+            help=(
+                "After startup, generate and print a new out-of-band connection "
+                "invitation URL. Default: false."
+            ),
         )
         parser.add_argument(
             "--connections-invite",
             action="store_true",
             env_var="ACAPY_CONNECTIONS_INVITE",
-            help="After startup, generate and print a new connections protocol \
-            style invitation URL. Default: false.",
+            help=(
+                "After startup, generate and print a new connections protocol "
+                "style invitation URL. Default: false."
+            ),
         )
         parser.add_argument(
             "--invite-label",
@@ -274,41 +311,50 @@ class DebugGroup(ArgumentGroup):
             env_var="ACAPY_TEST_SUITE_ENDPOINT",
             help="URL endpoint for sending messages to the test suite agent.",
         )
-
         parser.add_argument(
             "--auto-accept-invites",
             action="store_true",
             env_var="ACAPY_AUTO_ACCEPT_INVITES",
-            help="Automatically accept invites without firing a webhook event or\
-            waiting for an admin request. Default: false.",
+            help=(
+                "Automatically accept invites without firing a webhook event or "
+                "waiting for an admin request. Default: false."
+            ),
         )
         parser.add_argument(
             "--auto-accept-requests",
             action="store_true",
             env_var="ACAPY_AUTO_ACCEPT_REQUESTS",
-            help="Automatically accept connection requests without firing\
-            a webhook event or waiting for an admin request. Default: false.",
+            help=(
+                "Automatically accept connection requests without firing "
+                "a webhook event or waiting for an admin request. Default: false."
+            ),
         )
         parser.add_argument(
             "--auto-respond-messages",
             action="store_true",
             env_var="ACAPY_AUTO_RESPOND_MESSAGES",
-            help="Automatically respond to basic messages indicating the message was\
-            received. Default: false.",
+            help=(
+                "Automatically respond to basic messages indicating the message was "
+                "received. Default: false."
+            ),
         )
         parser.add_argument(
             "--auto-respond-credential-proposal",
             action="store_true",
             env_var="ACAPY_AUTO_RESPOND_CREDENTIAL_PROPOSAL",
-            help="Auto-respond to credential proposals with corresponding "
-            + "credential offers",
+            help=(
+                "Auto-respond to credential proposals with corresponding "
+                "credential offers"
+            ),
         )
         parser.add_argument(
             "--auto-respond-credential-offer",
             action="store_true",
             env_var="ACAPY_AUTO_RESPOND_CREDENTIAL_OFFER",
-            help="Automatically respond to Indy credential offers with a credential\
-            request. Default: false",
+            help=(
+                "Automatically respond to Indy credential offers with a credential "
+                "request. Default: false"
+            ),
         )
         parser.add_argument(
             "--auto-respond-credential-request",
@@ -320,30 +366,39 @@ class DebugGroup(ArgumentGroup):
             "--auto-respond-presentation-proposal",
             action="store_true",
             env_var="ACAPY_AUTO_RESPOND_PRESENTATION_PROPOSAL",
-            help="Auto-respond to presentation proposals with corresponding "
-            + "presentation requests",
+            help=(
+                "Auto-respond to presentation proposals with corresponding "
+                "presentation requests"
+            ),
         )
         parser.add_argument(
             "--auto-respond-presentation-request",
             action="store_true",
             env_var="ACAPY_AUTO_RESPOND_PRESENTATION_REQUEST",
-            help="Automatically respond to Indy presentation requests with a\
-            constructed presentation if a corresponding credential can be retrieved\
-            for every referent in the presentation request. Default: false.",
+            help=(
+                "Automatically respond to Indy presentation requests with a "
+                "constructed presentation if a corresponding credential can be "
+                "retrieved for every referent in the presentation request. "
+                "Default: false."
+            ),
         )
         parser.add_argument(
             "--auto-store-credential",
             action="store_true",
             env_var="ACAPY_AUTO_STORE_CREDENTIAL",
-            help="Automatically store an issued credential upon receipt.\
-            Default: false.",
+            help=(
+                "Automatically store an issued credential upon receipt. "
+                "Default: false."
+            ),
         )
         parser.add_argument(
             "--auto-verify-presentation",
             action="store_true",
             env_var="ACAPY_AUTO_VERIFY_PRESENTATION",
-            help="Automatically verify a presentation when it is received.\
-            Default: false.",
+            help=(
+                "Automatically verify a presentation when it is received. "
+                "Default: false."
+            ),
         )
 
     def get_settings(self, args: Namespace) -> dict:
@@ -408,8 +463,10 @@ class GeneralGroup(ArgumentGroup):
         parser.add_argument(
             "--arg-file",
             is_config_file=True,
-            help="Load aca-py arguments from the specified file.  Note that\
-            this file *must* be in YAML format.",
+            help=(
+                "Load aca-py arguments from the specified file.  Note that "
+                "this file *must* be in YAML format."
+            ),
         )
         parser.add_argument(
             "--plugin",
@@ -419,19 +476,49 @@ class GeneralGroup(ArgumentGroup):
             required=False,
             metavar="<module>",
             env_var="ACAPY_PLUGIN",
-            help="Load <module> as external plugin module. Multiple\
-            instances of this parameter can be specified.",
+            help=(
+                "Load <module> as external plugin module. Multiple "
+                "instances of this parameter can be specified."
+            ),
         )
+
+        parser.add_argument(
+            "--plugin-config",
+            dest="plugin_config",
+            type=str,
+            required=False,
+            env_var="ACAPY_PLUGIN_CONFIG",
+            help="Load YAML file path that defines external plugin configuration.",
+        )
+
+        parser.add_argument(
+            "-o",
+            "--plugin-config-value",
+            dest="plugin_config_values",
+            type=str,
+            nargs="+",
+            action="append",
+            required=False,
+            metavar="<KEY=VALUE>",
+            help=(
+                "Set an arbitrary plugin configuration option in the format "
+                "KEY=VALUE. Use dots in KEY to set deeply nested values, as in "
+                '"a.b.c=value". VALUE is parsed as yaml.'
+            ),
+        )
+
         parser.add_argument(
             "--storage-type",
             type=str,
             metavar="<storage-type>",
             env_var="ACAPY_STORAGE_TYPE",
-            help="Specifies the type of storage provider to use for the internal\
-            storage engine. This storage interface is used to store internal state.\
-            Supported internal storage types are 'basic' (memory)\
-            and 'indy'.  The default (if not specified) is 'indy' if the wallet type\
-            is set to 'indy', otherwise 'basic'.",
+            help=(
+                "Specifies the type of storage provider to use for the internal "
+                "storage engine. This storage interface is used to store internal "
+                "state  Supported internal storage types are 'basic' (memory) "
+                "and 'indy'.  The default (if not specified) is 'indy' if the "
+                "wallet type is set to 'indy', otherwise 'basic'."
+            ),
         )
         parser.add_argument(
             "-e",
@@ -440,15 +527,17 @@ class GeneralGroup(ArgumentGroup):
             nargs="+",
             metavar="<endpoint>",
             env_var="ACAPY_ENDPOINT",
-            help="Specifies the endpoints to put into DIDDocs\
-            to inform other agents of where they should send messages destined\
-            for this agent. Each endpoint could be one of the specified inbound\
-            transports for this agent, or the endpoint could be that of\
-            another agent (e.g. 'https://example.com/agent-endpoint') if the\
-            routing of messages to this agent by a mediator is configured.\
-            The first endpoint specified will be used in invitations.\
-            The endpoints are used in the formation of a connection\
-            with another agent.",
+            help=(
+                "Specifies the endpoints to put into DIDDocs "
+                "to inform other agents of where they should send messages destined "
+                "for this agent. Each endpoint could be one of the specified inbound "
+                "transports for this agent, or the endpoint could be that of "
+                "another agent (e.g. 'https://example.com/agent-endpoint') if the "
+                "routing of messages to this agent by a mediator is configured. "
+                "The first endpoint specified will be used in invitations. "
+                "The endpoints are used in the formation of a connection "
+                "with another agent."
+            ),
         )
         parser.add_argument(
             "--profile-endpoint",
@@ -461,8 +550,7 @@ class GeneralGroup(ArgumentGroup):
             "--read-only-ledger",
             action="store_true",
             env_var="ACAPY_READ_ONLY_LEDGER",
-            help="Sets ledger to read-only to prevent updates.\
-            Default: false.",
+            help="Sets ledger to read-only to prevent updates. Default: false.",
         )
         parser.add_argument(
             "--tails-server-base-url",
@@ -476,8 +564,10 @@ class GeneralGroup(ArgumentGroup):
             type=str,
             metavar="<tails-server-upload-url>",
             env_var="ACAPY_TAILS_SERVER_UPLOAD_URL",
-            help="Sets the base url of the tails server for upload, defaulting to the\
-            tails server base url.",
+            help=(
+                "Sets the base url of the tails server for upload, defaulting to the "
+                "tails server base url."
+            ),
         )
 
     def get_settings(self, args: Namespace) -> dict:
@@ -485,6 +575,23 @@ class GeneralGroup(ArgumentGroup):
         settings = {}
         if args.external_plugins:
             settings["external_plugins"] = args.external_plugins
+
+        if args.plugin_config:
+            with open(args.plugin_config, "r") as stream:
+                settings["plugin_config"] = yaml.safe_load(stream)
+
+        if args.plugin_config_values:
+            if "plugin_config" not in settings:
+                settings["plugin_config"] = {}
+
+            for value_str in chain(*args.plugin_config_values):
+                key, value = value_str.split("=", maxsplit=1)
+                value = yaml.safe_load(value)
+                deepmerge.always_merger.merge(
+                    settings["plugin_config"],
+                    reduce(lambda v, k: {k: v}, key.split(".")[::-1], value),
+                )
+
         if args.storage_type:
             settings["storage_type"] = args.storage_type
 
@@ -519,8 +626,10 @@ class LedgerGroup(ArgumentGroup):
             type=str,
             metavar="<ledger-pool-name>",
             env_var="ACAPY_LEDGER_POOL_NAME",
-            help="Specifies the name of the indy pool to be opened.\
-            This is useful if you have multiple pool configurations.",
+            help=(
+                "Specifies the name of the indy pool to be opened. "
+                "This is useful if you have multiple pool configurations."
+            ),
         )
         parser.add_argument(
             "--genesis-transactions",
@@ -528,9 +637,11 @@ class LedgerGroup(ArgumentGroup):
             dest="genesis_transactions",
             metavar="<genesis-transactions>",
             env_var="ACAPY_GENESIS_TRANSACTIONS",
-            help='Specifies the genesis transactions to use to connect to\
-            an Hyperledger Indy ledger. The transactions are provided as string\
-            of JSON e.g. \'{"reqSignature":{},"txn":{"data":{"d... <snip>\'',
+            help=(
+                "Specifies the genesis transactions to use to connect to "
+                "a Hyperledger Indy ledger. The transactions are provided as string "
+                'of JSON e.g. \'{"reqSignature":{},"txn":{"data":{"d... <snip>}}}\''
+            ),
         )
         parser.add_argument(
             "--genesis-file",
@@ -546,18 +657,45 @@ class LedgerGroup(ArgumentGroup):
             dest="genesis_url",
             metavar="<genesis-url>",
             env_var="ACAPY_GENESIS_URL",
-            help="Specifies the url from which to download the genesis\
-            transactions. For example, if you are using 'von-network',\
-            the URL might be 'http://localhost:9000/genesis'.\
-            Genesis transactions URLs are available for the Sovrin test/main networks.",
+            help=(
+                "Specifies the url from which to download the genesis "
+                "transactions. For example, if you are using 'von-network', "
+                "the URL might be 'http://localhost:9000/genesis'. "
+                "Genesis transactions URLs are available for the "
+                "Sovrin test/main networks."
+            ),
         )
         parser.add_argument(
             "--no-ledger",
             action="store_true",
             env_var="ACAPY_NO_LEDGER",
-            help="Specifies that aca-py will run with no ledger configured.\
-            This must be set if running in no-ledger mode.  Overrides any\
-            specified ledger or genesis configurations.  Default: false.",
+            help=(
+                "Specifies that aca-py will run with no ledger configured. "
+                "This must be set if running in no-ledger mode.  Overrides any "
+                "specified ledger or genesis configurations.  Default: false."
+            ),
+        )
+        parser.add_argument(
+            "--ledger-keepalive",
+            default=5,
+            type=BoundedInt(min=5),
+            env_var="ACAPY_LEDGER_KEEP_ALIVE",
+            help="Specifies how many seconds to keep the ledger open. Default: 5",
+        )
+        parser.add_argument(
+            "--ledger-socks-proxy",
+            type=str,
+            dest="ledger_socks_proxy",
+            metavar="<host:port>",
+            required=False,
+            env_var="ACAPY_LEDGER_SOCKS_PROXY",
+            help=(
+                "Specifies the socks proxy (NOT http proxy) hostname and port in format "
+                "'hostname:port'. This is an optional parameter to be passed to ledger "
+                "pool configuration and ZMQ in case if aca-py is running "
+                "in a corporate/private network behind a corporate proxy and will "
+                "connect to the public (outside of corporate network) ledger pool"
+            ),
         )
 
     def get_settings(self, args: Namespace) -> dict:
@@ -575,11 +713,16 @@ class LedgerGroup(ArgumentGroup):
             else:
                 raise ArgsParseError(
                     "One of --genesis-url --genesis-file or --genesis-transactions "
-                    + "must be specified (unless --no-ledger is specified to "
-                    + "explicitly configure aca-py to run with no ledger)."
+                    "must be specified (unless --no-ledger is specified to "
+                    "explicitly configure aca-py to run with no ledger)."
                 )
             if args.ledger_pool_name:
                 settings["ledger.pool_name"] = args.ledger_pool_name
+            if args.ledger_keepalive:
+                settings["ledger.keepalive"] = args.ledger_keepalive
+            if args.ledger_socks_proxy:
+                settings["ledger.socks_proxy"] = args.ledger_socks_proxy
+
         return settings
 
 
@@ -607,8 +750,10 @@ class LoggingGroup(ArgumentGroup):
             metavar="<log-file>",
             default=None,
             env_var="ACAPY_LOG_FILE",
-            help="Overrides the output destination for the root logger (as defined\
-            by the log config file) to the named <log-file>.",
+            help=(
+                "Overrides the output destination for the root logger (as defined "
+                "by the log config file) to the named <log-file>."
+            ),
         )
         parser.add_argument(
             "--log-level",
@@ -617,8 +762,10 @@ class LoggingGroup(ArgumentGroup):
             metavar="<log-level>",
             default=None,
             env_var="ACAPY_LOG_LEVEL",
-            help="Specifies a custom logging level as one of:\
-            ('debug', 'info', 'warning', 'error', 'critical')",
+            help=(
+                "Specifies a custom logging level as one of: "
+                "('debug', 'info', 'warning', 'error', 'critical')"
+            ),
         )
 
     def get_settings(self, args: Namespace) -> dict:
@@ -645,16 +792,26 @@ class ProtocolGroup(ArgumentGroup):
             "--auto-ping-connection",
             action="store_true",
             env_var="ACAPY_AUTO_PING_CONNECTION",
-            help="Automatically send a trust ping immediately after a\
-            connection response is accepted. Some agents require this before\
-            marking a connection as 'active'. Default: false.",
+            help=(
+                "Automatically send a trust ping immediately after a "
+                "connection response is accepted. Some agents require this before "
+                "marking a connection as 'active'. Default: false."
+            ),
+        )
+        parser.add_argument(
+            "--auto-accept-intro-invitation-requests",
+            action="store_true",
+            env_var="ACAPY_AUTO_ACCEPT_INTRO_INVITATION_REQUESTS",
+            help="Automatically accept introduction invitations. Default: false.",
         )
         parser.add_argument(
             "--invite-base-url",
             type=str,
             metavar="<base-url>",
             env_var="ACAPY_INVITE_BASE_URL",
-            help="Base URL to use when formatting connection invitations in URL format.",
+            help=(
+                "Base URL to use when formatting connection invitations in URL format."
+            ),
         )
         parser.add_argument(
             "--monitor-ping",
@@ -663,11 +820,19 @@ class ProtocolGroup(ArgumentGroup):
             help="Send a webhook when a ping is sent or received.",
         )
         parser.add_argument(
+            "--monitor-forward",
+            action="store_true",
+            env_var="ACAPY_MONITOR_FORWARD",
+            help="Send a webhook when a forward is received.",
+        )
+        parser.add_argument(
             "--public-invites",
             action="store_true",
             env_var="ACAPY_PUBLIC_INVITES",
-            help="Send invitations out, and receive connection requests,\
-            using the public DID for the agent. Default: false.",
+            help=(
+                "Send invitations out, and receive connection requests, "
+                "using the public DID for the agent. Default: false."
+            ),
         )
         parser.add_argument(
             "--timing",
@@ -719,24 +884,30 @@ class ProtocolGroup(ArgumentGroup):
             "--emit-new-didcomm-prefix",
             action="store_true",
             env_var="ACAPY_EMIT_NEW_DIDCOMM_PREFIX",
-            help="Emit protocol messages with new DIDComm prefix; i.e.,\
-            'https://didcomm.org/' instead of (default) prefix\
-            'did:sov:BzCbsNYhMrjHiqZDTUASHg;spec/'.",
+            help=(
+                "Emit protocol messages with new DIDComm prefix; i.e., "
+                "'https://didcomm.org/' instead of (default) prefix "
+                "'did:sov:BzCbsNYhMrjHiqZDTUASHg;spec/'."
+            ),
         )
         parser.add_argument(
             "--emit-new-didcomm-mime-type",
             action="store_true",
             env_var="ACAPY_EMIT_NEW_DIDCOMM_MIME_TYPE",
-            help="Send packed agent messages with the DIDComm MIME type\
-            as of RFC 0044; i.e., 'application/didcomm-envelope-enc'\
-            instead of 'application/ssi-agent-wire'.",
+            help=(
+                "Send packed agent messages with the DIDComm MIME type "
+                "as of RFC 0044; i.e., 'application/didcomm-envelope-enc' "
+                "instead of 'application/ssi-agent-wire'."
+            ),
         )
         parser.add_argument(
             "--exch-use-unencrypted-tags",
             action="store_true",
             env_var="ACAPY_EXCH_USE_UNENCRYPTED_TAGS",
-            help="Store tags for exchange protocols (credential and presentation)\
-            using unencrypted rather than encrypted tags",
+            help=(
+                "Store tags for exchange protocols (credential and presentation) "
+                "using unencrypted rather than encrypted tags"
+            ),
         )
 
     def get_settings(self, args: Namespace) -> dict:
@@ -744,10 +915,14 @@ class ProtocolGroup(ArgumentGroup):
         settings = {}
         if args.auto_ping_connection:
             settings["auto_ping_connection"] = True
+        if args.auto_accept_intro_invitation_requests:
+            settings["auto_accept_intro_invitation_requests"] = True
         if args.invite_base_url:
             settings["invite_base_url"] = args.invite_base_url
         if args.monitor_ping:
             settings["debug.monitor_ping"] = args.monitor_ping
+        if args.monitor_forward:
+            settings["monitor_forward"] = args.monitor_forward
         if args.public_invites:
             settings["public_invites"] = True
         if args.timing:
@@ -808,8 +983,10 @@ class StartupGroup(ArgumentGroup):
             "--auto-provision",
             action="store_true",
             env_var="ACAPY_AUTO_PROVISION",
-            help="If the requested profile does not exist, initialize it with\
-            the given parameters.",
+            help=(
+                "If the requested profile does not exist, initialize it with "
+                "the given parameters."
+            ),
         )
 
     def get_settings(self, args: Namespace):
@@ -837,12 +1014,14 @@ class TransportGroup(ArgumentGroup):
             nargs=3,
             metavar=("<module>", "<host>", "<port>"),
             env_var="ACAPY_INBOUND_TRANSPORT",
-            help="REQUIRED. Defines the inbound transport(s) on which the agent\
-            listens for receiving messages from other agents. This parameter can\
-            be specified multiple times to create multiple interfaces.\
-            Built-in inbound transport types include 'http' and 'ws'.\
-            However, other transports can be loaded by specifying an absolute\
-            module path.",
+            help=(
+                "REQUIRED. Defines the inbound transport(s) on which the agent "
+                "listens for receiving messages from other agents. This parameter can "
+                "be specified multiple times to create multiple interfaces. "
+                "Built-in inbound transport types include 'http' and 'ws'. "
+                "However, other transports can be loaded by specifying an absolute "
+                "module path."
+            ),
         )
         parser.add_argument(
             "-ot",
@@ -852,10 +1031,28 @@ class TransportGroup(ArgumentGroup):
             action="append",
             metavar="<module>",
             env_var="ACAPY_OUTBOUND_TRANSPORT",
-            help="REQUIRED. Defines the outbound transport(s) on which the agent\
-            will send outgoing messages to other agents. This parameter can be passed\
-            multiple times to supoort multiple transport types. Supported outbound\
-            transport types are 'http' and 'ws'.",
+            help=(
+                "REQUIRED. Defines the outbound transport(s) on which the agent "
+                "will send outgoing messages to other agents. This parameter can be "
+                "passed multiple times to supoort multiple transport types. "
+                "Supported outbound transport types are 'http' and 'ws'."
+            ),
+        )
+        parser.add_argument(
+            "-oq",
+            "--outbound-queue",
+            dest="outbound_queue",
+            type=str,
+            env_var="ACAPY_OUTBOUND_TRANSPORT_QUEUE",
+            help=(
+                "Defines the location of the Outbound Queue Engine. This must be "
+                "a 'dotpath' to a Python module on the PYTHONPATH, followed by a "
+                "colon, followed by the name of a Python class that implements "
+                "BaseOutboundQueue. This commandline option is the official entry "
+                "point of ACA-py's pluggable queue interface. The default value is: "
+                "'aries_cloudagent.transport.outbound.queue.redis:RedisOutboundQueue'."
+                ""
+            ),
         )
         parser.add_argument(
             "-l",
@@ -863,20 +1060,24 @@ class TransportGroup(ArgumentGroup):
             type=str,
             metavar="<label>",
             env_var="ACAPY_LABEL",
-            help="Specifies the label for this agent. This label is publicized\
-            (self-attested) to other agents as part of forming a connection.",
+            help=(
+                "Specifies the label for this agent. This label is publicized "
+                "(self-attested) to other agents as part of forming a connection."
+            ),
         )
         parser.add_argument(
             "--image-url",
             type=str,
             env_var="ACAPY_IMAGE_URL",
-            help="Specifies the image url for this agent. This image url is publicized\
-            (self-attested) to other agents as part of forming a connection.",
+            help=(
+                "Specifies the image url for this agent. This image url is publicized "
+                "(self-attested) to other agents as part of forming a connection."
+            ),
         )
         parser.add_argument(
             "--max-message-size",
             default=2097152,
-            type=ByteSize(min_size=1024),
+            type=ByteSize(min=1024),
             metavar="<message-size>",
             env_var="ACAPY_MAX_MESSAGE_SIZE",
             help="Set the maximum size in bytes for inbound agent messages.",
@@ -885,18 +1086,22 @@ class TransportGroup(ArgumentGroup):
             "--enable-undelivered-queue",
             action="store_true",
             env_var="ACAPY_ENABLE_UNDELIVERED_QUEUE",
-            help="Enable the outbound undelivered queue that enables this agent\
-            to hold messages for delivery to agents without an endpoint. This\
-            option will require additional memory to store messages in the queue.",
+            help=(
+                "Enable the outbound undelivered queue that enables this agent "
+                "to hold messages for delivery to agents without an endpoint. This "
+                "option will require additional memory to store messages in the queue."
+            ),
         )
         parser.add_argument(
             "--max-outbound-retry",
             default=4,
-            type=ByteSize(min_size=1),
+            type=BoundedInt(min=1),
             env_var="ACAPY_MAX_OUTBOUND_RETRY",
-            help="Set the maximum retry number for undelivered outbound\
-            messages. Increasing this number might cause to increase the\
-            accumulated messages in message queue. Default value is 4.",
+            help=(
+                "Set the maximum retry number for undelivered outbound "
+                "messages. Increasing this number might cause to increase the "
+                "accumulated messages in message queue. Default value is 4."
+            ),
         )
 
     def get_settings(self, args: Namespace):
@@ -906,10 +1111,20 @@ class TransportGroup(ArgumentGroup):
             settings["transport.inbound_configs"] = args.inbound_transports
         else:
             raise ArgsParseError("-it/--inbound-transport is required")
+        if not args.outbound_transports and not args.outbound_queue:
+            raise ArgsParseError(
+                "-ot/--outbound-transport or -oq/--outbound-queue is required"
+            )
+        if args.outbound_transports and args.outbound_queue:
+            raise ArgsParseError(
+                "-ot/--outbound-transport and -oq/--outbound-queue are "
+                "not allowed together"
+            )
         if args.outbound_transports:
             settings["transport.outbound_configs"] = args.outbound_transports
-        else:
-            raise ArgsParseError("-ot/--outbound-transport is required")
+        if args.outbound_queue:
+            settings["transport.outbound_queue"] = args.outbound_queue
+
         settings["transport.enable_undelivered_queue"] = args.enable_undelivered_queue
 
         if args.label:
@@ -935,25 +1150,33 @@ class MediationGroup(ArgumentGroup):
         parser.add_argument(
             "--open-mediation",
             action="store_true",
-            help="Enables didcomm mediation. After establishing a connection, if enabled, \
-                an agent may request message mediation, which will allow the mediator to \
-                forward messages on behalf of the recipient. See aries-rfc:0211.",
+            env_var="ACAPY_MEDIATION_OPEN",
+            help=(
+                "Enables didcomm mediation. After establishing a connection, "
+                "if enabled, an agent may request message mediation, which will "
+                "allow the mediator to forward messages on behalf of the recipient. "
+                "See aries-rfc:0211."
+            ),
         )
         parser.add_argument(
             "--mediator-invitation",
             type=str,
             metavar="<invite URL to mediator>",
             env_var="ACAPY_MEDIATION_INVITATION",
-            help="Connect to mediator through provided invitation\
-            and send mediation request and set as default mediator.",
+            help=(
+                "Connect to mediator through provided invitation "
+                "and send mediation request and set as default mediator."
+            ),
         )
         parser.add_argument(
             "--mediator-connections-invite",
             action="store_true",
             env_var="ACAPY_MEDIATION_CONNECTIONS_INVITE",
-            help="Connect to mediator through a connection invitation. \
-                If not specified, connect using an OOB invitation. \
-                Default: false.",
+            help=(
+                "Connect to mediator through a connection invitation. "
+                "If not specified, connect using an OOB invitation. "
+                "Default: false."
+            ),
         )
         parser.add_argument(
             "--default-mediator-id",
@@ -1004,18 +1227,22 @@ class WalletGroup(ArgumentGroup):
             type=str,
             metavar="<wallet-seed>",
             env_var="ACAPY_WALLET_SEED",
-            help="Specifies the seed to use for the creation of a public\
-            DID for the agent to use with a Hyperledger Indy ledger, or a local\
-            ('--wallet-local-did') DID. If public, the DID must already exist\
-            on the ledger.",
+            help=(
+                "Specifies the seed to use for the creation of a public "
+                "DID for the agent to use with a Hyperledger Indy ledger, or a local "
+                "('--wallet-local-did') DID. If public, the DID must already exist "
+                "on the ledger."
+            ),
         )
         parser.add_argument(
             "--wallet-local-did",
             action="store_true",
             env_var="ACAPY_WALLET_LOCAL_DID",
-            help="If this parameter is set, provisions the wallet with a\
-            local DID from the '--seed' parameter, instead of a public DID\
-            to use with a Hyperledger Indy ledger.",
+            help=(
+                "If this parameter is set, provisions the wallet with a "
+                "local DID from the '--seed' parameter, instead of a public DID "
+                "to use with a Hyperledger Indy ledger."
+            ),
         )
         parser.add_argument(
             "--wallet-key",
@@ -1029,16 +1256,20 @@ class WalletGroup(ArgumentGroup):
             type=str,
             metavar="<wallet-rekey>",
             env_var="ACAPY_WALLET_REKEY",
-            help="Specifies a new master key value to which to rotate and to\
-            open the wallet next time.",
+            help=(
+                "Specifies a new master key value to which to rotate and to "
+                "open the wallet next time."
+            ),
         )
         parser.add_argument(
             "--wallet-name",
             type=str,
             metavar="<wallet-name>",
             env_var="ACAPY_WALLET_NAME",
-            help="Specifies the wallet name to be used by the agent.\
-            This is useful if your deployment has multiple wallets.",
+            help=(
+                "Specifies the wallet name to be used by the agent. "
+                "This is useful if your deployment has multiple wallets."
+            ),
         )
         parser.add_argument(
             "--wallet-type",
@@ -1046,9 +1277,11 @@ class WalletGroup(ArgumentGroup):
             metavar="<wallet-type>",
             default="basic",
             env_var="ACAPY_WALLET_TYPE",
-            help="Specifies the type of Indy wallet provider to use.\
-            Supported internal storage types are 'basic' (memory) and 'indy'.\
-            The default (if not specified) is 'basic'.",
+            help=(
+                "Specifies the type of Indy wallet provider to use. "
+                "Supported internal storage types are 'basic' (memory) and 'indy'. "
+                "The default (if not specified) is 'basic'."
+            ),
         )
         parser.add_argument(
             "--wallet-storage-type",
@@ -1056,51 +1289,61 @@ class WalletGroup(ArgumentGroup):
             metavar="<storage-type>",
             default="default",
             env_var="ACAPY_WALLET_STORAGE_TYPE",
-            help="Specifies the type of Indy wallet backend to use.\
-            Supported internal storage types are 'basic' (memory),\
-            'default' (sqlite), and 'postgres_storage'.  The default,\
-            if not specified, is 'default'.",
+            help=(
+                "Specifies the type of Indy wallet backend to use. "
+                "Supported internal storage types are 'basic' (memory), "
+                "'default' (sqlite), and 'postgres_storage'.  The default, "
+                "if not specified, is 'default'."
+            ),
         )
         parser.add_argument(
             "--wallet-storage-config",
             type=str,
             metavar="<storage-config>",
             env_var="ACAPY_WALLET_STORAGE_CONFIG",
-            help='Specifies the storage configuration to use for the wallet.\
-            This is required if you are for using \'postgres_storage\' wallet\
-            storage type. For example, \'{"url":"localhost:5432",\
-            "wallet_scheme":"MultiWalletSingleTable"}\'. This\
-            configuration maps to the indy sdk postgres plugin\
-            (PostgresConfig).',
+            help=(
+                "Specifies the storage configuration to use for the wallet. "
+                "This is required if you are for using 'postgres_storage' wallet "
+                'storage type. For example, \'{"url":"localhost:5432", '
+                '"wallet_scheme":"MultiWalletSingleTable"}\'. This '
+                "configuration maps to the indy sdk postgres plugin "
+                "(PostgresConfig)."
+            ),
         )
         parser.add_argument(
             "--wallet-storage-creds",
             type=str,
             metavar="<storage-creds>",
             env_var="ACAPY_WALLET_STORAGE_CREDS",
-            help='Specifies the storage credentials to use for the wallet.\
-            This is required if you are for using \'postgres_storage\' wallet\
-            For example, \'{"account":"postgres","password":\
-            "mysecretpassword","admin_account":"postgres",\
-            "admin_password":"mysecretpassword"}\'. This configuration maps\
-            to the indy sdk postgres plugin (PostgresCredentials). NOTE:\
-            admin_user must have the CREATEDB role or else initialization\
-            will fail.',
+            help=(
+                "Specifies the storage credentials to use for the wallet. "
+                "This is required if you are for using 'postgres_storage' wallet "
+                'For example, \'{"account":"postgres","password": '
+                '"mysecretpassword","admin_account":"postgres", '
+                '"admin_password":"mysecretpassword"}\'. This configuration maps '
+                "to the indy sdk postgres plugin (PostgresCredentials). NOTE: "
+                "admin_user must have the CREATEDB role or else initialization "
+                "will fail."
+            ),
         )
         parser.add_argument(
             "--replace-public-did",
             action="store_true",
             env_var="ACAPY_REPLACE_PUBLIC_DID",
-            help="If this parameter is set and an agent already has a public DID,\
-            and the '--seed' parameter specifies a new DID, the agent will use\
-            the new DID in place of the existing DID. Default: false.",
+            help=(
+                "If this parameter is set and an agent already has a public DID, "
+                "and the '--seed' parameter specifies a new DID, the agent will use "
+                "the new DID in place of the existing DID. Default: false."
+            ),
         )
         parser.add_argument(
             "--recreate-wallet",
             action="store_true",
             env_var="ACAPY_RECREATE_WALLET",
-            help="If an existing wallet exists with the same name, remove and\
-            recreate it during provisioning.",
+            help=(
+                "If an existing wallet exists with the same name, remove and "
+                "recreate it during provisioning."
+            ),
         )
 
     def get_settings(self, args: Namespace) -> dict:
@@ -1133,8 +1376,8 @@ class WalletGroup(ArgumentGroup):
             # requires name, key
             if not args.wallet_name or not args.wallet_key:
                 raise ArgsParseError(
-                    "Parameters --wallet-name and --wallet-key must be provided"
-                    + " for indy wallets"
+                    "Parameters --wallet-name and --wallet-key must be provided "
+                    "for indy wallets"
                 )
             # postgres storage requires additional configuration
             if (
@@ -1143,8 +1386,8 @@ class WalletGroup(ArgumentGroup):
             ):
                 if not args.wallet_storage_config or not args.wallet_storage_creds:
                     raise ArgsParseError(
-                        "Parameters --wallet-storage-config and --wallet-storage-creds"
-                        + " must be provided for indy postgres wallets"
+                        "Parameters --wallet-storage-config and --wallet-storage-creds "
+                        "must be provided for indy postgres wallets"
                     )
         return settings
 
@@ -1168,9 +1411,11 @@ class MultitenantGroup(ArgumentGroup):
             type=str,
             metavar="<jwt-secret>",
             env_var="ACAPY_MULTITENANT_JWT_SECRET",
-            help="Specify the secret to be used for Json Web Token (JWT) \
-            creation and verification. The JWTs are used to authenticate and authorize \
-            multitenant wallets.",
+            help=(
+                "Specify the secret to be used for Json Web Token (JWT) creation and "
+                "verification. The JWTs are used to authenticate and authorize "
+                "multitenant wallets."
+            ),
         )
         parser.add_argument(
             "--multitenant-admin",

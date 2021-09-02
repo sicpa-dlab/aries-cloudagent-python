@@ -29,6 +29,7 @@ class TestConnectionRoutes(AsyncTestCase):
         self.request.query = {
             "invitation_id": "dummy",  # exercise tag filter assignment
             "their_role": ConnRecord.Role.REQUESTER.rfc160,
+            "connection_protocol": ConnRecord.Protocol.RFC_0160.aries_protocol,
         }
 
         STATE_COMPLETED = ConnRecord.State.COMPLETED
@@ -200,7 +201,7 @@ class TestConnectionRoutes(AsyncTestCase):
 
             await test_module.connections_metadata(self.request)
             mock_metadata_get_all.assert_called_once()
-            mock_response.assert_called_once_with({"hello": "world"})
+            mock_response.assert_called_once_with({"results": {"hello": "world"}})
 
     async def test_connections_metadata_get_single(self):
         self.request.match_info = {"conn_id": "dummy"}
@@ -221,7 +222,7 @@ class TestConnectionRoutes(AsyncTestCase):
 
             await test_module.connections_metadata(self.request)
             mock_metadata_get.assert_called_once()
-            mock_response.assert_called_once_with({"test": "value"})
+            mock_response.assert_called_once_with({"results": {"test": "value"}})
 
     async def test_connections_metadata_x(self):
         self.request.match_info = {"conn_id": "dummy"}
@@ -265,7 +266,7 @@ class TestConnectionRoutes(AsyncTestCase):
 
             await test_module.connections_metadata_set(self.request)
             mock_metadata_set.assert_called_once()
-            mock_response.assert_called_once_with({"hello": "world"})
+            mock_response.assert_called_once_with({"results": {"hello": "world"}})
 
     async def test_connections_metadata_set_x(self):
         self.request.match_info = {"conn_id": "dummy"}
@@ -360,6 +361,7 @@ class TestConnectionRoutes(AsyncTestCase):
                     key: json.loads(value) if key != "alias" else value
                     for key, value in self.request.query.items()
                 },
+                my_label=None,
                 recipient_keys=body["recipient_keys"],
                 routing_keys=body["routing_keys"],
                 my_endpoint=body["service_endpoint"],

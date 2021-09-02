@@ -3,7 +3,8 @@ from configargparse import ArgumentTypeError
 from asynctest import TestCase as AsyncTestCase, mock as async_mock
 
 from .. import argparse
-from ..util import ByteSize
+from ..error import ArgsParseError
+from ..util import BoundedInt, ByteSize
 
 
 class TestArgParse(AsyncTestCase):
@@ -53,6 +54,45 @@ class TestArgParse(AsyncTestCase):
         assert settings.get("transport.outbound_configs") == ["http"]
         assert result.max_outbound_retry == 5
 
+    async def test_outbound_is_required(self):
+        """Test that either -ot or -oq are required"""
+        parser = argparse.create_argument_parser()
+        group = argparse.TransportGroup()
+        group.add_arguments(parser)
+
+        result = parser.parse_args(
+            [
+                "--inbound-transport",
+                "http",
+                "0.0.0.0",
+                "80",
+            ]
+        )
+
+        with self.assertRaises(argparse.ArgsParseError):
+            settings = group.get_settings(result)
+
+    async def test_outbound_queue(self):
+        """Test outbound queue class path string."""
+        parser = argparse.create_argument_parser()
+        group = argparse.TransportGroup()
+        group.add_arguments(parser)
+
+        result = parser.parse_args(
+            [
+                "--inbound-transport",
+                "http",
+                "0.0.0.0",
+                "80",
+                "--outbound-queue",
+                "my_queue.mod.path",
+            ]
+        )
+
+        settings = group.get_settings(result)
+
+        assert settings.get("transport.outbound_queue") == "my_queue.mod.path"
+
     async def test_general_settings_file(self):
         """Test file argument parsing."""
 
@@ -78,6 +118,33 @@ class TestArgParse(AsyncTestCase):
 
         assert settings.get("external_plugins") == ["foo"]
         assert settings.get("storage_type") == "bar"
+
+    async def test_plugin_config_file(self):
+        """Test file argument parsing."""
+
+        parser = argparse.create_argument_parser()
+        group = argparse.GeneralGroup()
+        group.add_arguments(parser)
+
+        result = parser.parse_args(
+            [
+                "--endpoint",
+                "localhost",
+                "--plugin-config",
+                "./aries_cloudagent/config/tests/test_plugins_config.yaml",
+            ]
+        )
+
+        assert (
+            result.plugin_config
+            == "./aries_cloudagent/config/tests/test_plugins_config.yaml"
+        )
+
+        settings = group.get_settings(result)
+
+        assert settings.get("plugin_config").get("mock_resolver") == {
+            "methods": ["sov", "btcr"]
+        }
 
     async def test_transport_settings_file(self):
         """Test file argument parsing."""
@@ -119,17 +186,42 @@ class TestArgParse(AsyncTestCase):
         assert bs("1G") == 1073741824
         assert bs("1t") == 1099511627776
 
-        bs = ByteSize(min_size=10)
+        bs = ByteSize(min=10)
         with self.assertRaises(ArgumentTypeError):
             bs("5")
         assert bs("12") == 12
 
-        bs = ByteSize(max_size=10)
+        bs = ByteSize(max=10)
         with self.assertRaises(ArgumentTypeError):
             bs("15")
         assert bs("10") == 10
 
-        assert repr(bs) == "ByteSize"
+        assert repr(bs) == "bytes"
+
+    def test_bounded_int(self):
+        bounded = BoundedInt()
+        with self.assertRaises(ArgumentTypeError):
+            bounded(None)
+        with self.assertRaises(ArgumentTypeError):
+            bounded("")
+        with self.assertRaises(ArgumentTypeError):
+            bounded("a")
+        with self.assertRaises(ArgumentTypeError):
+            bounded("1.5")
+        assert bounded("101") == 101
+        assert bounded("-99") == -99
+
+        bounded = BoundedInt(min=10)
+        with self.assertRaises(ArgumentTypeError):
+            bounded("5")
+        assert bounded("12") == 12
+
+        bounded = BoundedInt(max=10)
+        with self.assertRaises(ArgumentTypeError):
+            bounded("15")
+        assert bounded("10") == 10
+
+        assert repr(bounded) == "integer"
 
     async def test_mediation_x_clear_and_default(self):
         parser = argparse.create_argument_parser()
@@ -141,3 +233,30 @@ class TestArgParse(AsyncTestCase):
                 ["--clear-default-mediator", "--default-mediator-id", "asdf"]
             )
             group.get_settings(args)
+
+    def test_plugin_config_value_parsing(self):
+        required_args = ["-e", "http://localhost:3000"]
+        parser = argparse.create_argument_parser()
+        group = argparse.GeneralGroup()
+        group.add_arguments(parser)
+        args = parser.parse_args(
+            [
+                *required_args,
+                "--plugin-config-value",
+                "a.b.c=test",
+                "a.b.d=one",
+                "--plugin-config-value",
+                "x.y.z=value",
+                "--plugin-config-value",
+                "a_dict={key: value}",
+                "--plugin-config-value",
+                "a_list=[one, two]",
+            ]
+        )
+        settings = group.get_settings(args)
+
+        assert settings["plugin_config"]["a"]["b"]["c"] == "test"
+        assert settings["plugin_config"]["a"]["b"]["d"] == "one"
+        assert settings["plugin_config"]["x"]["y"]["z"] == "value"
+        assert settings["plugin_config"]["a_dict"] == {"key": "value"}
+        assert settings["plugin_config"]["a_list"] == ["one", "two"]

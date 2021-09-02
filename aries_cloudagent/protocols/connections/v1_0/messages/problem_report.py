@@ -7,10 +7,12 @@ from .....messaging.agent_message import AgentMessage, AgentMessageSchema
 
 from ..message_types import PROBLEM_REPORT
 
-HANDLER_CLASS = "aries_cloudagent.messaging.problem_report.handler.ProblemReportHandler"
+HANDLER_CLASS = (
+    "aries_cloudagent.protocols.problem_report.v1_0.handler.ProblemReportHandler"
+)
 
 
-class ProblemReportReason(str, Enum):
+class ProblemReportReason(Enum):
     """Supported reason codes."""
 
     INVITATION_NOT_ACCEPTED = "invitation_not_accepted"
@@ -20,7 +22,7 @@ class ProblemReportReason(str, Enum):
     RESPONSE_PROCESSING_ERROR = "response_processing_error"
 
 
-class ProblemReport(AgentMessage):
+class ConnectionProblemReport(AgentMessage):
     """Base class representing a connection problem report message."""
 
     class Meta:
@@ -28,7 +30,7 @@ class ProblemReport(AgentMessage):
 
         handler_class = HANDLER_CLASS
         message_type = PROBLEM_REPORT
-        schema_class = "ProblemReportSchema"
+        schema_class = "ConnectionProblemReportSchema"
 
     def __init__(self, *, problem_code: str = None, explain: str = None, **kwargs):
         """
@@ -43,13 +45,13 @@ class ProblemReport(AgentMessage):
         self.problem_code = problem_code
 
 
-class ProblemReportSchema(AgentMessageSchema):
-    """Schema for ProblemReport base class."""
+class ConnectionProblemReportSchema(AgentMessageSchema):
+    """Schema for ConnectionProblemReport base class."""
 
     class Meta:
-        """Metadata for problem report schema."""
+        """Metadata for connection problem report schema."""
 
-        model_class = ProblemReport
+        model_class = ConnectionProblemReport
         unknown = EXCLUDE
 
     explain = fields.Str(

@@ -1,10 +1,14 @@
-FROM bcgovimages/von-image:py36-1.15-0
+FROM bcgovimages/von-image:py36-1.15-1
 
 ENV ENABLE_PTVSD 0
 
 ADD requirements*.txt ./
 
-RUN pip3 install --no-cache-dir -r requirements.txt -r requirements.dev.txt
+RUN pip3 install --no-cache-dir \
+    -r requirements.txt \
+    -r requirements.askar.txt \
+    -r requirements.bbs.txt \
+    -r requirements.dev.txt
 
 ADD aries_cloudagent ./aries_cloudagent
 ADD bin ./bin

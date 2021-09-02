@@ -1,14 +1,26 @@
-"""Aries#0036 v1.0 credential exchange information with non-secrets storage."""
+"""Aries#0453 v2.0 credential exchange information with non-secrets storage."""
 
-from typing import Any, Mapping
+import logging
 
-from marshmallow import fields, validate
+from typing import Any, Mapping, Union
+
+from marshmallow import fields, Schema, validate
 
 from .....core.profile import ProfileSession
 from .....messaging.models.base_record import BaseExchangeRecord, BaseExchangeSchema
 from .....messaging.valid import UUIDFour
+from .....storage.base import StorageError
+
+from ..messages.cred_format import V20CredFormat
+from ..messages.cred_issue import V20CredIssue, V20CredIssueSchema
+from ..messages.cred_proposal import V20CredProposal, V20CredProposalSchema
+from ..messages.cred_offer import V20CredOffer, V20CredOfferSchema
+from ..messages.cred_request import V20CredRequest, V20CredRequestSchema
+from ..messages.inner.cred_preview import V20CredPreviewSchema
 
 from . import UNENCRYPTED_TAGS
+
+LOGGER = logging.getLogger(__name__)
 
 
 class V20CredExRecord(BaseExchangeRecord):
@@ -21,7 +33,7 @@ class V20CredExRecord(BaseExchangeRecord):
 
     RECORD_TYPE = "cred_ex_v20"
     RECORD_ID_NAME = "cred_ex_id"
-    WEBHOOK_TOPIC = "issue_credential_v2_0"
+    RECORD_TOPIC = "issue_credential_v2_0"
     TAG_NAMES = {"~thread_id"} if UNENCRYPTED_TAGS else {"thread_id"}
 
     INITIATOR_SELF = "self"
@@ -43,45 +55,43 @@ class V20CredExRecord(BaseExchangeRecord):
         self,
         *,
         cred_ex_id: str = None,
-        conn_id: str = None,
+        connection_id: str = None,
         thread_id: str = None,
         parent_thread_id: str = None,
         initiator: str = None,
         role: str = None,
         state: str = None,
-        cred_proposal: Mapping = None,  # serialized cred proposal message
-        cred_offer: Mapping = None,  # serialized cred offer message
-        cred_request: Mapping = None,  # serialized cred request message
-        cred_request_metadata: Mapping = None,  # credential request metadata
-        cred_issue: Mapping = None,  # serialized cred issue message
-        cred_id_stored: str = None,
+        cred_proposal: Union[Mapping, V20CredProposal] = None,  # aries message
+        cred_offer: Union[Mapping, V20CredOffer] = None,  # aries message
+        cred_request: Union[Mapping, V20CredRequest] = None,  # aries message
+        cred_issue: Union[Mapping, V20CredIssue] = None,  # aries message
         auto_offer: bool = False,
         auto_issue: bool = False,
         auto_remove: bool = True,
         error_msg: str = None,
-        trace: bool = False,
+        trace: bool = False,  # backward compat: BaseRecord.from_storage()
+        cred_id_stored: str = None,  # backward compat: BaseRecord.from_storage()
+        conn_id: str = None,  # backward compat: BaseRecord.from_storage()
+        by_format: Mapping = None,  # backward compat: BaseRecord.from_storage()
         **kwargs,
     ):
         """Initialize a new V20CredExRecord."""
         super().__init__(cred_ex_id, state, trace=trace, **kwargs)
         self._id = cred_ex_id
-        self.conn_id = conn_id
+        self.connection_id = connection_id or conn_id
         self.thread_id = thread_id
         self.parent_thread_id = parent_thread_id
         self.initiator = initiator
         self.role = role
         self.state = state
-        self.cred_proposal = cred_proposal
-        self.cred_offer = cred_offer
-        self.cred_request = cred_request
-        self.cred_request_metadata = cred_request_metadata
-        self.cred_issue = cred_issue
-        self.cred_id_stored = cred_id_stored
+        self._cred_proposal = V20CredProposal.serde(cred_proposal)
+        self._cred_offer = V20CredOffer.serde(cred_offer)
+        self._cred_request = V20CredRequest.serde(cred_request)
+        self._cred_issue = V20CredIssue.serde(cred_issue)
         self.auto_offer = auto_offer
         self.auto_issue = auto_issue
         self.auto_remove = auto_remove
         self.error_msg = error_msg
-        self.trace = trace
 
     @property
     def cred_ex_id(self) -> str:
@@ -89,48 +99,122 @@ class V20CredExRecord(BaseExchangeRecord):
         return self._id
 
     @property
-    def connection_id(self) -> str:
-        """Synonym for conn_id."""
-        return self.conn_id
+    def cred_preview(self) -> Mapping:
+        """Credential preview (deserialized view) from credential proposal."""
+        return self.cred_proposal and self.cred_proposal.credential_preview or None
 
     @property
-    def cred_preview(self) -> Mapping:
-        """Credential preview from credential proposal."""
-        return (
-            self.cred_proposal and self.cred_proposal.get("credential_preview") or None
-        )
+    def cred_proposal(self) -> V20CredProposal:
+        """Accessor; get deserialized view."""
+        return None if self._cred_proposal is None else self._cred_proposal.de
+
+    @cred_proposal.setter
+    def cred_proposal(self, value):
+        """Setter; store de/serialized views."""
+        self._cred_proposal = V20CredProposal.serde(value)
+
+    @property
+    def cred_offer(self) -> V20CredOffer:
+        """Accessor; get deserialized view."""
+        return None if self._cred_offer is None else self._cred_offer.de
+
+    @cred_offer.setter
+    def cred_offer(self, value):
+        """Setter; store de/serialized views."""
+        self._cred_offer = V20CredOffer.serde(value)
+
+    @property
+    def cred_request(self) -> V20CredRequest:
+        """Accessor; get deserialized view."""
+        return None if self._cred_request is None else self._cred_request.de
+
+    @cred_request.setter
+    def cred_request(self, value):
+        """Setter; store de/serialized views."""
+        self._cred_request = V20CredRequest.serde(value)
+
+    @property
+    def cred_issue(self) -> V20CredIssue:
+        """Accessor; get deserialized view."""
+        return None if self._cred_issue is None else self._cred_issue.de
+
+    @cred_issue.setter
+    def cred_issue(self, value):
+        """Setter; store de/serialized views."""
+        self._cred_issue = V20CredIssue.serde(value)
+
+    async def save_error_state(
+        self,
+        session: ProfileSession,
+        *,
+        reason: str = None,
+        log_params: Mapping[str, Any] = None,
+        log_override: bool = False,
+    ):
+        """
+        Save record error state if need be; log and swallow any storage error.
+
+        Args:
+            session: The profile session to use
+            reason: A reason to add to the log
+            log_params: Additional parameters to log
+            override: Override configured logging regimen, print to stderr instead
+        """
+
+        if self._last_state is None:  # already done
+            return
+
+        self.state = None
+        if reason:
+            self.error_msg = reason
+
+        try:
+            await self.save(
+                session,
+                reason=reason,
+                log_params=log_params,
+                log_override=log_override,
+            )
+        except StorageError as err:
+            LOGGER.exception(err)
 
     @property
     def record_value(self) -> Mapping:
         """Accessor for the JSON record value generated for this credential exchange."""
         return {
-            prop: getattr(self, prop)
-            for prop in (
-                "conn_id",
-                "parent_thread_id",
-                "initiator",
-                "role",
-                "state",
-                "cred_proposal",
-                "cred_offer",
-                "cred_request",
-                "cred_request_metadata",
-                "cred_issue",
-                "cred_id_stored",
-                "auto_offer",
-                "auto_issue",
-                "auto_remove",
-                "error_msg",
-                "trace",
-            )
+            **{
+                prop: getattr(self, prop)
+                for prop in (
+                    "connection_id",
+                    "parent_thread_id",
+                    "initiator",
+                    "role",
+                    "state",
+                    "auto_offer",
+                    "auto_issue",
+                    "auto_remove",
+                    "error_msg",
+                    "trace",
+                )
+            },
+            **{
+                prop: getattr(self, f"_{prop}").ser
+                for prop in (
+                    "cred_proposal",
+                    "cred_offer",
+                    "cred_request",
+                    "cred_issue",
+                )
+                if getattr(self, prop) is not None
+            },
         }
 
     @classmethod
     async def retrieve_by_conn_and_thread(
-        cls, session: ProfileSession, conn_id: str, thread_id: str
+        cls, session: ProfileSession, connection_id: str, thread_id: str
     ) -> "V20CredExRecord":
         """Retrieve a credential exchange record by connection and thread ID."""
-        cache_key = f"credential_exchange_ctidx::{conn_id}::{thread_id}"
+        cache_key = f"credential_exchange_ctidx::{connection_id}::{thread_id}"
         record_id = await cls.get_cached_key(session, cache_key)
         if record_id:
             record = await cls.retrieve_by_id(session, record_id)
@@ -138,10 +222,35 @@ class V20CredExRecord(BaseExchangeRecord):
             record = await cls.retrieve_by_tag_filter(
                 session,
                 {"thread_id": thread_id},
-                {"conn_id": conn_id} if conn_id else None,
+                {"connection_id": connection_id} if connection_id else None,
             )
             await cls.set_cached_key(session, cache_key, record.cred_ex_id)
         return record
+
+    @property
+    def by_format(self) -> Mapping:
+        """Record proposal, offer, request, and credential attachments by format."""
+        result = {}
+        for item, cls in {
+            "cred_proposal": V20CredProposal,
+            "cred_offer": V20CredOffer,
+            "cred_request": V20CredRequest,
+            "cred_issue": V20CredIssue,
+        }.items():
+            msg = getattr(self, item)
+            if msg:
+                result.update(
+                    {
+                        item: {
+                            V20CredFormat.Format.get(f.format).api: msg.attachment(
+                                V20CredFormat.Format.get(f.format)
+                            )
+                            for f in msg.formats
+                        }
+                    }
+                )
+
+        return result
 
     def __eq__(self, other: Any) -> bool:
         """Comparison between records."""
@@ -161,7 +270,7 @@ class V20CredExRecordSchema(BaseExchangeSchema):
         description="Credential exchange identifier",
         example=UUIDFour.EXAMPLE,
     )
-    conn_id = fields.Str(
+    connection_id = fields.Str(
         required=False, description="Connection identifier", example=UUIDFour.EXAMPLE
     )
     thread_id = fields.Str(
@@ -206,25 +315,47 @@ class V20CredExRecordSchema(BaseExchangeSchema):
             ]
         ),
     )
-    cred_preview = fields.Dict(
+    cred_preview = fields.Nested(
+        V20CredPreviewSchema(),
         required=False,
         dump_only=True,
-        description="Serialized credential preview from credential proposal",
+        description="Credential preview from credential proposal",
     )
-    cred_proposal = fields.Dict(
-        required=False, description="Serialized credential proposal message"
+    cred_proposal = fields.Nested(
+        V20CredProposalSchema(),
+        required=False,
+        description="Credential proposal message",
     )
-    cred_offer = fields.Dict(
-        required=False, description="Serialized credential offer message"
+    cred_offer = fields.Nested(
+        V20CredOfferSchema(),
+        required=False,
+        description="Credential offer message",
     )
-    cred_request = fields.Dict(
-        required=False, description="Serialized credential request message"
+    cred_request = fields.Nested(
+        V20CredRequestSchema(),
+        required=False,
+        description="Serialized credential request message",
     )
-    cred_request_metadata = fields.Dict(
-        required=False, description="(Indy) credential request metadata"
+    cred_issue = fields.Nested(
+        V20CredIssueSchema(),
+        required=False,
+        description="Serialized credential issue message",
     )
-    cred_issue = fields.Dict(
-        required=False, description="Serialized credential issue message"
+    by_format = fields.Nested(
+        Schema.from_dict(
+            {
+                "cred_proposal": fields.Dict(required=False),
+                "cred_offer": fields.Dict(required=False),
+                "cred_request": fields.Dict(required=False),
+                "cred_issue": fields.Dict(required=False),
+            },
+            name="V20CredExRecordByFormatSchema",
+        ),
+        required=False,
+        description=(
+            "Attachment content by format for proposal, offer, request, and issue"
+        ),
+        dump_only=True,
     )
     auto_offer = fields.Bool(
         required=False,
@@ -248,9 +379,4 @@ class V20CredExRecordSchema(BaseExchangeSchema):
         required=False,
         description="Error message",
         example="The front fell off",
-    )
-    cred_id_stored = fields.Str(
-        required=False,
-        description="Credential identifier stored in wallet",
-        example=UUIDFour.EXAMPLE,
     )

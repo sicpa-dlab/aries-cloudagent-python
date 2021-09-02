@@ -5,32 +5,35 @@ For Connection, DIDExchange and OutOfBand Manager.
 """
 
 import logging
+from typing import List, Sequence, Tuple
 
-from typing import Sequence, Tuple, List
+from pydid import (
+    BaseDIDDocument as ResolvedDocument,
+    DIDCommService,
+    VerificationMethod,
+)
+import pydid
+from pydid.verification_method import Ed25519VerificationKey2018
 
 from ..core.error import BaseError
 from ..core.profile import ProfileSession
-from ..ledger.base import BaseLedger
+from ..did.did_key import DIDKey
 from ..protocols.connections.v1_0.messages.connection_invitation import (
     ConnectionInvitation,
 )
 from ..protocols.coordinate_mediation.v1_0.models.mediation_record import (
     MediationRecord,
 )
+from ..resolver.base import ResolverError
+from ..resolver.did_resolver import DIDResolver
 from ..storage.base import BaseStorage
 from ..storage.error import StorageNotFoundError
 from ..storage.record import StorageRecord
-from ..wallet.base import BaseWallet, DIDInfo
-from ..wallet.util import did_key_to_naked
-
+from ..wallet.base import BaseWallet
+from ..wallet.did_info import DIDInfo
 from .models.conn_record import ConnRecord
 from .models.connection_target import ConnectionTarget
-from .models.diddoc import (
-    DIDDoc,
-    PublicKey,
-    PublicKeyType,
-    Service,
-)
+from .models.diddoc import DIDDoc, PublicKey, PublicKeyType, Service
 
 
 class BaseConnectionManagerError(BaseError):
@@ -42,6 +45,7 @@ class BaseConnectionManager:
 
     RECORD_TYPE_DID_DOC = "did_doc"
     RECORD_TYPE_DID_KEY = "did_key"
+    SUPPORTED_KEY_TYPES = (Ed25519VerificationKey2018,)
 
     def __init__(self, session: ProfileSession):
         """
@@ -209,18 +213,63 @@ class BaseConnectionManager:
         storage = self._session.inject(BaseStorage)
         await storage.delete_all_records(self.RECORD_TYPE_DID_KEY, {"did": did})
 
-    async def _get_from_ledger(self, public_did: str) -> Tuple[str, Sequence[str]]:
-        """Get endpoint and recipient keys for public DID from ledger."""
-        ledger = self._session.inject(BaseLedger, required=False)
-        if not ledger:
-            raise BaseConnectionManagerError(
-                f"Cannot resolve DID {public_did} without ledger instance"
-            )
-        async with ledger:
-            endpoint = await ledger.get_endpoint_for_did(public_did)
-            recipient_keys = [await ledger.get_key_for_did(public_did)]
+    async def resolve_invitation(self, did: str):
+        """
+        Resolve invitation with the DID Resolver.
 
-        return (endpoint, recipient_keys)
+        Args:
+            did: Document ID to resolve
+        """
+        if not did.startswith("did:"):
+            # DID is bare indy "nym"
+            # prefix with did:sov: for backwards compatibility
+            did = f"did:sov:{did}"
+
+        resolver = self._session.inject(DIDResolver)
+        try:
+            doc_dict: dict = await resolver.resolve(self._session.profile, did)
+            doc: ResolvedDocument = pydid.deserialize_document(doc_dict, strict=True)
+        except ResolverError as error:
+            raise BaseConnectionManagerError(
+                "Failed to resolve public DID in invitation"
+            ) from error
+
+        if not doc.service:
+            raise BaseConnectionManagerError(
+                "Cannot connect via public DID that has no associated services"
+            )
+
+        didcomm_services = sorted(
+            [service for service in doc.service if isinstance(service, DIDCommService)],
+            key=lambda service: service.priority,
+        )
+
+        if not didcomm_services:
+            raise BaseConnectionManagerError(
+                "Cannot connect via public DID that has no associated DIDComm services"
+            )
+
+        first_didcomm_service, *_ = didcomm_services
+
+        endpoint = first_didcomm_service.service_endpoint
+        recipient_keys: List[VerificationMethod] = [
+            doc.dereference(url) for url in first_didcomm_service.recipient_keys
+        ]
+        routing_keys: List[VerificationMethod] = [
+            doc.dereference(url) for url in first_didcomm_service.routing_keys
+        ]
+
+        for key in [*recipient_keys, *routing_keys]:
+            if not isinstance(key, self.SUPPORTED_KEY_TYPES):
+                raise BaseConnectionManagerError(
+                    f"Key type {key.type} is not supported"
+                )
+
+        return (
+            endpoint,
+            [key.material for key in recipient_keys],
+            [key.material for key in routing_keys],
+        )
 
     async def fetch_connection_targets(
         self, connection: ConnRecord
@@ -245,41 +294,60 @@ class BaseConnectionManager:
             in (ConnRecord.State.INVITATION, ConnRecord.State.REQUEST)
             and ConnRecord.Role.get(connection.their_role) is ConnRecord.Role.RESPONDER
         ):
-            invitation = await connection.retrieve_invitation(self._session)
-            if isinstance(invitation, ConnectionInvitation):  # conn protocol invitation
-                if invitation.did:
-                    # populate recipient keys, endpoint from ledger
-                    (endpoint, recipient_keys) = await self._get_from_ledger(
-                        invitation.did
-                    )
-                    routing_keys = []
-                else:
-                    endpoint = invitation.endpoint
-                    recipient_keys = invitation.recipient_keys
-                    routing_keys = invitation.routing_keys
-            else:  # out-of-band invitation
-                if invitation.service_dids:
-                    # populate recipient keys, endpoint from ledger
-                    (endpoint, recipient_keys) = await self._get_from_ledger(
-                        invitation.service_dids[0]
-                    )
-                    routing_keys = []
-                else:
-                    endpoint = invitation.service_blocks[0].service_endpoint
-                    recipient_keys = [
-                        did_key_to_naked(k)
-                        for k in invitation.service_blocks[0].recipient_keys
-                    ]
-                    routing_keys = [
-                        did_key_to_naked(k)
-                        for k in invitation.service_blocks[0].routing_keys
-                    ]
+            if (
+                connection.invitation_msg_id
+                or connection.invitation_key
+                or not connection.their_did
+            ):
+                invitation = await connection.retrieve_invitation(self._session)
+                if isinstance(
+                    invitation, ConnectionInvitation
+                ):  # conn protocol invitation
+                    if invitation.did:
+                        did = invitation.did
+                        (
+                            endpoint,
+                            recipient_keys,
+                            routing_keys,
+                        ) = await self.resolve_invitation(did)
 
+                    else:
+                        endpoint = invitation.endpoint
+                        recipient_keys = invitation.recipient_keys
+                        routing_keys = invitation.routing_keys
+                else:  # out-of-band invitation
+                    oob_service_item = invitation.services[0]
+                    if isinstance(oob_service_item, str):
+                        (
+                            endpoint,
+                            recipient_keys,
+                            routing_keys,
+                        ) = await self.resolve_invitation(oob_service_item)
+
+                    else:
+                        endpoint = oob_service_item.service_endpoint
+                        recipient_keys = [
+                            DIDKey.from_did(k).public_key_b58
+                            for k in oob_service_item.recipient_keys
+                        ]
+                        routing_keys = [
+                            DIDKey.from_did(k).public_key_b58
+                            for k in oob_service_item.routing_keys
+                        ]
+            else:
+                if connection.their_did:
+                    invitation = None
+                    did = connection.their_did
+                    (
+                        endpoint,
+                        recipient_keys,
+                        routing_keys,
+                    ) = await self.resolve_invitation(did)
             results = [
                 ConnectionTarget(
                     did=connection.their_did,
                     endpoint=endpoint,
-                    label=invitation.label,
+                    label=invitation.label if invitation else None,
                     recipient_keys=recipient_keys,
                     routing_keys=routing_keys,
                     sender_key=my_info.verkey,

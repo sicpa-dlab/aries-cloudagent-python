@@ -1,6 +1,6 @@
 """Indy-specific credential exchange information with non-secrets storage."""
 
-from typing import Any, Mapping
+from typing import Any, Mapping, Sequence
 
 from marshmallow import EXCLUDE, fields
 
@@ -22,13 +22,14 @@ class V20CredExRecordIndy(BaseRecord):
     RECORD_ID_NAME = "cred_ex_indy_id"
     RECORD_TYPE = "indy_cred_ex_v20"
     TAG_NAMES = {"~cred_ex_id"} if UNENCRYPTED_TAGS else {"cred_ex_id"}
-    WEBHOOK_TOPIC = "issue_credential_v2_0_indy"
+    RECORD_TOPIC = "issue_credential_v2_0_indy"
 
     def __init__(
         self,
         cred_ex_indy_id: str = None,
         *,
         cred_ex_id: str = None,
+        cred_id_stored: str = None,
         cred_request_metadata: Mapping = None,
         rev_reg_id: str = None,
         cred_rev_id: str = None,
@@ -38,6 +39,7 @@ class V20CredExRecordIndy(BaseRecord):
         super().__init__(cred_ex_indy_id, **kwargs)
 
         self.cred_ex_id = cred_ex_id
+        self.cred_id_stored = cred_id_stored
         self.cred_request_metadata = cred_request_metadata
         self.rev_reg_id = rev_reg_id
         self.cred_rev_id = cred_rev_id
@@ -53,6 +55,7 @@ class V20CredExRecordIndy(BaseRecord):
         return {
             prop: getattr(self, prop)
             for prop in (
+                "cred_id_stored",
                 "cred_request_metadata",
                 "rev_reg_id",
                 "cred_rev_id",
@@ -60,16 +63,15 @@ class V20CredExRecordIndy(BaseRecord):
         }
 
     @classmethod
-    async def retrieve_by_cred_ex_id(
+    async def query_by_cred_ex_id(
         cls,
         session: ProfileSession,
         cred_ex_id: str,
-    ) -> "V20CredExRecordIndy":
-        """Retrieve a credential exchange indy detail record by its cred ex id."""
-        return await cls.retrieve_by_tag_filter(
-            session,
-            {"cred_ex_id": cred_ex_id},
-            None,
+    ) -> Sequence["V20CredExRecordIndy"]:
+        """Retrieve credential exchange indy detail record(s) by its cred ex id."""
+        return await cls.query(
+            session=session,
+            tag_filter={"cred_ex_id": cred_ex_id},
         )
 
     def __eq__(self, other: Any) -> bool:
@@ -94,6 +96,11 @@ class V20CredExRecordIndySchema(BaseRecordSchema):
     cred_ex_id = fields.Str(
         required=False,
         description="Corresponding v2.0 credential exchange record identifier",
+        example=UUIDFour.EXAMPLE,
+    )
+    cred_id_stored = fields.Str(
+        required=False,
+        description="Credential identifier stored in wallet",
         example=UUIDFour.EXAMPLE,
     )
     cred_request_metadata = fields.Dict(

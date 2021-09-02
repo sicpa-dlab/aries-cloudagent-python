@@ -1,13 +1,11 @@
 import json
 
-import asynctest
-from asynctest import TestCase as AsyncTestCase
-from asynctest import mock as async_mock
-
-from aries_cloudagent.config.injection_context import InjectionContext
-from aries_cloudagent.messaging.request_context import RequestContext
+from asynctest import mock as async_mock, TestCase as AsyncTestCase
 
 from .....admin.request_context import AdminRequestContext
+from .....config.injection_context import InjectionContext
+from .....messaging.request_context import RequestContext
+
 from .. import routes as test_module
 from ..manager import MediationManager
 from ..models.mediation_record import MediationRecord
@@ -80,7 +78,7 @@ class TestCoordinateMediationRoutes(AsyncTestCase):
         ) as json_response:
             await test_module.list_mediation_requests(self.request)
             json_response.assert_called_once_with(
-                [self.mock_record.serialize.return_value]
+                {"results": [self.mock_record.serialize.return_value]}
             )
             mock_query.assert_called_once_with(self.context.session.return_value, {})
 
@@ -99,7 +97,7 @@ class TestCoordinateMediationRoutes(AsyncTestCase):
         ) as json_response:
             await test_module.list_mediation_requests(self.request)
             json_response.assert_called_once_with(
-                [self.mock_record.serialize.return_value]
+                {"results": [self.mock_record.serialize.return_value]}
             )
             mock_query.assert_called_once_with(
                 self.context.session.return_value,
@@ -129,7 +127,7 @@ class TestCoordinateMediationRoutes(AsyncTestCase):
             test_module.web, "json_response"
         ) as mock_response:
             await test_module.list_mediation_requests(self.request)
-            mock_response.assert_called_once_with([])
+            mock_response.assert_called_once_with({"results": []})
 
     async def test_retrieve_mediation_request(self):
         with async_mock.patch.object(
@@ -412,7 +410,7 @@ class TestCoordinateMediationRoutes(AsyncTestCase):
         ) as mock_response:
             await test_module.get_keylist(self.request)
             mock_response.assert_called_once_with(
-                [{"serialized": "route record"}], status=200
+                {"results": [{"serialized": "route record"}]}, status=200
             )
             mock_query.assert_called_once_with(
                 mock_session.return_value,
@@ -433,7 +431,7 @@ class TestCoordinateMediationRoutes(AsyncTestCase):
         ) as mock_response:
             await test_module.get_keylist(self.request)
             mock_query.assert_called_once_with(mock_session.return_value, {})
-            mock_response.assert_called_once_with([], status=200)
+            mock_response.assert_called_once_with({"results": []}, status=200)
 
     async def test_get_keylist_storage_error(self):
         with async_mock.patch.object(

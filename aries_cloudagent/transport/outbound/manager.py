@@ -173,7 +173,7 @@ class OutboundTransportManager:
     async def start_transport(self, transport_id: str):
         """Start a registered transport."""
         transport = self.registered_transports[transport_id]()
-        transport.collector = self.context.inject(Collector, required=False)
+        transport.collector = self.context.inject_or(Collector)
         await transport.start()
         self.running_transports[transport_id] = transport
 
@@ -340,7 +340,7 @@ class OutboundTransportManager:
                             queued.endpoint,
                             exc_info=queued.error,
                         )
-                        if self.handle_not_delivered:
+                        if self.handle_not_delivered and queued.message:
                             self.handle_not_delivered(queued.profile, queued.message)
                     continue  # remove from buffer
 

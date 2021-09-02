@@ -4,13 +4,14 @@ import uuid
 
 from copy import deepcopy
 from datetime import datetime, timezone
-from time import time
 from unittest import TestCase
 
 from ....indy.sdk.wallet_setup import IndyWalletConfig
 from ....messaging.models.base import BaseModelError
 from ....wallet.indy import IndySdkWallet
 from ....wallet.util import b64_to_bytes, bytes_to_b64
+from ....wallet.key_type import KeyType
+from ....wallet.did_method import DIDMethod
 
 from ..attach_decorator import (
     AttachDecorator,
@@ -69,9 +70,11 @@ DATA_B64 = AttachDecoratorData(base64_=bytes_to_b64(b"sample image with padding"
 DATA_JSON = AttachDecoratorData(
     json_=json.dumps({"preference": "hasselback", "variety": "russet"})
 )
+LINK_1X1 = "https://upload.wikimedia.org/wikipedia/commons/c/ca/1x1.png"
+SHA256_1X1 = "3eb10792d1f0c7e07e7248273540f1952d9a5a2996f4b5df70ab026cd9f05517"
 DATA_LINKS = AttachDecoratorData(
-    links_="https://upload.wikimedia.org/wikipedia/commons/c/ca/1x1.png",
-    sha256_="3eb10792d1f0c7e07e7248273540f1952d9a5a2996f4b5df70ab026cd9f05517",
+    links_=LINK_1X1,
+    sha256_=SHA256_1X1,
 )
 
 
@@ -325,10 +328,6 @@ class TestAttachDecorator(TestCase):
         deco_b64_auto_id = AttachDecorator.data_base64(mapping=INDY_CRED)
         assert deco_b64_auto_id.ident
 
-        # cover AttachDecoratorData equality operator
-        plain_json = AttachDecoratorData(json_=json.dumps({"sample": "data"}))
-        assert deco_b64.data != plain_json
-
         # data.json
         deco_json = AttachDecorator.data_json(
             mapping=INDY_CRED,
@@ -354,35 +353,38 @@ class TestAttachDecorator(TestCase):
 
         # data.links
         deco_links = AttachDecorator.data_links(
-            links="http://localhost/x.json",
+            links=LINK_1X1,
+            sha256=SHA256_1X1,
             ident=IDENT,
             description=DESCRIPTION,
         )
         assert deco_links.mime_type == "application/json"
         assert hasattr(deco_links.data, "links_")
+        assert hasattr(deco_links.data, "sha256_")
         assert deco_links.data.base64 is None
         assert deco_links.data.json is None
         assert deco_links.data.links is not None
-        assert deco_links.data.sha256 is None
-        assert deco_links.content == ["http://localhost/x.json"]
+        assert deco_links.data.sha256 is not None
+        assert deco_links.content == (
+            [
+                LINK_1X1,
+            ],
+            SHA256_1X1,
+        )
         assert deco_links.ident == IDENT
         assert deco_links.description == DESCRIPTION
 
         deco_links_auto_id = AttachDecorator.data_links(links="http://localhost/x.json")
         assert deco_links_auto_id.ident
 
-        # cover AttachDecoratorData equality operator
-        plain_json = AttachDecoratorData(json_=json.dumps({"sample": "data"}))
-        assert deco_links.data != plain_json
-
-        # links coverage
+        # links equality operator coverage
         lynx_str = AttachDecoratorData(links_="https://en.wikipedia.org/wiki/Lynx")
         lynx_list = AttachDecoratorData(links_=["https://en.wikipedia.org/wiki/Lynx"])
         links = AttachDecoratorData(links_="https://en.wikipedia.org/wiki/Chain")
 
         assert lynx_str == lynx_list
         assert lynx_str != links
-        assert links != DATA_LINKS  # has sha256
+        assert links != DATA_LINKS
 
         # formalism for no data
         no_data = AttachDecorator(data=None)
@@ -407,12 +409,33 @@ class TestAttachDecorator(TestCase):
         deco_aries_auto_id = AttachDecorator.data_json(mapping=INDY_CRED)
         assert deco_aries_auto_id.ident
 
+    def test_data_json_external_mutation(self):
+        data = {"key_one": "value_one", "key_two": "value_two"}
+
+        deco_aries = AttachDecorator.data_json(
+            mapping=data,
+            ident=IDENT,
+            description=DESCRIPTION,
+        )
+
+        # value should be cloned
+        assert deco_aries.data.json is not data
+
+        assert "key_one" in data
+        assert "key_one" in deco_aries.data.json
+
+        data.pop("key_one")
+        assert "key_one" in deco_aries.data.json
+        assert "key_one" not in data
+
 
 @pytest.mark.indy
 class TestAttachDecoratorSignature:
     @pytest.mark.asyncio
     async def test_did_raw_key(self, wallet, seed):
-        did_info = await wallet.create_local_did(seed[0])
+        did_info = await wallet.create_local_did(
+            DIDMethod.SOV, KeyType.ED25519, seed[0]
+        )
         did_key0 = did_key(did_info.verkey)
         raw_key0 = raw_key(did_key0)
         assert raw_key0 != did_key0
@@ -433,7 +456,10 @@ class TestAttachDecoratorSignature:
             byte_count=BYTE_COUNT,
         )
         deco_indy_master = deepcopy(deco_indy)
-        did_info = [await wallet.create_local_did(seed[i]) for i in [0, 1]]
+        did_info = [
+            await wallet.create_local_did(DIDMethod.SOV, KeyType.ED25519, seed[i])
+            for i in [0, 1]
+        ]
         assert deco_indy.data.signatures == 0
         assert deco_indy.data.header_map() is None
         await deco_indy.data.sign(did_info[0].verkey, wallet)

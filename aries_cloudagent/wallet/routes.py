@@ -3,13 +3,12 @@
 from aiohttp import web
 from aiohttp_apispec import (
     docs,
-    # match_info_schema,
     querystring_schema,
     request_schema,
     response_schema,
 )
 
-from marshmallow import fields
+from marshmallow import fields, validate
 
 from ..admin.request_context import AdminRequestContext
 from ..ledger.base import BaseLedger
@@ -18,15 +17,17 @@ from ..ledger.error import LedgerConfigError, LedgerError
 from ..messaging.models.openapi import OpenAPISchema
 from ..messaging.valid import (
     DID_POSTURE,
+    INDY_OR_KEY_DID,
+    INDY_DID,
     ENDPOINT,
     ENDPOINT_TYPE,
-    INDY_CRED_DEF_ID,
-    INDY_DID,
     INDY_RAW_PUBLIC_KEY,
 )
 from ..multitenant.manager import MultitenantManager
-
-from .base import DIDInfo, BaseWallet
+from .key_type import KeyType
+from .did_method import DIDMethod
+from .base import BaseWallet
+from .did_info import DIDInfo
 from .did_posture import DIDPosture
 from .error import WalletError, WalletNotFoundError
 
@@ -38,7 +39,7 @@ class WalletModuleResponseSchema(OpenAPISchema):
 class DIDSchema(OpenAPISchema):
     """Result schema for a DID."""
 
-    did = fields.Str(description="DID of interest", **INDY_DID)
+    did = fields.Str(description="DID of interest", **INDY_OR_KEY_DID)
     verkey = fields.Str(description="Public verification key", **INDY_RAW_PUBLIC_KEY)
     posture = fields.Str(
         description=(
@@ -47,6 +48,18 @@ class DIDSchema(OpenAPISchema):
             "or local to the wallet"
         ),
         **DID_POSTURE,
+    )
+    method = fields.Str(
+        description="Did method associated with the DID",
+        example=DIDMethod.SOV.method_name,
+        validate=validate.OneOf([method.method_name for method in DIDMethod]),
+    )
+    key_type = fields.Str(
+        description="Key type associated with the DID",
+        example=KeyType.ED25519.key_type,
+        validate=validate.OneOf(
+            [KeyType.ED25519.key_type, KeyType.BLS12381G2.key_type]
+        ),
     )
 
 
@@ -91,7 +104,7 @@ class DIDEndpointSchema(OpenAPISchema):
 class DIDListQueryStringSchema(OpenAPISchema):
     """Parameters and validators for DID list request query string."""
 
-    did = fields.Str(description="DID of interest", required=False, **INDY_DID)
+    did = fields.Str(description="DID of interest", required=False, **INDY_OR_KEY_DID)
     verkey = fields.Str(
         description="Verification key of interest",
         required=False,
@@ -106,6 +119,20 @@ class DIDListQueryStringSchema(OpenAPISchema):
         required=False,
         **DID_POSTURE,
     )
+    method = fields.Str(
+        required=False,
+        example=DIDMethod.KEY.method_name,
+        validate=validate.OneOf([DIDMethod.KEY.method_name, DIDMethod.SOV.method_name]),
+        description="DID method to query for. e.g. sov to only fetch indy/sov DIDs",
+    )
+    key_type = fields.Str(
+        required=False,
+        example=KeyType.ED25519.key_type,
+        validate=validate.OneOf(
+            [KeyType.ED25519.key_type, KeyType.BLS12381G2.key_type]
+        ),
+        description="Key type to query for.",
+    )
 
 
 class DIDQueryStringSchema(OpenAPISchema):
@@ -114,11 +141,32 @@ class DIDQueryStringSchema(OpenAPISchema):
     did = fields.Str(description="DID of interest", required=True, **INDY_DID)
 
 
-class CredDefIdMatchInfoSchema(OpenAPISchema):
-    """Path parameters and validators for request taking credential definition id."""
+class DIDCreateOptionsSchema(OpenAPISchema):
+    """Parameters and validators for create DID options."""
 
-    cred_def_id = fields.Str(
-        description="Credential identifier", required=True, **INDY_CRED_DEF_ID
+    key_type = fields.Str(
+        required=True,
+        example=KeyType.ED25519.key_type,
+        validate=validate.OneOf(
+            [KeyType.ED25519.key_type, KeyType.BLS12381G2.key_type]
+        ),
+    )
+
+
+class DIDCreateSchema(OpenAPISchema):
+    """Parameters and validators for create DID endpoint."""
+
+    method = fields.Str(
+        required=False,
+        default=DIDMethod.SOV.method_name,
+        example=DIDMethod.SOV.method_name,
+        validate=validate.OneOf([DIDMethod.KEY.method_name, DIDMethod.SOV.method_name]),
+    )
+
+    options = fields.Nested(
+        DIDCreateOptionsSchema,
+        required=False,
+        description="To define a key type for a did:key",
     )
 
 
@@ -129,6 +177,8 @@ def format_did_info(info: DIDInfo):
             "did": info.did,
             "verkey": info.verkey,
             "posture": DIDPosture.get(info.metadata).moniker,
+            "key_type": info.key_type.key_type,
+            "method": info.method.method_name,
         }
 
 
@@ -148,28 +198,35 @@ async def wallet_did_list(request: web.BaseRequest):
     """
     context: AdminRequestContext = request["context"]
     session = await context.session()
-    wallet = session.inject(BaseWallet, required=False)
+    wallet = session.inject_or(BaseWallet)
     if not wallet:
         raise web.HTTPForbidden(reason="No wallet available")
     filter_did = request.query.get("did")
     filter_verkey = request.query.get("verkey")
+    filter_method = DIDMethod.from_method(request.query.get("method"))
     filter_posture = DIDPosture.get(request.query.get("posture"))
+    filter_key_type = KeyType.from_key_type(request.query.get("key_type"))
     results = []
-    public_did_info = await wallet.get_public_did()
-    posted_did_infos = await wallet.get_posted_dids()
 
     if filter_posture is DIDPosture.PUBLIC:
+        public_did_info = await wallet.get_public_did()
         if (
             public_did_info
             and (not filter_verkey or public_did_info.verkey == filter_verkey)
             and (not filter_did or public_did_info.did == filter_did)
+            and (not filter_method or public_did_info.method == filter_method)
+            and (not filter_key_type or public_did_info.key_type == filter_key_type)
         ):
             results.append(format_did_info(public_did_info))
     elif filter_posture is DIDPosture.POSTED:
         results = []
+        posted_did_infos = await wallet.get_posted_dids()
         for info in posted_did_infos:
-            if (not filter_verkey or info.verkey == filter_verkey) and (
-                not filter_did or info.did == filter_did
+            if (
+                (not filter_verkey or info.verkey == filter_verkey)
+                and (not filter_did or info.did == filter_did)
+                and (not filter_method or info.method == filter_method)
+                and (not filter_key_type or info.key_type == filter_key_type)
             ):
                 results.append(format_did_info(info))
     elif filter_did:
@@ -181,6 +238,8 @@ async def wallet_did_list(request: web.BaseRequest):
         if (
             info
             and (not filter_verkey or info.verkey == filter_verkey)
+            and (not filter_method or info.method == filter_method)
+            and (not filter_key_type or info.key_type == filter_key_type)
             and (
                 filter_posture is None
                 or (
@@ -195,11 +254,16 @@ async def wallet_did_list(request: web.BaseRequest):
             info = await wallet.get_local_did_for_verkey(filter_verkey)
         except WalletError:
             info = None
-        if info and (
-            filter_posture is None
-            or (
-                filter_posture is DID_POSTURE.WALLET_ONLY
-                and not info.metadata.get("posted")
+        if (
+            info
+            and (not filter_method or info.method == filter_method)
+            and (not filter_key_type or info.key_type == filter_key_type)
+            and (
+                filter_posture is None
+                or (
+                    filter_posture is DID_POSTURE.WALLET_ONLY
+                    and not info.metadata.get("posted")
+                )
             )
         ):
             results.append(format_did_info(info))
@@ -208,8 +272,12 @@ async def wallet_did_list(request: web.BaseRequest):
         results = [
             format_did_info(info)
             for info in dids
-            if filter_posture is None
-            or DIDPosture.get(info.metadata) is DIDPosture.WALLET_ONLY
+            if (
+                filter_posture is None
+                or DIDPosture.get(info.metadata) is DIDPosture.WALLET_ONLY
+            )
+            and (not filter_method or info.method == filter_method)
+            and (not filter_key_type or info.key_type == filter_key_type)
         ]
 
     results.sort(
@@ -219,6 +287,7 @@ async def wallet_did_list(request: web.BaseRequest):
 
 
 @docs(tags=["wallet"], summary="Create a local DID")
+@request_schema(DIDCreateSchema())
 @response_schema(DIDResultSchema, 200, description="")
 async def wallet_create_did(request: web.BaseRequest):
     """
@@ -232,12 +301,33 @@ async def wallet_create_did(request: web.BaseRequest):
 
     """
     context: AdminRequestContext = request["context"]
+
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+
+    # set default method and key type for backwards compat
+    key_type = (
+        KeyType.from_key_type(body.get("options", {}).get("key_type"))
+        or KeyType.ED25519
+    )
+    method = DIDMethod.from_method(body.get("method")) or DIDMethod.SOV
+
+    if not method.supports_key_type(key_type):
+        raise web.HTTPForbidden(
+            reason=(
+                f"method {method.method_name} does not"
+                f" support key type {key_type.key_type}"
+            )
+        )
+
     session = await context.session()
-    wallet = session.inject(BaseWallet, required=False)
+    wallet = session.inject_or(BaseWallet)
     if not wallet:
         raise web.HTTPForbidden(reason="No wallet available")
     try:
-        info = await wallet.create_local_did()
+        info = await wallet.create_local_did(method=method, key_type=key_type)
 
     except WalletError as err:
         raise web.HTTPBadRequest(reason=err.roll_up) from err
@@ -260,7 +350,7 @@ async def wallet_get_public_did(request: web.BaseRequest):
     """
     context: AdminRequestContext = request["context"]
     session = await context.session()
-    wallet = session.inject(BaseWallet, required=False)
+    wallet = session.inject_or(BaseWallet)
     if not wallet:
         raise web.HTTPForbidden(reason="No wallet available")
     try:
@@ -287,7 +377,7 @@ async def wallet_set_public_did(request: web.BaseRequest):
     """
     context: AdminRequestContext = request["context"]
     session = await context.session()
-    wallet = session.inject(BaseWallet, required=False)
+    wallet = session.inject_or(BaseWallet)
     if not wallet:
         raise web.HTTPForbidden(reason="No wallet available")
     did = request.query.get("did")
@@ -295,11 +385,11 @@ async def wallet_set_public_did(request: web.BaseRequest):
         raise web.HTTPBadRequest(reason="Request query must include DID")
 
     # Multitenancy setup
-    multitenant_mgr = session.inject(MultitenantManager, required=False)
+    multitenant_mgr = session.inject_or(MultitenantManager)
     wallet_id = session.settings.get("wallet.id")
 
     try:
-        ledger = session.inject(BaseLedger, required=False)
+        ledger = session.inject_or(BaseLedger)
         if not ledger:
             reason = "No ledger available"
             if not session.settings.get_value("wallet.type"):
@@ -311,7 +401,7 @@ async def wallet_set_public_did(request: web.BaseRequest):
                 raise web.HTTPNotFound(reason=f"DID {did} is not posted to the ledger")
 
         did_info = await wallet.get_local_did(did)
-        info = await wallet.set_public_did(did)
+        info = await wallet.set_public_did(did_info)
         if info:
             # Publish endpoint if necessary
             endpoint = did_info.metadata.get("endpoint")
@@ -351,7 +441,7 @@ async def wallet_set_did_endpoint(request: web.BaseRequest):
     """
     context: AdminRequestContext = request["context"]
     session = await context.session()
-    wallet = session.inject(BaseWallet, required=False)
+    wallet = session.inject_or(BaseWallet)
     if not wallet:
         raise web.HTTPForbidden(reason="No wallet available")
 
@@ -363,7 +453,7 @@ async def wallet_set_did_endpoint(request: web.BaseRequest):
     )
 
     try:
-        ledger = session.inject(BaseLedger, required=False)
+        ledger = session.inject_or(BaseLedger)
         await wallet.set_did_endpoint(did, endpoint, ledger, endpoint_type)
     except WalletNotFoundError as err:
         raise web.HTTPNotFound(reason=err.roll_up) from err
@@ -391,7 +481,7 @@ async def wallet_get_did_endpoint(request: web.BaseRequest):
     """
     context: AdminRequestContext = request["context"]
     session = await context.session()
-    wallet = session.inject(BaseWallet, required=False)
+    wallet = session.inject_or(BaseWallet)
     if not wallet:
         raise web.HTTPForbidden(reason="No wallet available")
     did = request.query.get("did")
@@ -424,7 +514,7 @@ async def wallet_rotate_did_keypair(request: web.BaseRequest):
     """
     context: AdminRequestContext = request["context"]
     session = await context.session()
-    wallet = session.inject(BaseWallet, required=False)
+    wallet = session.inject_or(BaseWallet)
     if not wallet:
         raise web.HTTPForbidden(reason="No wallet available")
     did = request.query.get("did")

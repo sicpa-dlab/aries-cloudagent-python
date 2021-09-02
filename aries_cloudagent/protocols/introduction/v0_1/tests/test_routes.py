@@ -1,5 +1,4 @@
-from asynctest import TestCase as AsyncTestCase
-from asynctest import mock as async_mock
+from asynctest import mock as async_mock, TestCase as AsyncTestCase
 
 from .....admin.request_context import AdminRequestContext
 
@@ -65,7 +64,7 @@ class TestIntroductionRoutes(AsyncTestCase):
         mock_conn_rec.serialize = async_mock.MagicMock()
 
         with async_mock.patch.object(
-            self.context, "inject", async_mock.MagicMock()
+            self.context, "inject_or", async_mock.MagicMock()
         ) as mock_ctx_inject, async_mock.patch.object(
             test_module.web, "json_response"
         ) as mock_response:
@@ -78,6 +77,7 @@ class TestIntroductionRoutes(AsyncTestCase):
                 self.request.match_info["conn_id"],
                 self.request.query["target_connection_id"],
                 self.request.query["message"],
+                async_mock.ANY,
                 self.request["outbound_message_router"],
             )
             mock_response.assert_called_once_with({})
@@ -104,7 +104,7 @@ class TestIntroductionRoutes(AsyncTestCase):
         mock_conn_rec.serialize = async_mock.MagicMock()
 
         with async_mock.patch.object(
-            self.context, "inject", async_mock.MagicMock()
+            self.context, "inject_or", async_mock.MagicMock()
         ) as mock_ctx_inject:
             mock_ctx_inject.return_value = async_mock.MagicMock(
                 start_introduction=async_mock.CoroutineMock(
