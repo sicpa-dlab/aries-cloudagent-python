@@ -273,7 +273,7 @@ class CredentialManager:
 
         credential_offer = None
         cache_key = f"credential_offer::{cred_def_id}"
-        cache = self._profile.inject(BaseCache, required=False)
+        cache = self._profile.inject_or(BaseCache)
         if cache:
             async with cache.acquire(cache_key) as entry:
                 if entry.result:
@@ -419,7 +419,7 @@ class CredentialManager:
                 f"credential_request::{credential_definition_id}::{holder_did}::{nonce}"
             )
             cred_req_result = None
-            cache = self._profile.inject(BaseCache, required=False)
+            cache = self._profile.inject_or(BaseCache)
             if cache:
                 async with cache.acquire(cache_key) as entry:
                     if entry.result:
@@ -468,11 +468,24 @@ class CredentialManager:
         credential_request = message.indy_cred_req(0)
 
         async with self._profile.session() as session:
-            cred_ex_record = await (
-                V10CredentialExchange.retrieve_by_connection_and_thread(
-                    session, connection_id, message._thread_id
+            try:
+                cred_ex_record = await (
+                    V10CredentialExchange.retrieve_by_connection_and_thread(
+                        session, connection_id, message._thread_id
+                    )
                 )
-            )
+            except StorageNotFoundError:
+                try:
+                    cred_ex_record = await V10CredentialExchange.retrieve_by_tag_filter(
+                        session,
+                        {"thread_id": message._thread_id},
+                        {"connection_id": None},
+                    )
+                    cred_ex_record.connection_id = connection_id
+                except StorageNotFoundError:
+                    raise CredentialManagerError(
+                        "Indy issue credential format can't start from credential request"
+                    )
             cred_ex_record.credential_request = credential_request
             cred_ex_record.state = V10CredentialExchange.STATE_REQUEST_RECEIVED
             await cred_ex_record.save(session, reason="receive credential request")
@@ -813,7 +826,7 @@ class CredentialManager:
         except StorageError as err:
             LOGGER.exception(err)  # holder still owes an ack: carry on
 
-        responder = self._profile.inject(BaseResponder, required=False)
+        responder = self._profile.inject_or(BaseResponder)
         if responder:
             await responder.send_reply(
                 credential_ack_message,

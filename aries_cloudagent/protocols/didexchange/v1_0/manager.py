@@ -11,6 +11,7 @@ from ....core.error import BaseError
 from ....core.profile import ProfileSession
 from ....messaging.decorators.attach_decorator import AttachDecorator
 from ....messaging.responder import BaseResponder
+from ....multitenant.base import BaseMultitenantManager
 from ....storage.error import StorageNotFoundError
 from ....transport.inbound.receipt import MessageReceipt
 from ....wallet.base import BaseWallet
@@ -19,7 +20,6 @@ from ....wallet.key_type import KeyType
 from ....wallet.did_method import DIDMethod
 from ....wallet.did_posture import DIDPosture
 from ....did.did_key import DIDKey
-from ....multitenant.manager import MultitenantManager
 
 from ...coordinate_mediation.v1_0.manager import MediationManager
 from ...out_of_band.v1_0.messages.invitation import (
@@ -142,7 +142,7 @@ class DIDXManager(BaseConnectionManager):
 
         if conn_rec.accept == ConnRecord.ACCEPT_AUTO:
             request = await self.create_request(conn_rec, mediation_id=mediation_id)
-            responder = self._session.inject(BaseResponder, required=False)
+            responder = self._session.inject_or(BaseResponder)
             if responder:
                 await responder.send_reply(
                     request,
@@ -208,7 +208,7 @@ class DIDXManager(BaseConnectionManager):
         conn_rec.request_id = request._id
         conn_rec.state = ConnRecord.State.REQUEST.rfc23
         await conn_rec.save(self._session, reason="Created connection request")
-        responder = self._session.inject(BaseResponder, required=False)
+        responder = self._session.inject_or(BaseResponder)
         if responder:
             await responder.send(request, connection_id=conn_rec.connection_id)
 
@@ -246,7 +246,7 @@ class DIDXManager(BaseConnectionManager):
         base_mediation_record = None
 
         # Multitenancy setup
-        multitenant_mgr = self._session.inject(MultitenantManager, required=False)
+        multitenant_mgr = self._session.inject_or(BaseMultitenantManager)
         wallet_id = self._session.settings.get("wallet.id")
         if multitenant_mgr and wallet_id:
             base_mediation_record = await multitenant_mgr.get_default_mediator()
@@ -285,7 +285,14 @@ class DIDXManager(BaseConnectionManager):
                 filter(None, [base_mediation_record, mediation_record])
             ),
         )
-        pthid = conn_rec.invitation_msg_id or f"did:sov:{conn_rec.their_public_did}"
+        if (
+            conn_rec.their_public_did is not None
+            and conn_rec.their_public_did.startswith("did:")
+        ):
+            qualified_did = conn_rec.their_public_did
+        else:
+            qualified_did = f"did:sov:{conn_rec.their_public_did}"
+        pthid = conn_rec.invitation_msg_id or qualified_did
         attach = AttachDecorator.data_base64(did_doc.serialize())
         await attach.data.sign(my_info.verkey, wallet)
         if not my_label:
@@ -304,7 +311,7 @@ class DIDXManager(BaseConnectionManager):
 
         # Notify Mediator
         if keylist_updates and mediation_record:
-            responder = self._session.inject(BaseResponder, required=False)
+            responder = self._session.inject_or(BaseResponder)
             await responder.send(
                 keylist_updates, connection_id=mediation_record.connection_id
             )
@@ -350,7 +357,7 @@ class DIDXManager(BaseConnectionManager):
         wallet = self._session.inject(BaseWallet)
 
         # Multitenancy setup
-        multitenant_mgr = self._session.inject(MultitenantManager, required=False)
+        multitenant_mgr = self._session.inject_or(BaseMultitenantManager)
         wallet_id = self._session.settings.get("wallet.id")
 
         # Determine what key will need to sign the response
@@ -507,7 +514,7 @@ class DIDXManager(BaseConnectionManager):
         # Send keylist updates to mediator
         mediation_record = await mediation_record_if_id(self._session, mediation_id)
         if keylist_updates and mediation_record:
-            responder = self._session.inject(BaseResponder, required=False)
+            responder = self._session.inject_or(BaseResponder)
             await responder.send(
                 keylist_updates, connection_id=mediation_record.connection_id
             )
@@ -518,7 +525,7 @@ class DIDXManager(BaseConnectionManager):
                 my_endpoint,
                 mediation_id=mediation_id,
             )
-            responder = self._session.inject(BaseResponder, required=False)
+            responder = self._session.inject_or(BaseResponder)
             if responder:
                 await responder.send_reply(
                     response, connection_id=conn_rec.connection_id
@@ -561,7 +568,7 @@ class DIDXManager(BaseConnectionManager):
         base_mediation_record = None
 
         # Multitenancy setup
-        multitenant_mgr = self._session.inject(MultitenantManager, required=False)
+        multitenant_mgr = self._session.inject_or(BaseMultitenantManager)
         wallet_id = self._session.settings.get("wallet.id")
         if multitenant_mgr and wallet_id:
             base_mediation_record = await multitenant_mgr.get_default_mediator()
@@ -622,7 +629,7 @@ class DIDXManager(BaseConnectionManager):
 
         # Update Mediator if necessary
         if keylist_updates and mediation_record:
-            responder = self._session.inject(BaseResponder, required=False)
+            responder = self._session.inject_or(BaseResponder)
             await responder.send(
                 keylist_updates, connection_id=mediation_record.connection_id
             )
@@ -730,7 +737,7 @@ class DIDXManager(BaseConnectionManager):
         # create and send connection-complete message
         complete = DIDXComplete()
         complete.assign_thread_from(response)
-        responder = self._session.inject(BaseResponder, required=False)
+        responder = self._session.inject_or(BaseResponder)
         if responder:
             await responder.send_reply(complete, connection_id=conn_rec.connection_id)
 

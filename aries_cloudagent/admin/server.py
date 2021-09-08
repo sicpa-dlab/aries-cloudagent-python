@@ -26,7 +26,7 @@ from ..core.profile import Profile
 from ..ledger.error import LedgerConfigError, LedgerTransactionError
 from ..messaging.models.openapi import OpenAPISchema
 from ..messaging.responder import BaseResponder
-from ..multitenant.manager import MultitenantManager, MultitenantManagerError
+from ..multitenant.base import BaseMultitenantManager, MultitenantManagerError
 from ..storage.error import StorageNotFoundError
 from ..transport.outbound.message import OutboundMessage
 from ..transport.queue.basic import BasicMessageQueue
@@ -250,7 +250,7 @@ class AdminServer(BaseAdminServer):
         self.webhook_router = webhook_router
         self.websocket_queues = {}
         self.site = None
-        self.multitenant_manager = context.inject(MultitenantManager, required=False)
+        self.multitenant_manager = context.inject_or(BaseMultitenantManager)
 
         self.server_paths = []
 
@@ -292,7 +292,7 @@ class AdminServer(BaseAdminServer):
 
             middlewares.append(check_token)
 
-        collector = self.context.inject(Collector, required=False)
+        collector = self.context.inject_or(Collector)
 
         if self.multitenant_manager:
 
@@ -392,7 +392,7 @@ class AdminServer(BaseAdminServer):
         self.server_paths = [route.path for route in server_routes]
         app.add_routes(server_routes)
 
-        plugin_registry = self.context.inject(PluginRegistry, required=False)
+        plugin_registry = self.context.inject_or(PluginRegistry)
         if plugin_registry:
             await plugin_registry.register_admin_routes(app)
 
@@ -444,11 +444,11 @@ class AdminServer(BaseAdminServer):
         runner = web.AppRunner(self.app)
         await runner.setup()
 
-        plugin_registry = self.context.inject(PluginRegistry, required=False)
+        plugin_registry = self.context.inject_or(PluginRegistry)
         if plugin_registry:
             plugin_registry.post_process_routes(self.app)
 
-        event_bus = self.context.inject(EventBus, required=False)
+        event_bus = self.context.inject_or(EventBus)
         if event_bus:
             event_bus.subscribe(EVENT_PATTERN_WEBHOOK, self._on_webhook_event)
             event_bus.subscribe(EVENT_PATTERN_RECORD, self._on_record_event)
@@ -547,7 +547,7 @@ class AdminServer(BaseAdminServer):
             The module list response
 
         """
-        registry = self.context.inject(PluginRegistry, required=False)
+        registry = self.context.inject_or(PluginRegistry)
         plugins = registry and sorted(registry.plugin_names) or []
         return web.json_response({"result": plugins})
 
@@ -601,7 +601,7 @@ class AdminServer(BaseAdminServer):
         """
         status = {"version": __version__}
         status["label"] = self.context.settings.get("default_label")
-        collector = self.context.inject(Collector, required=False)
+        collector = self.context.inject_or(Collector)
         if collector:
             status["timing"] = collector.results
         if self.conductor_stats:
@@ -621,7 +621,7 @@ class AdminServer(BaseAdminServer):
             The web response
 
         """
-        collector = self.context.inject(Collector, required=False)
+        collector = self.context.inject_or(Collector)
         if collector:
             collector.reset()
         return web.json_response({})

@@ -12,9 +12,6 @@ from aiohttp_apispec import (
     request_schema,
     response_schema,
 )
-from aries_cloudagent.protocols.endorse_transaction.v1_0.manager import (
-    TransactionManager,
-)
 from marshmallow import fields, validate, validates_schema
 from marshmallow.exceptions import ValidationError
 
@@ -35,12 +32,14 @@ from ..messaging.valid import (
     WHOLE_NUM,
     UUIDFour,
 )
+from ..protocols.endorse_transaction.v1_0.manager import TransactionManager
 from ..protocols.endorse_transaction.v1_0.models.transaction_record import (
     TransactionRecordSchema,
 )
 from ..storage.base import BaseStorage
 from ..storage.error import StorageError, StorageNotFoundError
 from ..tails.base import BaseTailsServer
+
 from .error import RevocationError, RevocationNotSupportedError
 from .indy import IndyRevocation
 from .manager import RevocationManager, RevocationManagerError
@@ -709,7 +708,7 @@ async def upload_tails_file(request: web.BaseRequest):
 
     rev_reg_id = request.match_info["rev_reg_id"]
 
-    tails_server = context.inject(BaseTailsServer, required=False)
+    tails_server = context.inject_or(BaseTailsServer)
     if not tails_server:
         raise web.HTTPForbidden(reason="No tails server configured")
 
