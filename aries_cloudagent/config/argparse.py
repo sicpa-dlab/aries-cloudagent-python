@@ -1,18 +1,22 @@
 """Command line option parsing."""
 
 import abc
+import json
+
 from functools import reduce
 from itertools import chain
 from os import environ
+from typing import Type
 
 import deepmerge
 import yaml
+
 from configargparse import ArgumentParser, Namespace, YAMLConfigFileParser
-from typing import Type
+
+from ..utils.tracing import trace_event
 
 from .error import ArgsParseError
 from .util import BoundedInt, ByteSize
-from ..utils.tracing import trace_event
 
 CAT_PROVISION = "general"
 CAT_START = "start"
@@ -1139,25 +1143,18 @@ class TransportGroup(ArgumentGroup):
         return settings
 
 
-@group(CAT_START)
-class MediationGroup(ArgumentGroup):
-    """Mediation settings."""
+@group(CAT_START, CAT_PROVISION)
+class MediationInviteGroup(ArgumentGroup):
+    """
+    Mediation invitation settings.
 
-    GROUP_NAME = "Mediation"
+    These can be provided at provision- and start-time.
+    """
+
+    GROUP_NAME = "Mediation invitation"
 
     def add_arguments(self, parser: ArgumentParser):
-        """Add mediation command line arguments to the parser."""
-        parser.add_argument(
-            "--open-mediation",
-            action="store_true",
-            env_var="ACAPY_MEDIATION_OPEN",
-            help=(
-                "Enables didcomm mediation. After establishing a connection, "
-                "if enabled, an agent may request message mediation, which will "
-                "allow the mediator to forward messages on behalf of the recipient. "
-                "See aries-rfc:0211."
-            ),
-        )
+        """Add mediation invitation command line arguments to the parser."""
         parser.add_argument(
             "--mediator-invitation",
             type=str,
@@ -1178,6 +1175,38 @@ class MediationGroup(ArgumentGroup):
                 "Default: false."
             ),
         )
+
+    def get_settings(self, args: Namespace):
+        """Extract mediation invitation settings."""
+        settings = {}
+        if args.mediator_invitation:
+            settings["mediation.invite"] = args.mediator_invitation
+        if args.mediator_connections_invite:
+            settings["mediation.connections_invite"] = True
+
+        return settings
+
+
+@group(CAT_START)
+class MediationGroup(ArgumentGroup):
+    """Mediation settings."""
+
+    GROUP_NAME = "Mediation"
+
+    def add_arguments(self, parser: ArgumentParser):
+        """Add mediation command line arguments to the parser."""
+        parser.add_argument(
+            "--open-mediation",
+            action="store_true",
+            env_var="ACAPY_MEDIATION_OPEN",
+            help=(
+                "Enables didcomm mediation. After establishing a connection, "
+                "if enabled, an agent may request message mediation, which will "
+                "allow the mediator to forward messages on behalf of the recipient. "
+                "See aries-rfc:0211."
+            ),
+        )
+
         parser.add_argument(
             "--default-mediator-id",
             type=str,
@@ -1197,14 +1226,10 @@ class MediationGroup(ArgumentGroup):
         settings = {}
         if args.open_mediation:
             settings["mediation.open"] = True
-        if args.mediator_invitation:
-            settings["mediation.invite"] = args.mediator_invitation
         if args.default_mediator_id:
             settings["mediation.default_id"] = args.default_mediator_id
         if args.clear_default_mediator:
             settings["mediation.clear"] = True
-        if args.mediator_connections_invite:
-            settings["mediation.connections_invite"] = True
 
         if args.clear_default_mediator and args.default_mediator_id:
             raise ArgsParseError(
@@ -1311,6 +1336,17 @@ class WalletGroup(ArgumentGroup):
             ),
         )
         parser.add_argument(
+            "--wallet-key-derivation-method",
+            type=str,
+            metavar="<key-derivation-method>",
+            env_var="ACAPY_WALLET_KEY_DERIVATION_METHOD",
+            help=(
+                "Specifies the key derivation method used for wallet encryption."
+                "If RAW key derivation method is used, also --wallet-key parameter"
+                " is expected."
+            ),
+        )
+        parser.add_argument(
             "--wallet-storage-creds",
             type=str,
             metavar="<storage-creds>",
@@ -1363,6 +1399,8 @@ class WalletGroup(ArgumentGroup):
             settings["wallet.storage_type"] = args.wallet_storage_type
         if args.wallet_type:
             settings["wallet.type"] = args.wallet_type
+        if args.wallet_key_derivation_method:
+            settings["wallet.key_derivation_method"] = args.wallet_key_derivation_method
         if args.wallet_storage_config:
             settings["wallet.storage_config"] = args.wallet_storage_config
         if args.wallet_storage_creds:
@@ -1423,6 +1461,18 @@ class MultitenantGroup(ArgumentGroup):
             env_var="ACAPY_MULTITENANT_ADMIN",
             help="Specify whether to enable the multitenant admin api.",
         )
+        parser.add_argument(
+            "--multitenancy-config",
+            type=str,
+            metavar="<multitenancy-config>",
+            env_var="ACAPY_MULTITENANCY_CONFIGURATION",
+            help=(
+                'Specify multitenancy configuration ("wallet_type" and "wallet_name"). '
+                'For example: "{"wallet_type":"askar-profile","wallet_name":'
+                '"askar-profile-name"}"'
+                '"wallet_name" is only used when "wallet_type" is "askar-profile"'
+            ),
+        )
 
     def get_settings(self, args: Namespace):
         """Extract multitenant settings."""
@@ -1439,4 +1489,18 @@ class MultitenantGroup(ArgumentGroup):
 
             if args.multitenant_admin:
                 settings["multitenant.admin_enabled"] = True
+
+            if args.multitenancy_config:
+                multitenancyConfig = json.loads(args.multitenancy_config)
+
+                if multitenancyConfig.get("wallet_type"):
+                    settings["multitenant.wallet_type"] = multitenancyConfig.get(
+                        "wallet_type"
+                    )
+
+                if multitenancyConfig.get("wallet_name"):
+                    settings["multitenant.wallet_name"] = multitenancyConfig.get(
+                        "wallet_name"
+                    )
+
         return settings
