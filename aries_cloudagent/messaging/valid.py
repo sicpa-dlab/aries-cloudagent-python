@@ -94,7 +94,10 @@ class NestedSingularOrMany(Nested):
         if nested_obj is None:
             return None
         if is_collection(nested_obj):
-            return schema.dump(nested_obj, many=True)
+            if len(nested_obj) == 1:
+                return schema.dump(nested_obj[0], many=False)
+            else:
+                return schema.dump(nested_obj, many=True)
         else:
             return schema.dump(nested_obj, many=False)
 

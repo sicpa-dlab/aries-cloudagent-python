@@ -41,7 +41,7 @@ CREDENTIAL = {
 }
 
 
-VC_PROOF = {
+VC_PROOF0 = {
     "type": "BbsBlsSignatureProof2020",
     "created": "2020-12-14T03:11:30Z",
     "nonce": "CF69iO3nfvqRsRBNElE8b4wO39SyJHPM7Gg1nExltW5vSfQA1lvDCR/zXX1To0/4NLo=",
@@ -50,7 +50,15 @@ VC_PROOF = {
     "verificationMethod": "did:example:489398593#test",
 }
 
-VERIFIABLE_CREDENTIAL = {**CREDENTIAL, "proof": VC_PROOF}
+VC_PROOF1 = {
+    "type": "BbsBlsSignature2020",
+    "proofPurpose": "assertionMethod",
+    "verificationMethod": "did:key:zUC7Jc1v55hbeejGm5JGQvzne1t8BK6CpoDRPdhhrMCDrVKouN1DQxgN7mgqW3sL3JYqxZRFCZKdJLyj5Sd2YjRRg1dFdMYZdd3pJjy3WPdjUGbtRaU83YFfDqq8cJqkazYpeA4#zUC7Jc1v55hbeejGm5JGQvzne1t8BK6CpoDRPdhhrMCDrVKouN1DQxgN7mgqW3sL3JYqxZRFCZKdJLyj5Sd2YjRRg1dFdMYZdd3pJjy3WPdjUGbtRaU83YFfDqq8cJqkazYpeA4",
+    "created": "2021-10-05T15:05:20.179917",
+    "proofValue": "h4oJQY3dZvBv11d/HS8XzIdR76QbPQ0s64rJDC16t1yxTMxZF08GoPx1AoSCHHvsI4wMJ2VTtGZ6nb+//Sj2lwcAxsJJyYx7uqGI5GGmb0sLkw/tAszBPk0ffUb2pXkgQ1x/e3Gev40JD5739l8Nxg==",
+}
+
+VERIFIABLE_CREDENTIAL = {**CREDENTIAL, "proof": VC_PROOF0}
 
 
 class TestLinkedDataProof(TestCase):
@@ -58,11 +66,11 @@ class TestLinkedDataProof(TestCase):
 
     def test_serde(self):
         """Test de/serialization."""
-        proof = LDProof.deserialize(VC_PROOF)
+        proof = LDProof.deserialize(VC_PROOF0)
         assert type(proof) == LDProof
 
         proof_dict = proof.serialize()
-        assert proof_dict == VC_PROOF
+        assert proof_dict == VC_PROOF0
 
 
 class TestVerifiableCredential(TestCase):
@@ -187,3 +195,29 @@ class TestVerifiableCredential(TestCase):
 
         assert credential == credential
         assert credential != 10
+
+    def test_verifiable_credential_proof_single_or_multiple(self):
+        credential = VerifiableCredential.deserialize(
+            VERIFIABLE_CREDENTIAL, unknown=INCLUDE
+        )
+        assert isinstance(credential, VerifiableCredential)
+        assert credential.proof
+        assert credential.proof[0].serialize() == VC_PROOF0
+        assert credential.serialize() == VERIFIABLE_CREDENTIAL
+        credential = VerifiableCredential.deserialize(
+            {**CREDENTIAL, "proof": [VC_PROOF0]}, unknown=INCLUDE
+        )
+        assert isinstance(credential, VerifiableCredential)
+        assert credential.proof
+        assert credential.proof[0].serialize() == VC_PROOF0
+        # No way to detect that input was list and preserve so this will
+        # always output a singular proof object
+        assert credential.serialize() == {**CREDENTIAL, "proof": VC_PROOF0}
+        credential = VerifiableCredential.deserialize(
+            {**CREDENTIAL, "proof": [VC_PROOF0, VC_PROOF1]}, unknown=INCLUDE
+        )
+        assert isinstance(credential, VerifiableCredential)
+        assert credential.proof
+        assert credential.proof[0].serialize() == VC_PROOF0
+        assert credential.proof[1].serialize() == VC_PROOF1
+        assert credential.serialize() == {**CREDENTIAL, "proof": [VC_PROOF0, VC_PROOF1]}

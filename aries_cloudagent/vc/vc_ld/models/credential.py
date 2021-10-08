@@ -13,6 +13,7 @@ from ....messaging.valid import (
     CREDENTIAL_SUBJECT,
     DIDKey,
     DictOrDictListField,
+    NestedSingularOrMany,
     RFC3339_DATETIME,
     StrOrDictField,
     Uri,
@@ -45,7 +46,7 @@ class VerifiableCredential(BaseModel):
         issuance_date: Optional[str] = None,
         expiration_date: Optional[str] = None,
         credential_subject: Optional[Union[dict, List[dict]]] = None,
-        proof: Optional[Union[dict, LDProof]] = None,
+        proof: Optional[List[LDProof]] = None,
         **kwargs,
     ) -> None:
         """Initialize the VerifiableCredential instance."""
@@ -231,12 +232,12 @@ class VerifiableCredential(BaseModel):
         self._credential_subject = credential_subject
 
     @property
-    def proof(self):
+    def proof(self) -> Optional[List[LDProof]]:
         """Getter for proof."""
         return self._proof
 
     @proof.setter
-    def proof(self, proof: LDProof):
+    def proof(self, proof: List[LDProof]):
         """Setter for proof."""
         self._proof = proof
 
@@ -324,7 +325,7 @@ class CredentialSchema(BaseModelSchema):
         **CREDENTIAL_SUBJECT,
     )
 
-    proof = fields.Nested(
+    proof = NestedSingularOrMany(
         LinkedDataProofSchema(),
         required=False,
         description="The proof of the credential",
