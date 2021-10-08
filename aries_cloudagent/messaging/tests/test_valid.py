@@ -1,8 +1,9 @@
 import json
+from typing import List, NamedTuple, Union
 import pytest
 
 from unittest import TestCase
-from marshmallow import ValidationError
+from marshmallow import ValidationError, Schema, fields
 
 from ..valid import (
     BASE58_SHA256_HASH,
@@ -36,6 +37,7 @@ from ..valid import (
     SHA256,
     UUID4,
     WHOLE_NUM,
+    NestedSingularOrMany,
 )
 
 
@@ -522,3 +524,28 @@ class TestValid(TestCase):
         CREDENTIAL_CONTEXT["validate"](
             ["https://www.w3.org/2018/credentials/v1", "https://some-other-context.com"]
         )
+
+    def test_nested_singular_or_many(self):
+        class User:
+            def __init__(self, name: str, email: str):
+                self.name = name
+                self.email = email
+
+        class Users:
+            def __init__(self, users: Union[User, List[User]]):
+                self.users = users
+
+        UserSchema = Schema.from_dict({"name": fields.Str(), "email": fields.Email()})
+        UsersSchema = Schema.from_dict({"users": NestedSingularOrMany(UserSchema)})
+
+        monty = User(name="Monty", email="monty@python.org")
+        alice = User(name="Alice", email="alice@example.com")
+
+        dumped = UsersSchema().dump(Users(users=[monty, alice]))
+        assert isinstance(dumped["users"], list)
+
+        dumped = UsersSchema().dump(Users(users=[monty]))
+        assert isinstance(dumped["users"], list)
+
+        dumped = UsersSchema().dump(Users(users=monty))
+        assert isinstance(dumped["users"], dict)

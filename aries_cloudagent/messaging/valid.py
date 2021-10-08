@@ -7,7 +7,8 @@ import re
 from base58 import alphabet
 from marshmallow.validate import OneOf, Range, Regexp, Validator
 from marshmallow.exceptions import ValidationError
-from marshmallow.fields import Field
+from marshmallow.fields import Field, Nested
+from marshmallow.utils import is_collection
 
 from .util import epoch_to_str
 
@@ -77,6 +78,41 @@ class UriOrDictField(StrOrDictField):
         # Check if URI when
         if isinstance(value, str):
             return Uri()(value)
+
+
+class NestedSingularOrMany(Nested):
+    """Nested schema where many can be present or just one."""
+
+    def __init__(self, nested, **kwargs):
+        kwargs.pop("many", None)
+        super().__init__(nested, many=False, **kwargs)
+
+    def _serialize(self, nested_obj, attr, obj, **kwargs):
+        # Load up the schema first. This allows a RegistryError to be raised
+        # if an invalid schema name was passed
+        schema = self.schema
+        if nested_obj is None:
+            return None
+        if is_collection(nested_obj):
+            return schema.dump(nested_obj, many=True)
+        else:
+            return schema.dump(nested_obj, many=False)
+
+    def _load(self, value, data, partial=None):
+        try:
+            valid_data = self.schema.load(
+                value, many=True, unknown=self.unknown, partial=partial
+            )
+        except ValidationError as error:
+            raise ValidationError(
+                error.messages, valid_data=error.valid_data
+            ) from error
+        return valid_data
+
+    def _deserialize(self, value, attr, data, partial=None, **kwargs):
+        if not is_collection(value):
+            value = [value]
+        return super()._deserialize(value, attr, data, partial, **kwargs)
 
 
 class IntEpoch(Range):
