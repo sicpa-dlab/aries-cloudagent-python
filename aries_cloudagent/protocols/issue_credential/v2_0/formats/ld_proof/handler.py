@@ -2,7 +2,7 @@
 
 import logging
 
-from typing import Mapping
+from typing import Mapping, Optional, cast
 
 from marshmallow import EXCLUDE, INCLUDE
 
@@ -54,6 +54,7 @@ from ..handler import CredFormatAttachment, V20CredFormatError, V20CredFormatHan
 
 from .models.cred_detail import LDProofVCDetailSchema
 from .models.cred_detail import LDProofVCDetail
+from .models.cred_detail_options import LDProofVCDetailOptions
 
 LOGGER = logging.getLogger(__name__)
 
@@ -476,6 +477,21 @@ class LDProofCredFormatHandler(V20CredFormatHandler):
 
         return self.get_format_data(CRED_20_ISSUE, vc)
 
+    def _determine_new_proof(
+        self, received_credential: VerifiableCredential, detail: LDProofVCDetail
+    ) -> Optional[LDProof]:
+        assert received_credential.proof
+        assert detail.credential
+
+        new_proof = None
+        if detail.credential.proof:
+            new_proofs = set(received_credential.proof) - set(detail.credential.proof)
+            assert len(new_proofs) == 1
+            new_proof = new_proofs.pop()
+        elif len(received_credential.proof) == 1:
+            new_proof = received_credential.proof[0]
+        return new_proof
+
     async def receive_credential(
         self, cred_ex_record: V20CredExRecord, cred_issue_message: V20CredIssue
     ) -> None:
@@ -486,7 +502,9 @@ class LDProofCredFormatHandler(V20CredFormatHandler):
         )
 
         vc = VerifiableCredential.deserialize(cred_dict, unknown=INCLUDE)
+        vc = cast(VerifiableCredential, vc)
         detail = LDProofVCDetail.deserialize(detail_dict)
+        detail = cast(LDProofVCDetail, detail)
 
         # Remove values from cred that are not part of detail
         cred_dict.pop("proof")
@@ -514,31 +532,38 @@ class LDProofCredFormatHandler(V20CredFormatHandler):
                 " that does not match credential request"
             )
 
+        new_proof = self._determine_new_proof(vc, detail)
+        if not new_proof:
+            raise V20CredFormatError("Could not identify issued proof")
+
         # TODO: if created wasn't present in the detail options, should we verify
         # it is ~now (e.g. some time in the past + future)?
         # Check if created property matches
-        if detail.options.created and vc.proof.created != detail.options.created:
+        assert detail.options
+        assert isinstance(detail.options, LDProofVCDetailOptions)
+
+        if detail.options.created and new_proof.created != detail.options.created:
             raise V20CredFormatError(
                 "Received credential proof.created does not"
                 " match options.created from credential request"
             )
 
         # Check challenge
-        if vc.proof.challenge != detail.options.challenge:
+        if new_proof.challenge != detail.options.challenge:
             raise V20CredFormatError(
                 "Received credential proof.challenge does not"
                 " match options.challenge from credential request"
             )
 
         # Check domain
-        if vc.proof.domain != detail.options.domain:
+        if new_proof.domain != detail.options.domain:
             raise V20CredFormatError(
                 "Received credential proof.domain does not"
                 " match options.domain from credential request"
             )
 
         # Check if proof type matches
-        if vc.proof.type != detail.options.proof_type:
+        if new_proof.type != detail.options.proof_type:
             raise V20CredFormatError(
                 "Received credential proof.type does not"
                 " match options.proofType from credential request"
@@ -552,17 +577,25 @@ class LDProofCredFormatHandler(V20CredFormatHandler):
         cred_dict: dict = cred_ex_record.cred_issue.attachment(
             LDProofCredFormatHandler.format
         )
+        detail_dict = cred_ex_record.cred_request.attachment(
+            LDProofCredFormatHandler.format
+        )
 
         # Deserialize objects
         credential = VerifiableCredential.deserialize(cred_dict, unknown=INCLUDE)
+        credential = cast(VerifiableCredential, credential)
+        detail = LDProofVCDetail.deserialize(detail_dict)
+        detail = cast(LDProofVCDetail, detail)
+
+        new_proof = self._determine_new_proof(credential, detail)
 
         # Get signature suite, proof purpose and document loader
-        suite = await self._get_suite(proof_type=credential.proof.type)
+        suite = await self._get_suite(proof_type=new_proof.type)
 
         purpose = self._get_proof_purpose(
-            proof_purpose=credential.proof.proof_purpose,
-            challenge=credential.proof.challenge,
-            domain=credential.proof.domain,
+            proof_purpose=new_proof.proof_purpose,
+            challenge=new_proof.challenge,
+            domain=new_proof.domain,
         )
         document_loader = self.profile.inject(DocumentLoader)
 
@@ -591,7 +624,7 @@ class LDProofCredFormatHandler(V20CredFormatHandler):
             issuer_id=credential.issuer_id,
             subject_ids=credential.credential_subject_ids,
             schema_ids=[],  # Schemas not supported yet
-            proof_types=[credential.proof.type],
+            proof_types=[proof.type for proof in credential.proof],
             cred_value=credential.serialize(),
             given_id=credential.id,
             record_id=cred_id,

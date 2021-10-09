@@ -21,7 +21,7 @@ class LDProofVCDetail(BaseModel):
 
     def __init__(
         self,
-        credential: Optional[Union[dict, VerifiableCredential]],
+        credential: Optional[VerifiableCredential],
         options: Optional[Union[dict, LDProofVCDetailOptions]],
     ) -> None:
         """Initialize the LDProofVCDetail instance."""
