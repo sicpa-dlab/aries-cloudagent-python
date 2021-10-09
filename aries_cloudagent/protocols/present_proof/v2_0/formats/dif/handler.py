@@ -1,45 +1,40 @@
 """V2.0 present-proof dif presentation-exchange format handler."""
 
 import logging
+import traceback
+from typing import Mapping, Sequence, Tuple
+from uuid import uuid4
 
 from marshmallow import RAISE
-from typing import Mapping, Tuple, Sequence
-from uuid import uuid4
 
 from ......messaging.decorators.attach_decorator import AttachDecorator
 from ......storage.error import StorageNotFoundError
 from ......storage.vc_holder.base import VCHolder
 from ......storage.vc_holder.vc_record import VCRecord
 from ......vc.ld_proofs import (
-    DocumentLoader,
-    Ed25519Signature2018,
     BbsBlsSignature2020,
     BbsBlsSignatureProof2020,
+    DocumentLoader,
+    Ed25519Signature2018,
     WalletKeyPair,
 )
 from ......vc.vc_ld.verify import verify_presentation
 from ......wallet.base import BaseWallet
 from ......wallet.key_type import KeyType
-
 from ....dif.pres_exch import PresentationDefinition
 from ....dif.pres_exch_handler import DIFPresExchHandler
 from ....dif.pres_proposal_schema import DIFProofProposalSchema
-from ....dif.pres_request_schema import (
-    DIFProofRequestSchema,
-    DIFPresSpecSchema,
-)
+from ....dif.pres_request_schema import DIFPresSpecSchema, DIFProofRequestSchema
 from ....dif.pres_schema import DIFProofSchema
-
 from ...message_types import (
     ATTACHMENT_FORMAT,
-    PRES_20_REQUEST,
     PRES_20,
     PRES_20_PROPOSAL,
+    PRES_20_REQUEST,
 )
-from ...messages.pres_format import V20PresFormat
 from ...messages.pres import V20Pres
+from ...messages.pres_format import V20PresFormat
 from ...models.pres_exchange import V20PresExRecord
-
 from ..handler import V20PresFormatHandler, V20PresFormatHandlerError
 
 LOGGER = logging.getLogger(__name__)
@@ -374,5 +369,23 @@ class DIFPresFormatHandler(V20PresFormatHandler):
                 document_loader=self._profile.inject(DocumentLoader),
                 challenge=challenge,
             )
+
+            if not pres_ver_result.verified:
+                LOGGER.info(
+                    "Failed to verify presentation identified by %s due to the "
+                    "following errors:\n%s",
+                    pres_ex_record.pres_ex_id,
+                    "".join(
+                        [
+                            "".join(
+                                traceback.format_exception(
+                                    etype=type(exc), value=exc, tb=exc.__traceback__
+                                )
+                            )
+                            for exc in pres_ver_result.errors
+                        ]
+                    ),
+                )
+
             pres_ex_record.verified = pres_ver_result.verified
             return pres_ex_record
