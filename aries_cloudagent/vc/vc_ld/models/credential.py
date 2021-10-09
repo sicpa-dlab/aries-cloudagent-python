@@ -360,7 +360,7 @@ class VerifiableCredentialSchema(CredentialSchema):
 
     """
 
-    proof = fields.Nested(
+    proof = NestedSingularOrMany(
         LinkedDataProofSchema(),
         required=True,
         description="The proof of the credential",

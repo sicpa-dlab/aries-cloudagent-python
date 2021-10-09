@@ -72,6 +72,14 @@ class TestLinkedDataProof(TestCase):
         proof_dict = proof.serialize()
         assert proof_dict == VC_PROOF0
 
+    def test_set_operations(self):
+        proof0 = LDProof.deserialize(VC_PROOF0)
+        proof1 = LDProof.deserialize(VC_PROOF1)
+        copy_proof0 = LDProof.deserialize(VC_PROOF0)
+        copy_proof1 = LDProof.deserialize(VC_PROOF1)
+        assert {proof0, proof1} - {proof1} == {proof0}
+        assert {proof0, proof1} - {copy_proof1} == {proof0}
+
 
 class TestVerifiableCredential(TestCase):
     """VerifiableCredential tests"""

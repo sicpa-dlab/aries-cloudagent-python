@@ -508,6 +508,7 @@ class LDProofCredFormatHandler(V20CredFormatHandler):
 
         # Remove values from cred that are not part of detail
         cred_dict.pop("proof")
+        detail_dict["credential"].pop("proof")
         credential_status = cred_dict.pop("credentialStatus", None)
         detail_status = detail.options.credential_status
 

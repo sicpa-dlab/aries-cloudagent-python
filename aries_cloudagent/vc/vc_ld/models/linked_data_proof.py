@@ -42,6 +42,16 @@ class LDProof(BaseModel):
         self.nonce = nonce
         self.extra = kwargs
 
+    def __hash__(self):
+        """Hash this proof value."""
+        return hash(self.to_json())
+
+    def __eq__(self, other):
+        """Equality check this proof value."""
+        if not isinstance(other, type(self)):
+            return False
+        return self.to_json() == other.to_json()
+
 
 class LinkedDataProofSchema(BaseModelSchema):
     """Linked data proof schema.
