@@ -1,4 +1,4 @@
-"""Indy DID Resolver.
+"""Indy DID Provider.
 
 Resolution is performed using the IndyLedger class.
 """
@@ -15,32 +15,32 @@ from ...ledger.endpoint_type import EndpointType
 from ...ledger.error import LedgerError
 from ...messaging.valid import IndyDID
 
-from ..base import BaseDIDResolver, DIDNotFound, ResolverError, ResolverType
+from ..base import BaseDIDProvider, BaseDidProvider, DIDNotFound, ProviderType, providerType, providerError
 
 
-class NoIndyLedger(ResolverError):
+class NoIndyLedger(providerError):
     """Raised when there is no Indy ledger instance configured."""
 
 
-class IndyDIDResolver(BaseDIDResolver):
-    """Indy DID Resolver."""
+class IndyDIDProvider(BaseDidProvider):
+    """Indy DID Provider."""
 
     AGENT_SERVICE_TYPE = "did-communication"
 
     def __init__(self):
-        """Initialize Indy Resolver."""
-        super().__init__(ResolverType.NATIVE)
+        """Initialize Indy Provider."""
+        super().__init__(ProviderType.NATIVE)
 
     async def setup(self, context: InjectionContext):
         """Perform required setup for Indy DID resolution."""
 
     @property
     def supported_did_regex(self) -> Pattern:
-        """Return supported_did_regex of Indy DID Resolver."""
+        """Return supported_did_regex of Indy DID Provider."""
         return IndyDID.PATTERN
 
-    async def _resolve(self, profile: Profile, did: str) -> dict:
-        """Resolve an indy DID."""
+    async def _provide(self, profile: Profile, did: str) -> dict:
+        """Provide an indy DID."""
         ledger = profile.inject_or(BaseLedger)
         if not ledger:
             raise NoIndyLedger("No Indy ledger instance is configured.")
@@ -50,7 +50,7 @@ class IndyDIDResolver(BaseDIDResolver):
                 recipient_key = await ledger.get_key_for_did(did)
                 endpoints = await ledger.get_all_endpoints_for_did(did)
         except LedgerError as err:
-            raise DIDNotFound(f"DID {did} could not be resolved") from err
+            raise DIDNotFound(f"DID {did} could not be provided") from err
 
         builder = DIDDocumentBuilder(DID(did))
 

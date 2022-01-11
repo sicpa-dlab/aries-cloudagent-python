@@ -1,28 +1,21 @@
 """
-the did resolver.
+the did provider.
 
-responsible for keeping track of all resolvers. more importantly
-retrieving did's from different sources provided by the method type.
+responsible for keeping track of all providers. more importantly
+writting did's to different sources provided by the method type.
 """
 
+import logging
 from datetime import datetime
 from itertools import chain
-import logging
 from typing import Sequence, Tuple, Type, TypeVar, Union
 
-from pydid import DID, DIDError, DIDUrl, Resource, NonconformantDocument
-from pydid.doc.doc import IDNotFoundError
+from pydid import DID, Resource
 
 from ..core.profile import Profile
-from .base import (
-    BaseDIDResolver,
-    DIDMethodNotSupported,
-    DIDNotFound,
-    ResolutionMetadata,
-    ResolutionResult,
-    ResolverError,
-)
-from .did_resolver_registry import DIDResolverRegistry
+from .base import (BaseDIDIssuer, DIDMethodNotSupported, DIDNotFound,
+                   IssueMetadata, IssueResult)
+from .did_ledger_registry import DIDProviderRegistry
 
 LOGGER = logging.getLogger(__name__)
 
@@ -30,99 +23,74 @@ LOGGER = logging.getLogger(__name__)
 ResourceType = TypeVar("ResourceType", bound=Resource)
 
 
-class DIDResolver:
-    """did resolver singleton."""
+class DIDProvider:
+    """did provider singleton."""
 
-    def __init__(self, registry: DIDResolverRegistry):
-        """Create DID Resolver."""
-        self.did_resolver_registry = registry
+    def __init__(self, registry: DIDProviderRegistry):
+        """Create DID provider."""
+        self.did_provider_registry = registry
 
-    async def _resolve(
+    async def _issue(
         self, profile: Profile, did: Union[str, DID]
-    ) -> Tuple[BaseDIDResolver, dict]:
-        """Retrieve doc and return with resolver."""
+    ) -> Tuple[BaseDIDIssuer, dict]:
+        """Issue a did and return with provider."""
         # TODO Cache results
         if isinstance(did, DID):
             did = str(did)
         else:
             DID.validate(did)
-        for resolver in await self._match_did_to_resolver(profile, did):
+        for provider in await self._match_did_to_provider(profile, did):
             try:
-                LOGGER.debug("Resolving DID %s with %s", did, resolver)
-                document = await resolver.resolve(
+                LOGGER.debug("Resolving DID %s with %s", did, provider)
+                document = await provider.issue(
                     profile,
                     did,
                 )
-                return resolver, document
+                return provider, document
             except DIDNotFound:
-                LOGGER.debug("DID %s not found by resolver %s", did, resolver)
+                LOGGER.debug("DID %s not found by provider %s", did, provider)
 
-        raise DIDNotFound(f"DID {did} could not be resolved")
+        raise DIDNotFound(f"DID {did} could not be issued")
 
-    async def resolve(self, profile: Profile, did: Union[str, DID]) -> dict:
-        """Resolve a DID."""
-        _, doc = await self._resolve(profile, did)
+    async def issue(self, profile: Profile, did: Union[str, DID]) -> dict:
+        """Issue a DID."""
+        _, doc = await self._issue(profile, did)
         return doc
 
-    async def resolve_with_metadata(
+    async def issue_with_metadata(
         self, profile: Profile, did: Union[str, DID]
-    ) -> ResolutionResult:
-        """Resolve a DID and return the ResolutionResult."""
+    ) -> IssueResult:
+        """Issue a DID and return the IssueResult."""
         resolution_start_time = datetime.utcnow()
 
-        resolver, doc = await self._resolve(profile, did)
+        provider, doc = await self._issue(profile, did)
 
         time_now = datetime.utcnow()
         duration = int((time_now - resolution_start_time).total_seconds() * 1000)
         retrieved_time = time_now.strftime("%Y-%m-%dT%H:%M:%SZ")
-        resolver_metadata = ResolutionMetadata(
-            resolver.type, type(resolver).__qualname__, retrieved_time, duration
+        provider_metadata = IssueMetadata(
+            provider.type, type(provider).__qualname__, retrieved_time, duration
         )
-        return ResolutionResult(doc, resolver_metadata)
+        return IssueResult(doc, provider_metadata)
 
-    async def _match_did_to_resolver(
+    async def _match_did_to_provider(
         self, profile: Profile, did: str
-    ) -> Sequence[BaseDIDResolver]:
-        """Generate supported DID Resolvers.
+    ) -> Sequence[BaseDIDIssuer]:
+        """Generate supported DID Issuers.
 
-        Native resolvers are yielded first, in registered order followed by
-        non-native resolvers in registered order.
+        Native providers are yielded first, in registered order followed by
+        non-native providers in registered order.
         """
-        valid_resolvers = [
-            resolver
-            for resolver in self.did_resolver_registry.resolvers
-            if await resolver.supports(profile, did)
+        valid_providers = [
+            provider
+            for provider in self.did_provider_registry.providers
+            if await provider.supports(profile, did)
         ]
-        native_resolvers = filter(lambda resolver: resolver.native, valid_resolvers)
-        non_native_resolvers = filter(
-            lambda resolver: not resolver.native, valid_resolvers
+        native_providers = filter(lambda provider: provider.native, valid_providers)
+        non_native_providers = filter(
+            lambda provider: not provider.native, valid_providers
         )
-        resolvers = list(chain(native_resolvers, non_native_resolvers))
-        if not resolvers:
-            raise DIDMethodNotSupported(f'No resolver supprting DID "{did}" loaded')
-        return resolvers
-
-    async def dereference(
-        self, profile: Profile, did_url: str, *, cls: Type[ResourceType] = Resource
-    ) -> ResourceType:
-        """Dereference a DID URL to its corresponding DID Doc object."""
-        # TODO Use cached DID Docs when possible
-        try:
-            parsed = DIDUrl.parse(did_url)
-            if not parsed.did:
-                raise ValueError("Invalid DID URL")
-        except DIDError as err:
-            raise ResolverError(
-                "Failed to parse DID URL from {}".format(did_url)
-            ) from err
-
-        doc_dict = await self.resolve(profile, parsed.did)
-        # Use non-conformant doc as the "least common denominator"
-        try:
-            return NonconformantDocument.deserialize(doc_dict).dereference_as(
-                cls, parsed
-            )
-        except IDNotFoundError as error:
-            raise ResolverError(
-                "Failed to dereference DID URL: {}".format(error)
-            ) from error
+        providers = list(chain(native_providers, non_native_providers))
+        if not providers:
+            raise DIDMethodNotSupported(f'No provider supporting DID "{did}" loaded')
+        return providers

@@ -1,4 +1,4 @@
-"""Base Class for DID Resolvers."""
+"""Base Class for DID providers."""
 
 import re
 import warnings
@@ -14,78 +14,78 @@ from ..core.error import BaseError
 from ..core.profile import Profile
 
 
-class ResolverError(BaseError):
-    """Base class for resolver exceptions."""
+class providerError(BaseError):
+    """Base class for provider exceptions."""
 
 
-class DIDNotFound(ResolverError):
+class DIDNotFound(providerError):
     """Raised when DID is not found in verifiable data registry."""
 
 
-class DIDMethodNotSupported(ResolverError):
-    """Raised when no resolver is registered for a given did method."""
+class DIDMethodNotSupported(providerError):
+    """Raised when no provider is registered for a given did method."""
 
 
-class ResolverType(Enum):
-    """Resolver Type declarations."""
+class ProviderType(Enum):
+    """provider Type declarations."""
 
     NATIVE = "native"
     NON_NATIVE = "non-native"
 
 
-class ResolutionMetadata(NamedTuple):
-    """Resolution Metadata."""
+class IssueMetadata(NamedTuple):
+    """Issue Metadata."""
 
-    resolver_type: ResolverType
-    resolver: str
+    provider_type: ProviderType
+    provider: str
     retrieved_time: str
     duration: int
 
     def serialize(self) -> dict:
-        """Return serialized resolution metadata."""
-        return {**self._asdict(), "resolver_type": self.resolver_type.value}
+        """Return serialized issue metadata."""
+        return {**self._asdict(), "provider_type": self.provider_type.value}
 
 
-class ResolutionResult:
-    """Resolution Class to pack the DID Doc and the resolution information."""
+class IssueResult:
+    """Issue Class to pack the DID Doc and the issue information."""
 
-    def __init__(self, did_document: dict, metadata: ResolutionMetadata):
-        """Initialize Resolution.
+    def __init__(self, did_document: dict, metadata: IssueMetadata):
+        """Initialize Issue.
 
         Args:
-            did_doc: DID Document resolved
-            resolver_metadata: Resolving details
+            did_doc: DID Document issued
+            provider_metadata: Resolving details
         """
         self.did_document = did_document
         self.metadata = metadata
 
     def serialize(self) -> dict:
-        """Return serialized resolution result."""
+        """Return serialized issue result."""
         return {
             "did_document": self.did_document,
             "metadata": self.metadata.serialize(),
         }
 
 
-class BaseDIDResolver(ABC):
-    """Base Class for DID Resolvers."""
+class BaseDidProvider(ABC):
+    """Base Class for DID provider."""
 
-    def __init__(self, type_: ResolverType = None):
-        """Initialize BaseDIDResolver.
+    def __init__(self, type_: ProviderType = None):
+        """Initialize BaseDIDprovider.
 
         Args:
-            type_ (Type): Type of resolver, native or non-native
+            type_ (Type): Type of provider, native or non-native
         """
-        self.type = type_ or ResolverType.NON_NATIVE
+        self.type = type_ or ProviderType.NON_NATIVE
 
     @abstractmethod
     async def setup(self, context: InjectionContext):
-        """Do asynchronous resolver setup."""
+        """Do asynchronous provider setup."""
 
     @property
     def native(self):
-        """Return if this resolver is native."""
-        return self.type == ResolverType.NATIVE
+        """Return if this provider is native."""
+        return self.type == ProviderType.NATIVE
 
     @property
     def supported_methods(self) -> Sequence[str]:
@@ -97,22 +97,22 @@ class BaseDIDResolver(ABC):
 
     @property
     def supported_did_regex(self) -> Pattern:
-        """Supported DID regex for matching this resolver to DIDs it can resolve.
+        """Supported DID regex for matching this provider to DIDs it can issue.
 
         Override this property with a class var or similar to use regex
-        matching on DIDs to determine if this resolver supports a given DID.
+        matching on DIDs to determine if this provider supports a given DID.
         """
         raise NotImplementedError(
-            "supported_did_regex must be overriden by subclasses of BaseResolver "
+            "supported_did_regex must be overriden by subclasses of Baseprovider "
             "to use default supports method"
         )
 
     async def supports(self, profile: Profile, did: str) -> bool:
-        """Return if this resolver supports the given DID.
+        """Return if this provider supports the given DID.
 
-        Override this method to determine if this resolver supports a DID based
+        Override this method to determine if this provider supports a DID based
         on information other than just a regular expression; i.e. check a value
-        in storage, query a resolver connection record, etc.
+        in storage, query a provider connection record, etc.
         """
         try:
             supported_did_regex = self.supported_did_regex
@@ -121,7 +121,7 @@ class BaseDIDResolver(ABC):
             if not methods:
                 raise error
             warnings.warn(
-                "BaseResolver.supported_methods is deprecated; "
+                "Baseprovider.supported_methods is deprecated; "
                 "use supported_did_regex instead",
                 DeprecationWarning,
             )
@@ -132,8 +132,8 @@ class BaseDIDResolver(ABC):
 
         return bool(supported_did_regex.match(did))
 
-    async def resolve(self, profile: Profile, did: Union[str, DID]) -> dict:
-        """Resolve a DID using this resolver."""
+    async def provide(self, profile: Profile, did: Union[str, DID]) -> dict:
+        """provide a DID using this provider."""
         if isinstance(did, DID):
             did = str(did)
         else:
@@ -143,8 +143,8 @@ class BaseDIDResolver(ABC):
                 f"{self.__class__.__name__} does not support DID method for: {did}"
             )
 
-        return await self._resolve(profile, did)
+        return await self._issue(profile, did)
 
     @abstractmethod
-    async def _resolve(self, profile: Profile, did: str) -> dict:
-        """Resolve a DID using this resolver."""
+    async def _issue(self, profile: Profile, did: str) -> dict:
+        """Issue a DID using this provider."""

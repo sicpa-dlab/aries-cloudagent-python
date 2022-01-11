@@ -3,9 +3,7 @@
 import logging
 from typing import Sequence
 
-from aries_cloudagent.config.base import BaseProvider
-
-from ..base import BaseProvider
+from ..base import BaseDidProvider
 LOGGER = logging.getLogger(__name__)
 
 
@@ -19,7 +17,7 @@ class DIDProviderRegistry:
     @property
     def providers(
         self,
-    ) -> Sequence[BaseProvider]:
+    ) -> Sequence[BaseDidProvider]:
         """Accessor for a list of all did providers."""
         return self._providers
 

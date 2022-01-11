@@ -1,39 +1,39 @@
-"""Interfaces and base classes for DID Resolution."""
+"""Interfaces and base classes for DID Provider."""
 
 import logging
 
 from ..config.injection_context import InjectionContext
 from ..config.provider import ClassProvider
 
-from .did_resolver_registry import DIDResolverRegistry
+from .did_ledger_registry import DIDResolverRegistry
 
 LOGGER = logging.getLogger(__name__)
 
 
 async def setup(context: InjectionContext):
-    """Set up default resolvers."""
+    """Set up default providers."""
     registry = context.inject_or(DIDResolverRegistry)
     if not registry:
         LOGGER.warning("No DID Resolver Registry instance found in context")
         return
 
-    key_resolver = ClassProvider(
-        "aries_cloudagent.resolver.default.key.KeyDIDResolver"
+    key_provider = ClassProvider(
+        "aries_cloudagent.provider.default.key.KeyDIDResolver"
     ).provide(context.settings, context.injector)
-    await key_resolver.setup(context)
-    registry.register(key_resolver)
+    await key_provider.setup(context)
+    registry.register(key_provider)
 
     if not context.settings.get("ledger.disabled"):
-        indy_resolver = ClassProvider(
-            "aries_cloudagent.resolver.default.indy.IndyDIDResolver"
+        indy_provider = ClassProvider(
+            "aries_cloudagent.provider.default.indy.IndyDIDResolver"
         ).provide(context.settings, context.injector)
-        await indy_resolver.setup(context)
-        registry.register(indy_resolver)
+        await indy_provider.setup(context)
+        registry.register(indy_provider)
     else:
         LOGGER.warning("Ledger is not configured, not loading IndyDIDResolver")
 
-    web_resolver = ClassProvider(
-        "aries_cloudagent.resolver.default.web.WebDIDResolver"
+    web_provider = ClassProvider(
+        "aries_cloudagent.provider.default.web.WebDIDResolver"
     ).provide(context.settings, context.injector)
-    await web_resolver.setup(context)
-    registry.register(web_resolver)
+    await web_provider.setup(context)
+    registry.register(web_provider)
