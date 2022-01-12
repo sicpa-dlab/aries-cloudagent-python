@@ -12,7 +12,7 @@ from ..core.profile import ProfileManager, ProfileManagerProvider
 from ..core.protocol_registry import ProtocolRegistry
 from ..resolver.did_resolver import DIDResolver
 from ..resolver.did_resolver_registry import DIDResolverRegistry
-from ..provider.did_ledger_registry import DIDProviderRegistry
+from ..provider.did_provider_registry import DIDProviderRegistry
 from ..tails.base import BaseTailsServer
 
 from ..protocols.actionmenu.v1_0.base_service import BaseMenuService
@@ -57,7 +57,7 @@ class DefaultContextBuilder(ContextBuilder):
         # Global did ledger registry
         did_ledger_registry = DIDProviderRegistry()
         context.injector.bind_instance(DIDProviderRegistry, did_ledger_registry)
-        
+
         await self.bind_providers(context)
         await self.load_plugins(context)
 

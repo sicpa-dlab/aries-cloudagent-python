@@ -13,9 +13,14 @@ from typing import Sequence, Tuple, Type, TypeVar, Union
 from pydid import DID, Resource
 
 from ..core.profile import Profile
-from .base import (BaseDIDIssuer, DIDMethodNotSupported, DIDNotFound,
-                   IssueMetadata, IssueResult)
-from .did_ledger_registry import DIDProviderRegistry
+from .base import (
+    BaseDIDIssuer,
+    DIDMethodNotSupported,
+    DIDNotFound,
+    IssueMetadata,
+    IssueResult,
+)
+from .did_provider_registry import DIDProviderRegistry
 
 LOGGER = logging.getLogger(__name__)
 

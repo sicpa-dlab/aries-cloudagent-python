@@ -15,7 +15,14 @@ from ...ledger.endpoint_type import EndpointType
 from ...ledger.error import LedgerError
 from ...messaging.valid import IndyDID
 
-from ..base import BaseDIDProvider, BaseDidProvider, DIDNotFound, ProviderType, providerType, providerError
+from ..base import (
+    BaseDIDProvider,
+    BaseDidProvider,
+    DIDNotFound,
+    ProviderType,
+    providerType,
+    providerError,
+)
 
 
 class NoIndyLedger(providerError):

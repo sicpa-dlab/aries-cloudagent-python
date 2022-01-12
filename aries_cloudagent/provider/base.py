@@ -5,7 +5,7 @@ import warnings
 
 from abc import ABC, abstractmethod
 from enum import Enum
-from typing import NamedTuple, Pattern, Sequence, Union
+from typing import NamedTuple, Optional, Pattern, Sequence, Union
 
 from pydid import DID
 
@@ -29,8 +29,9 @@ class DIDMethodNotSupported(providerError):
 class ProviderType(Enum):
     """provider Type declarations."""
 
-    NATIVE = "native"
-    NON_NATIVE = "non-native"
+    INTERNAL = "internal-secret-mode"
+    EXTERNAL = "external-secret-mode"
+    CLIENT = "client-managed-secret-mode"
 
 
 class IssueMetadata(NamedTuple):
@@ -70,22 +71,58 @@ class IssueResult:
 class BaseDidProvider(ABC):
     """Base Class for DID provider."""
 
-    def __init__(self, type_: ProviderType = None):
+    def __init__(self, type_: ProviderType = None, storing=None, returning=None):
         """Initialize BaseDIDprovider.
 
         Args:
             type_ (Type): Type of provider, native or non-native
         """
-        self.type = type_ or ProviderType.NON_NATIVE
+        self.type = type_ or ProviderType.EXTERNAL
+        self.default_secret_storing = storing
+        self.default_secret_returning = returning
 
     @abstractmethod
     async def setup(self, context: InjectionContext):
         """Do asynchronous provider setup."""
 
     @property
-    def native(self):
-        """Return if this provider is native."""
-        return self.type == ProviderType.NATIVE
+    def internal(self):
+        """Return if this provider is internal mode."""
+        return self.type == ProviderType.INTERNAL
+
+    @property
+    async def create(
+        self, profile, method, did, options, secret, didDocument
+    ) -> Optional[
+        dict
+    ]:  # jobId, didState, didRegistrationMetadata, didDocumentMetadata:
+        """Creates a new did"""
+        if isinstance(did, DID):
+            did = str(did)
+        else:
+            DID.validate(did)
+        if not await self.supports(profile, did):
+            raise DIDMethodNotSupported(
+                f"{self.__class__.__name__} does not support DID method for: {did}"
+            )
+
+        return await self._issue(profile, did)
+
+    @property
+    def update(
+        did, options, secret, didDocumentOperation, didDocument
+    ) -> Optional[
+        dict
+    ]:  # jobId, didState, didRegistrationMetadata, didDocumentMetadata:
+        """Updates a did"""
+
+    @property
+    def deactivate(
+        did, options, secret
+    ) -> Optional[
+        dict
+    ]:  # jobId, didState, didRegistrationMetadata, didDocumentMetadata:
+        """Deactivates a did"""
 
     @property
     def supported_methods(self) -> Sequence[str]:
@@ -131,19 +168,6 @@ class BaseDidProvider(ABC):
             )
 
         return bool(supported_did_regex.match(did))
-
-    async def provide(self, profile: Profile, did: Union[str, DID]) -> dict:
-        """provide a DID using this provider."""
-        if isinstance(did, DID):
-            did = str(did)
-        else:
-            DID.validate(did)
-        if not await self.supports(profile, did):
-            raise DIDMethodNotSupported(
-                f"{self.__class__.__name__} does not support DID method for: {did}"
-            )
-
-        return await self._issue(profile, did)
 
     @abstractmethod
     async def _issue(self, profile: Profile, did: str) -> dict:

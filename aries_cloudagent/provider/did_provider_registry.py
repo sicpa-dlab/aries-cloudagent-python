@@ -3,7 +3,8 @@
 import logging
 from typing import Sequence
 
-from ..base import BaseDidProvider
+from .base import BaseDidProvider
+
 LOGGER = logging.getLogger(__name__)
 
 

@@ -5,14 +5,14 @@ import logging
 from ..config.injection_context import InjectionContext
 from ..config.provider import ClassProvider
 
-from .did_ledger_registry import DIDResolverRegistry
+from .did_provider_registry import DIDProviderRegistry
 
 LOGGER = logging.getLogger(__name__)
 
 
 async def setup(context: InjectionContext):
     """Set up default providers."""
-    registry = context.inject_or(DIDResolverRegistry)
+    registry = context.inject_or(DIDProviderRegistry)
     if not registry:
         LOGGER.warning("No DID Resolver Registry instance found in context")
         return
