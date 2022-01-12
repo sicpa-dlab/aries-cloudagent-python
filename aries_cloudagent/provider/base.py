@@ -14,15 +14,15 @@ from ..core.error import BaseError
 from ..core.profile import Profile
 
 
-class providerError(BaseError):
+class ProviderError(BaseError):
     """Base class for provider exceptions."""
 
 
-class DIDNotFound(providerError):
+class DIDNotFound(ProviderError):
     """Raised when DID is not found in verifiable data registry."""
 
 
-class DIDMethodNotSupported(providerError):
+class DIDMethodNotSupported(ProviderError):
     """Raised when no provider is registered for a given did method."""
 
 
