@@ -10,12 +10,11 @@ from aiohttp_apispec import docs, match_info_schema, response_schema
 
 from ..admin.request_context import AdminRequestContext
 from ..resolver.routes import DIDMatchInfoSchema, ResolutionResultSchema
-from .base import (DIDMethodNotSupported, DIDNotFound, ProviderError,
-                   IssueResult)
-from .did_provider import DIDProvider
+from .base import DIDMethodNotSupported, DIDNotFound, RegistrarError, IssueResult
+from .did_registrar import DIDRegistrar
 
 
-@docs(tags=["provider"], summary="create and publish a did.")
+@docs(tags=["registrar"], summary="create and publish a did.")
 @match_info_schema(DIDMatchInfoSchema())
 @response_schema(ResolutionResultSchema(), 200)
 async def create_did(request: web.Request):
@@ -26,17 +25,16 @@ async def create_did(request: web.Request):
     did = request.match_info["did"]
     try:
         session = await context.session()
-        provider = session.inject(DIDProvider)
-        result: IssueResult = await provider.create(
-            context.profile, did
-        )
+        registrar = session.inject(DIDRegistrar)
+        result: IssueResult = await registrar.create(context.profile, did)
     except DIDMethodNotSupported as err:
         raise web.HTTPNotImplemented(reason=err.roll_up) from err
-    except ProviderError as err:
+    except RegistrarError as err:
         raise web.HTTPInternalServerError(reason=err.roll_up) from err
     return web.json_response(result.serialize())
 
-@docs(tags=["provider"], summary="Update a did.")
+
+@docs(tags=["registrar"], summary="Update a did.")
 @match_info_schema(DIDMatchInfoSchema())
 @response_schema(ResolutionResultSchema(), 200)
 async def update_did(request: web.Request):
@@ -47,19 +45,18 @@ async def update_did(request: web.Request):
     did = request.match_info["did"]
     try:
         session = await context.session()
-        provider = session.inject(DIDProvider)
-        result: IssueResult = await provider.update(
-            context.profile, did
-        )
+        registrar = session.inject(DIDRegistrar)
+        result: IssueResult = await registrar.update(context.profile, did)
     except DIDNotFound as err:
         raise web.HTTPNotFound(reason=err.roll_up) from err
     except DIDMethodNotSupported as err:
         raise web.HTTPNotImplemented(reason=err.roll_up) from err
-    except ProviderError as err:
+    except RegistrarError as err:
         raise web.HTTPInternalServerError(reason=err.roll_up) from err
     return web.json_response(result.serialize())
 
-@docs(tags=["provider"], summary="Deactivate a did.")
+
+@docs(tags=["registrar"], summary="Deactivate a did.")
 @match_info_schema(DIDMatchInfoSchema())
 @response_schema(ResolutionResultSchema(), 200)
 async def deactivate_did(request: web.Request):
@@ -71,26 +68,25 @@ async def deactivate_did(request: web.Request):
     did = request.match_info["did"]
     try:
         session = await context.session()
-        provider = session.inject(DIDProvider)
-        result: IssueResult = await provider.deactivate(
-            context.profile, did
-        )
+        registrar = session.inject(DIDRegistrar)
+        result: IssueResult = await registrar.deactivate(context.profile, did)
     except DIDNotFound as err:
         raise web.HTTPNotFound(reason=err.roll_up) from err
     except DIDMethodNotSupported as err:
         raise web.HTTPNotImplemented(reason=err.roll_up) from err
-    except ProviderError as err:
+    except RegistrarError as err:
         raise web.HTTPInternalServerError(reason=err.roll_up) from err
     return web.json_response(result.serialize())
-    
+
+
 async def register(app: web.Application):
     """Register routes."""
 
     app.add_routes(
         [
-            web.post("/provider/create/{method}",create_did, allow_head=False),
-            web.post("/provider/update/{did}",update_did, allow_head=False),
-            web.post("/provider/deactivate/{did}",deactivate_did, allow_head=False),
+            web.post("/registrar/create/{method}", create_did, allow_head=False),
+            web.post("/registrar/update/{did}", update_did, allow_head=False),
+            web.post("/registrar/deactivate/{did}", deactivate_did, allow_head=False),
         ]
     )
 

@@ -1,4 +1,4 @@
-"""Indy DID Provider.
+"""Indy DID Registrar.
 
 Resolution is performed using the IndyLedger class.
 """
@@ -16,34 +16,32 @@ from ...ledger.error import LedgerError
 from ...messaging.valid import IndyDID
 
 from ..base import (
-    BaseDIDProvider,
-    BaseDidProvider,
+    BaseDidRegistrar,
     DIDNotFound,
-    ProviderType,
-    providerType,
-    providerError,
+    RegistrarType,
+    RegistrarError,
 )
 
 
-class NoIndyLedger(providerError):
+class NoIndyLedger(RegistrarError):
     """Raised when there is no Indy ledger instance configured."""
 
 
-class IndyDIDProvider(BaseDidProvider):
-    """Indy DID Provider."""
+class IndyDIDRegistrar(BaseDidRegistrar):
+    """Indy DID Registrar."""
 
     AGENT_SERVICE_TYPE = "did-communication"
 
     def __init__(self):
-        """Initialize Indy Provider."""
-        super().__init__(ProviderType.NATIVE)
+        """Initialize Indy Registrar."""
+        super().__init__(RegistrarType.INTERNAL)
 
     async def setup(self, context: InjectionContext):
         """Perform required setup for Indy DID resolution."""
 
     @property
     def supported_did_regex(self) -> Pattern:
-        """Return supported_did_regex of Indy DID Provider."""
+        """Return supported_did_regex of Indy DID Registrar."""
         return IndyDID.PATTERN
 
     async def _provide(self, profile: Profile, did: str) -> dict:

@@ -1,4 +1,4 @@
-"""Base Class for DID providers."""
+"""Base Class for DID registrars."""
 
 import logging
 import re
@@ -6,7 +6,7 @@ import warnings
 
 from abc import ABC, abstractmethod
 from enum import Enum
-from typing import NamedTuple, Optional, Pattern, Sequence, Union
+from typing import NamedTuple, Optional, Pattern, Sequence
 
 from pydid import DID
 
@@ -15,20 +15,20 @@ from ..core.error import BaseError
 from ..core.profile import Profile
 
 
-class ProviderError(BaseError):
-    """Base class for provider exceptions."""
+class RegistrarError(BaseError):
+    """Base class for registrar exceptions."""
 
 
-class DIDNotFound(ProviderError):
+class DIDNotFound(RegistrarError):
     """Raised when DID is not found in verifiable data registry."""
 
 
-class DIDMethodNotSupported(ProviderError):
-    """Raised when no provider is registered for a given did method."""
+class DIDMethodNotSupported(RegistrarError):
+    """Raised when no registrar is registered for a given did method."""
 
 
-class ProviderType(Enum):
-    """provider Type declarations."""
+class RegistrarType(Enum):
+    """registrar Type declarations."""
 
     INTERNAL = "internal-secret-mode"
     EXTERNAL = "external-secret-mode"
@@ -38,14 +38,14 @@ class ProviderType(Enum):
 class IssueMetadata(NamedTuple):
     """Issue Metadata."""
 
-    provider_type: ProviderType
-    provider: str
+    registrar_type: RegistrarType
+    registrar: str
     retrieved_time: str
     duration: int
 
     def serialize(self) -> dict:
         """Return serialized issue metadata."""
-        return {**self._asdict(), "provider_type": self.provider_type.value}
+        return {**self._asdict(), "registrar_type": self.registrar_type.value}
 
 
 class IssueResult:
@@ -56,7 +56,7 @@ class IssueResult:
 
         Args:
             did_doc: DID Document issued
-            provider_metadata: Resolving details
+            registrar_metadata: Resolving details
         """
         self.did_document = did_document
         self.metadata = metadata
@@ -69,28 +69,28 @@ class IssueResult:
         }
 
 
-class BaseDidProvider(ABC):
-    """Base Class for DID provider."""
+class BaseDidRegistrar(ABC):
+    """Base Class for DID registrar."""
 
-    def __init__(self, type_: ProviderType = None, storing=None, returning=None):
-        """Initialize BaseDIDprovider.
+    def __init__(self, type_: RegistrarType = None, storing=None, returning=None):
+        """Initialize BaseDIDregistrar.
 
         Args:
-            type_ (Type): Type of provider, native or non-native
+            type_ (Type): Type of registrar, native or non-native
         """
-        self.type = type_ or ProviderType.EXTERNAL
+        self.type = type_ or RegistrarType.EXTERNAL
         self.default_secret_storing = storing
         self.default_secret_returning = returning
 
     @abstractmethod
     async def setup(self, context: InjectionContext):
-        """Do asynchronous provider setup."""
+        """Do asynchronous registrar setup."""
         logging.info("setup called in did registry")
 
     @property
     def internal(self):
-        """Return if this provider is internal mode."""
-        return self.type == ProviderType.INTERNAL
+        """Return if this registrar is internal mode."""
+        return self.type == RegistrarType.INTERNAL
 
     @property
     async def create(
@@ -136,22 +136,22 @@ class BaseDidProvider(ABC):
 
     @property
     def supported_did_regex(self) -> Pattern:
-        """Supported DID regex for matching this provider to DIDs it can issue.
+        """Supported DID regex for matching this registrar to DIDs it can issue.
 
         Override this property with a class var or similar to use regex
-        matching on DIDs to determine if this provider supports a given DID.
+        matching on DIDs to determine if this registrar supports a given DID.
         """
         raise NotImplementedError(
-            "supported_did_regex must be overriden by subclasses of Baseprovider "
+            "supported_did_regex must be overriden by subclasses of Baseregistrar "
             "to use default supports method"
         )
 
     async def supports(self, profile: Profile, did: str) -> bool:
-        """Return if this provider supports the given DID.
+        """Return if this registrar supports the given DID.
 
-        Override this method to determine if this provider supports a DID based
+        Override this method to determine if this registrar supports a DID based
         on information other than just a regular expression; i.e. check a value
-        in storage, query a provider connection record, etc.
+        in storage, query a registrar connection record, etc.
         """
         try:
             supported_did_regex = self.supported_did_regex
@@ -160,7 +160,7 @@ class BaseDidProvider(ABC):
             if not methods:
                 raise error
             warnings.warn(
-                "Baseprovider.supported_methods is deprecated; "
+                "Baseregistrar.supported_methods is deprecated; "
                 "use supported_did_regex instead",
                 DeprecationWarning,
             )
@@ -173,4 +173,4 @@ class BaseDidProvider(ABC):
 
     @abstractmethod
     async def _issue(self, profile: Profile, did: str) -> dict:
-        """Issue a DID using this provider."""
+        """Issue a DID using this registrar."""
