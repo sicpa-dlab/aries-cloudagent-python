@@ -20,7 +20,6 @@ from .base import (
     IssueMetadata,
     IssueResult,
 )
-from .did_registrar_registry import DIDRegistrarRegistry
 
 LOGGER = logging.getLogger(__name__)
 
@@ -31,9 +30,9 @@ ResourceType = TypeVar("ResourceType", bound=Resource)
 class DIDRegistrar:
     """did registrar singleton."""
 
-    def __init__(self, registry: DIDRegistrarRegistry):
+    def __init__(self, registrars: Sequence[BaseDidRegistrar]):
         """Create DID registrar."""
-        self.did_registrar_registry = registry
+        self.registrars = registrars
 
     async def _issue(
         self, profile: Profile, did: Union[str, DID]
@@ -88,7 +87,7 @@ class DIDRegistrar:
         """
         valid_registrars = [
             registrar
-            for registrar in self.did_registrar_registry.registrars
+            for registrar in self.registrars
             if await registrar.supports(profile, did)
         ]
         native_registrars = filter(lambda registrar: registrar.native, valid_registrars)
