@@ -11,7 +11,7 @@ from ..core.plugin_registry import PluginRegistry
 from ..core.profile import ProfileManager, ProfileManagerProvider
 from ..core.protocol_registry import ProtocolRegistry
 from ..resolver.did_resolver import DIDResolver
-from ..resolver.did_resolver_registry import DIDResolverRegistry
+from ..resolver import Resolvers
 from ..provider.did_provider_registry import DIDProviderRegistry
 from ..tails.base import BaseTailsServer
 
@@ -48,8 +48,8 @@ class DefaultContextBuilder(ContextBuilder):
         context.injector.bind_instance(EventBus, EventBus())
 
         # Global did resolver registry
-        did_resolver_registry = DIDResolverRegistry()
-        context.injector.bind_instance(DIDResolverRegistry, did_resolver_registry)
+        did_resolver_registry = []
+        context.injector.bind_instance(Resolvers, did_resolver_registry)
 
         # Global did resolver
         context.injector.bind_instance(DIDResolver, DIDResolver(did_resolver_registry))
