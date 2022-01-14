@@ -1,14 +1,10 @@
 """Base Class for DID registrars."""
 
 import logging
-import re
-import warnings
 
 from abc import ABC, abstractmethod
 from enum import Enum
-from typing import NamedTuple, Optional, Pattern, Sequence
-
-from pydid import DID
+from typing import NamedTuple, Optional, Pattern
 
 from ..config.injection_context import InjectionContext
 from ..core.error import BaseError
@@ -28,11 +24,21 @@ class DIDMethodNotSupported(RegistrarError):
 
 
 class RegistrarType(Enum):
-    """registrar Type declarations."""
+    """Registrar type declarations.
+
+    INTERNAL mode refers to when secrets are stored within this ACA-Py instance's
+    currently loaded secret storage system (Indy SDK Wallet, Askar, etc.)
+
+    HYBRID mode refers to when secrets are accessible to this ACA-Py instance
+    but not stored within ACA-Py's secret storage system.
+
+    EXTERNAL mode refers to when secrets are held outside of this ACA-Py
+    Instance altogether and are not accessible directly.
+    """
 
     INTERNAL = "internal-secret-mode"
+    HYBRID = "hybrid-secret-mode"
     EXTERNAL = "external-secret-mode"
-    CLIENT = "client-managed-secret-mode"
 
 
 class IssueMetadata(NamedTuple):
@@ -82,70 +88,53 @@ class BaseDidRegistrar(ABC):
         self.default_secret_storing = storing
         self.default_secret_returning = returning
 
-    @abstractmethod
     async def setup(self, context: InjectionContext):
         """Do asynchronous registrar setup."""
-        logging.info("setup called in did registry")
+        logging.debug(
+            "Setup from %s called with context: %s", self.__class__.__name__, context
+        )
 
-    @property
-    def internal(self):
-        """Return if this registrar is internal mode."""
-        return self.type == RegistrarType.INTERNAL
-
-    @property
+    @abstractmethod
     async def create(
         self, profile, method, did, options, secret, didDocument
     ) -> Optional[
         dict
     ]:  # jobId, didState, didRegistrationMetadata, didDocumentMetadata:
-        """Creates a new did"""
-        if isinstance(did, DID):
-            did = str(did)
-        else:
-            DID.validate(did)
-        if not await self.supports(profile, did):
-            raise DIDMethodNotSupported(
-                f"{self.__class__.__name__} does not support DID method for: {did}"
-            )
+        """Create a new DID."""
 
-        return await self._issue(profile, did)
+    @abstractmethod
+    async def register(self, profile, did, document):
+        """Register the DID as defined by the DID method."""
 
-    @property
-    def update(
+    async def create_and_register(self, profile, did, document):
+        """Create and register a DID."""
+        raise NotImplementedError("Not supported for this DID Method.")
+
+    @abstractmethod
+    async def update(
         did, options, secret, didDocumentOperation, didDocument
     ) -> Optional[
         dict
     ]:  # jobId, didState, didRegistrationMetadata, didDocumentMetadata:
         """Updates a did"""
 
-    @property
-    def deactivate(
+    @abstractmethod
+    async def deactivate(
         did, options, secret
     ) -> Optional[
         dict
     ]:  # jobId, didState, didRegistrationMetadata, didDocumentMetadata:
         """Deactivates a did"""
 
-    @property
-    def supported_methods(self) -> Sequence[str]:
-        """Return supported methods.
-
-        DEPRECATED: Use supported_did_regex instead.
-        """
-        return []
-
-    @property
+    @abstractmethod
     def supported_did_regex(self) -> Pattern:
         """Supported DID regex for matching this registrar to DIDs it can issue.
 
         Override this property with a class var or similar to use regex
         matching on DIDs to determine if this registrar supports a given DID.
         """
-        raise NotImplementedError(
-            "supported_did_regex must be overriden by subclasses of Baseregistrar "
-            "to use default supports method"
-        )
 
+    @abstractmethod
     async def supports(self, profile: Profile, did: str) -> bool:
         """Return if this registrar supports the given DID.
 
@@ -153,24 +142,3 @@ class BaseDidRegistrar(ABC):
         on information other than just a regular expression; i.e. check a value
         in storage, query a registrar connection record, etc.
         """
-        try:
-            supported_did_regex = self.supported_did_regex
-        except NotImplementedError as error:
-            methods = self.supported_methods
-            if not methods:
-                raise error
-            warnings.warn(
-                "Baseregistrar.supported_methods is deprecated; "
-                "use supported_did_regex instead",
-                DeprecationWarning,
-            )
-
-            supported_did_regex = re.compile(
-                "^did:(?:{}):.*$".format("|".join(methods))
-            )
-
-        return bool(supported_did_regex.match(did))
-
-    @abstractmethod
-    async def _issue(self, profile: Profile, did: str) -> dict:
-        """Issue a DID using this registrar."""
