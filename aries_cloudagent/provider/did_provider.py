@@ -14,7 +14,7 @@ from pydid import DID, Resource
 
 from ..core.profile import Profile
 from .base import (
-    BaseDIDIssuer,
+    BaseDidProvider,
     DIDMethodNotSupported,
     DIDNotFound,
     IssueMetadata,
@@ -37,7 +37,7 @@ class DIDProvider:
 
     async def _issue(
         self, profile: Profile, did: Union[str, DID]
-    ) -> Tuple[BaseDIDIssuer, dict]:
+    ) -> Tuple[BaseDidProvider, dict]:
         """Issue a did and return with provider."""
         # TODO Cache results
         if isinstance(did, DID):
@@ -80,7 +80,7 @@ class DIDProvider:
 
     async def _match_did_to_provider(
         self, profile: Profile, did: str
-    ) -> Sequence[BaseDIDIssuer]:
+    ) -> Sequence[BaseDidProvider]:
         """Generate supported DID Issuers.
 
         Native providers are yielded first, in registered order followed by

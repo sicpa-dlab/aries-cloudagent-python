@@ -25,4 +25,4 @@ class DIDProviderRegistry:
     def register(self, provider) -> None:
         """Register a provider."""
         LOGGER.debug("Registering provider %s", provider)
-        self._resolvers.append(provider)
+        self._providers.append(provider)

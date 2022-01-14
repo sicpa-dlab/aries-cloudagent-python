@@ -1,5 +1,6 @@
 """Base Class for DID providers."""
 
+import logging
 import re
 import warnings
 
@@ -84,6 +85,7 @@ class BaseDidProvider(ABC):
     @abstractmethod
     async def setup(self, context: InjectionContext):
         """Do asynchronous provider setup."""
+        logging.info("setup called in did registry")
 
     @property
     def internal(self):
