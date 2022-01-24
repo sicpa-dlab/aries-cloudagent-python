@@ -12,7 +12,7 @@ from ..core.profile import ProfileManager, ProfileManagerProvider
 from ..core.protocol_registry import ProtocolRegistry
 from ..resolver.did_resolver import DIDResolver
 from ..resolver import Resolvers
-from ..provider.did_provider_registry import DIDProviderRegistry
+from ..registrar.did_registrar import DIDRegistrar
 from ..tails.base import BaseTailsServer
 
 from ..protocols.actionmenu.v1_0.base_service import BaseMenuService
@@ -55,8 +55,8 @@ class DefaultContextBuilder(ContextBuilder):
         context.injector.bind_instance(DIDResolver, DIDResolver(did_resolver_registry))
 
         # Global did ledger registry
-        did_ledger_registry = DIDProviderRegistry()
-        context.injector.bind_instance(DIDProviderRegistry, did_ledger_registry)
+        did_ledger_registry = DIDRegistrar()
+        context.injector.bind_instance(DIDRegistrar, did_ledger_registry)
 
         await self.bind_providers(context)
         await self.load_plugins(context)
@@ -128,7 +128,7 @@ class DefaultContextBuilder(ContextBuilder):
         plugin_registry.register_plugin("aries_cloudagent.messaging.jsonld")
         plugin_registry.register_plugin("aries_cloudagent.revocation")
         plugin_registry.register_plugin("aries_cloudagent.resolver")
-        plugin_registry.register_plugin("aries_cloudagent.provider")
+        plugin_registry.register_plugin("aries_cloudagent.registrar")
         plugin_registry.register_plugin("aries_cloudagent.wallet")
 
         if context.settings.get("multitenant.admin_enabled"):

@@ -10,7 +10,7 @@ from aiohttp_apispec import docs, match_info_schema, response_schema
 
 from ..admin.request_context import AdminRequestContext
 from ..resolver.routes import DIDMatchInfoSchema, ResolutionResultSchema
-from .base import DIDMethodNotSupported, DIDNotFound, RegistrarError, IssueResult
+from .base import DIDMethodNotSupported, DIDNotFound, RegistrarError
 from .did_registrar import DIDRegistrar
 
 
@@ -26,7 +26,7 @@ async def create_did(request: web.Request):
     try:
         session = await context.session()
         registrar = session.inject(DIDRegistrar)
-        result: IssueResult = await registrar.create(context.profile, did)
+        result = await registrar.create(context.profile, did)
     except DIDMethodNotSupported as err:
         raise web.HTTPNotImplemented(reason=err.roll_up) from err
     except RegistrarError as err:
@@ -46,7 +46,7 @@ async def update_did(request: web.Request):
     try:
         session = await context.session()
         registrar = session.inject(DIDRegistrar)
-        result: IssueResult = await registrar.update(context.profile, did)
+        result = await registrar.update(context.profile, did)
     except DIDNotFound as err:
         raise web.HTTPNotFound(reason=err.roll_up) from err
     except DIDMethodNotSupported as err:
@@ -69,7 +69,7 @@ async def deactivate_did(request: web.Request):
     try:
         session = await context.session()
         registrar = session.inject(DIDRegistrar)
-        result: IssueResult = await registrar.deactivate(context.profile, did)
+        result = await registrar.deactivate(context.profile, did)
     except DIDNotFound as err:
         raise web.HTTPNotFound(reason=err.roll_up) from err
     except DIDMethodNotSupported as err:

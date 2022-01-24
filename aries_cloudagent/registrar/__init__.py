@@ -17,26 +17,14 @@ async def setup(context: InjectionContext):
     """Set up default registrars."""
     registry = context.inject_or(Registrars)
     if not registry:
-        LOGGER.warning("No DID Resolver Registry instance found in context")
+        LOGGER.warning("No DID registrar Registry instance found in context")
         return
 
-    key_registrar = ClassProvider(
-        "aries_cloudagent.resolver.default.key.KeyDIDResolver"
-    ).provide(context.settings, context.injector)
-    await key_registrar.setup(context)
-    registry.append(key_registrar)
-
     if not context.settings.get("ledger.disabled"):
-        indy_registrar = ClassProvider(
-            "aries_cloudagent.resolver.default.indy.IndyDIDResolver"
+        registrar = ClassProvider(
+            "aries_cloudagent.registrar.default.indy.IndyDIDRegistrar"
         ).provide(context.settings, context.injector)
-        await indy_registrar.setup(context)
-        registry.append(indy_registrar)
+        await registrar.setup(context)
+        registry.append(registrar)
     else:
-        LOGGER.warning("Ledger is not configured, not loading IndyDIDResolver")
-
-    web_registrar = ClassProvider(
-        "aries_cloudagent.resolver.default.web.WebDIDResolver"
-    ).provide(context.settings, context.injector)
-    await web_registrar.setup(context)
-    registry.append(web_registrar)
+        LOGGER.warning("Ledger is not configured, not loading IndyDIDRegistrar")

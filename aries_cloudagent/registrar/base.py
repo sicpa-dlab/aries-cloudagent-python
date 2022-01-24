@@ -41,40 +41,6 @@ class RegistrarType(Enum):
     EXTERNAL = "external-secret-mode"
 
 
-class IssueMetadata(NamedTuple):
-    """Issue Metadata."""
-
-    registrar_type: RegistrarType
-    registrar: str
-    retrieved_time: str
-    duration: int
-
-    def serialize(self) -> dict:
-        """Return serialized issue metadata."""
-        return {**self._asdict(), "registrar_type": self.registrar_type.value}
-
-
-class IssueResult:
-    """Issue Class to pack the DID Doc and the issue information."""
-
-    def __init__(self, did_document: dict, metadata: IssueMetadata):
-        """Initialize Issue.
-
-        Args:
-            did_doc: DID Document issued
-            registrar_metadata: Resolving details
-        """
-        self.did_document = did_document
-        self.metadata = metadata
-
-    def serialize(self) -> dict:
-        """Return serialized issue result."""
-        return {
-            "did_document": self.did_document,
-            "metadata": self.metadata.serialize(),
-        }
-
-
 class BaseDidRegistrar(ABC):
     """Base Class for DID registrar."""
 
@@ -101,6 +67,10 @@ class BaseDidRegistrar(ABC):
         dict
     ]:  # jobId, didState, didRegistrationMetadata, didDocumentMetadata:
         """Create a new DID."""
+
+    @abstractmethod
+    async def ready_to_register() -> bool:
+        """Check if DID is ready to be registered."""
 
     @abstractmethod
     async def register(self, profile, did, document):

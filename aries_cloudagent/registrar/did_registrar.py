@@ -13,13 +13,7 @@ from typing import Sequence, Tuple, TypeVar, Union
 from pydid import DID, Resource
 
 from ..core.profile import Profile
-from .base import (
-    BaseDidRegistrar,
-    DIDMethodNotSupported,
-    DIDNotFound,
-    IssueMetadata,
-    IssueResult,
-)
+from .base import BaseDidRegistrar, DIDMethodNotSupported, DIDNotFound
 
 LOGGER = logging.getLogger(__name__)
 
@@ -27,7 +21,7 @@ LOGGER = logging.getLogger(__name__)
 ResourceType = TypeVar("ResourceType", bound=Resource)
 
 
-class DIDRegistrar:
+class DIDRegistrar(BaseDidRegistrar):
     """did registrar singleton."""
 
     def __init__(self, registrars: Sequence[BaseDidRegistrar]):
@@ -61,10 +55,8 @@ class DIDRegistrar:
         _, doc = await self._issue(profile, did)
         return doc
 
-    async def issue_with_metadata(
-        self, profile: Profile, did: Union[str, DID]
-    ) -> IssueResult:
-        """Issue a DID and return the IssueResult."""
+    async def issue_with_metadata(self, profile: Profile, did: Union[str, DID]):
+        """Issue a DID."""
         resolution_start_time = datetime.utcnow()
 
         registrar, doc = await self._issue(profile, did)
@@ -75,7 +67,7 @@ class DIDRegistrar:
         registrar_metadata = IssueMetadata(
             registrar.type, type(registrar).__qualname__, retrieved_time, duration
         )
-        return IssueResult(doc, registrar_metadata)
+        return (doc, registrar_metadata)
 
     async def _match_did_to_registrar(
         self, profile: Profile, did: str
