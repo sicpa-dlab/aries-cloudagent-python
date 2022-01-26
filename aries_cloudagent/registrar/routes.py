@@ -3,8 +3,6 @@ Manage did and did document admin routes.
 
 """
 
-import logging
-
 from aiohttp import web
 from aiohttp_apispec import docs, match_info_schema, response_schema
 
@@ -19,7 +17,6 @@ from .did_registrar import DIDRegistrar
 @response_schema(ResolutionResultSchema(), 200)
 async def create_did(request: web.Request):
     """Create a did."""
-    logging.log("create a did called.")
     context: AdminRequestContext = request["context"]
 
     did = request.match_info["did"]
@@ -31,7 +28,7 @@ async def create_did(request: web.Request):
         raise web.HTTPNotImplemented(reason=err.roll_up) from err
     except RegistrarError as err:
         raise web.HTTPInternalServerError(reason=err.roll_up) from err
-    return web.json_response(result.serialize())
+    return web.json_response(result)
 
 
 @docs(tags=["registrar"], summary="Update a did.")
@@ -39,7 +36,6 @@ async def create_did(request: web.Request):
 @response_schema(ResolutionResultSchema(), 200)
 async def update_did(request: web.Request):
     """Update a did."""
-    logging.log("update a did called.")
     context: AdminRequestContext = request["context"]
 
     did = request.match_info["did"]
@@ -53,7 +49,7 @@ async def update_did(request: web.Request):
         raise web.HTTPNotImplemented(reason=err.roll_up) from err
     except RegistrarError as err:
         raise web.HTTPInternalServerError(reason=err.roll_up) from err
-    return web.json_response(result.serialize())
+    return web.json_response(result)
 
 
 @docs(tags=["registrar"], summary="Deactivate a did.")
@@ -62,7 +58,6 @@ async def update_did(request: web.Request):
 async def deactivate_did(request: web.Request):
     """deactivate a did."""
     # you never quite the did club
-    logging.log("deactivate a did called.")
     context: AdminRequestContext = request["context"]
 
     did = request.match_info["did"]
@@ -76,7 +71,7 @@ async def deactivate_did(request: web.Request):
         raise web.HTTPNotImplemented(reason=err.roll_up) from err
     except RegistrarError as err:
         raise web.HTTPInternalServerError(reason=err.roll_up) from err
-    return web.json_response(result.serialize())
+    return web.json_response(result)
 
 
 async def register(app: web.Application):

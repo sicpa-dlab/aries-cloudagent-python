@@ -72,7 +72,7 @@ class BaseDidRegistrar(ABC):
         """Create a new DID."""
 
     @abstractmethod
-    async def ready_to_register(self) -> bool:
+    async def ready_to_register(self, profile: Profile, did: str) -> bool:
         """Check if DID is ready to be registered."""
 
     @abstractmethod
@@ -80,9 +80,13 @@ class BaseDidRegistrar(ABC):
         """Register the DID as defined by the DID method."""
 
     @abstractmethod
-    async def update(self, did: str, document: dict, **options: dict) -> Optional[dict]:
-        """Updates a did"""
+    async def update(
+        self, profile: Profile, did: str, document: dict, **options: dict
+    ) -> Optional[dict]:
+        """Updates a did."""
 
     @abstractmethod
-    async def deactivate(self, did: str, **options: dict) -> Optional[dict]:
-        """Deactivates a did"""
+    async def deactivate(
+        self, profile: Profile, did: str, **options: dict
+    ) -> Optional[dict]:
+        """Deactivates a did."""
