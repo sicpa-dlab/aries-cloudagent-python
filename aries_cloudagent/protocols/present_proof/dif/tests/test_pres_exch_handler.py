@@ -8,8 +8,8 @@ from uuid import uuid4
 
 from .....core.in_memory import InMemoryProfile
 from .....did.did_key import DIDKey
-from .....resolver.did_resolver_registry import DIDResolverRegistry
 from .....resolver.did_resolver import DIDResolver
+from .....resolver import Resolvers
 from .....storage.vc_holder.vc_record import VCRecord
 from .....wallet.base import BaseWallet, DIDInfo
 from .....wallet.crypto import KeyType
@@ -71,9 +71,9 @@ def event_loop(request):
 def profile():
     profile = InMemoryProfile.test_profile()
     context = profile.context
-    did_resolver_registry = DIDResolverRegistry()
-    context.injector.bind_instance(DIDResolverRegistry, did_resolver_registry)
-    context.injector.bind_instance(DIDResolver, DIDResolver(did_resolver_registry))
+    did_resolvers = []
+    context.injector.bind_instance(Resolvers, did_resolvers)
+    context.injector.bind_instance(DIDResolver, DIDResolver(did_resolvers))
     context.injector.bind_instance(DocumentLoader, custom_document_loader)
     context.settings["debug.auto_respond_presentation_request"] = True
     return profile

@@ -25,7 +25,7 @@ from ...protocols.coordinate_mediation.mediation_invite_store import (
 from ...protocols.coordinate_mediation.v1_0.models.mediation_record import (
     MediationRecord,
 )
-from ...resolver.did_resolver import DIDResolver, DIDResolverRegistry
+from ...resolver.did_resolver import DIDResolver
 from ...multitenant.base import BaseMultitenantManager
 from ...storage.base import BaseStorage
 from ...storage.error import StorageNotFoundError
@@ -91,7 +91,7 @@ class StubContextBuilder(ContextBuilder):
         context.injector.bind_instance(ProfileManager, InMemoryProfileManager())
         context.injector.bind_instance(ProtocolRegistry, ProtocolRegistry())
         context.injector.bind_instance(BaseWireFormat, self.wire_format)
-        context.injector.bind_instance(DIDResolver, DIDResolver(DIDResolverRegistry()))
+        context.injector.bind_instance(DIDResolver, DIDResolver([]))
         return context
 
 
