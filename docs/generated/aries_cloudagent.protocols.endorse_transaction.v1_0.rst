@@ -19,6 +19,14 @@ Subpackages
 Submodules
 ----------
 
+aries\_cloudagent.protocols.endorse\_transaction.v1\_0.controller module
+------------------------------------------------------------------------
+
+.. automodule:: aries_cloudagent.protocols.endorse_transaction.v1_0.controller
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
 aries\_cloudagent.protocols.endorse\_transaction.v1\_0.manager module
 ---------------------------------------------------------------------
 
@@ -47,6 +55,14 @@ aries\_cloudagent.protocols.endorse\_transaction.v1\_0.transaction\_jobs module
 -------------------------------------------------------------------------------
 
 .. automodule:: aries_cloudagent.protocols.endorse_transaction.v1_0.transaction_jobs
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
+aries\_cloudagent.protocols.endorse\_transaction.v1\_0.util module
+------------------------------------------------------------------
+
+.. automodule:: aries_cloudagent.protocols.endorse_transaction.v1_0.util
    :members:
    :undoc-members:
    :show-inheritance:

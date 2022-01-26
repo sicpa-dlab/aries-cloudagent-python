@@ -34,6 +34,7 @@ from ..transport.queue.basic import BasicMessageQueue
 from ..utils.stats import Collector
 from ..utils.task_queue import TaskQueue
 from ..version import __version__
+from ..messaging.valid import UUIDFour
 from .base_server import BaseAdminServer
 from .error import AdminSetupError
 from .request_context import AdminRequestContext
@@ -288,7 +289,15 @@ class AdminServer(BaseAdminServer):
                 header_admin_api_key = request.headers.get("x-api-key")
                 valid_key = const_compare(self.admin_api_key, header_admin_api_key)
 
-                if valid_key or is_unprotected_path(request.path):
+                # We have to allow OPTIONS method access to paths without a key since
+                # browsers performing CORS requests will never include the original
+                # x-api-key header from the method that triggered the preflight
+                # OPTIONS check.
+                if (
+                    valid_key
+                    or is_unprotected_path(request.path)
+                    or (request.method == "OPTIONS")
+                ):
                     return await handler(request)
                 else:
                     raise web.HTTPUnauthorized()
@@ -311,6 +320,19 @@ class AdminServer(BaseAdminServer):
                 if authorization_header and is_multitenancy_path:
                     raise web.HTTPUnauthorized()
 
+                base_limited_access_path = (
+                    re.match(
+                        f"^/connections/(?:receive-invitation|{UUIDFour.PATTERN})", path
+                    )
+                    or path.startswith("/out-of-band/receive-invitation")
+                    or path.startswith("/mediation/requests/")
+                    or re.match(
+                        f"/mediation/(?:request/{UUIDFour.PATTERN}|"
+                        f"{UUIDFour.PATTERN}/default-mediator)",
+                        path,
+                    )
+                )
+
                 # base wallet is not allowed to perform ssi related actions.
                 # Only multitenancy and general server actions
                 if (
@@ -318,6 +340,7 @@ class AdminServer(BaseAdminServer):
                     and not is_multitenancy_path
                     and not is_server_path
                     and not is_unprotected_path(path)
+                    and not base_limited_access_path
                 ):
                     raise web.HTTPUnauthorized()
 

@@ -6,6 +6,14 @@ aries\_cloudagent.core package
    :undoc-members:
    :show-inheritance:
 
+Subpackages
+-----------
+
+.. toctree::
+   :maxdepth: 4
+
+   aries_cloudagent.core.in_memory
+
 Submodules
 ----------
 
@@ -41,10 +49,10 @@ aries\_cloudagent.core.event\_bus module
    :undoc-members:
    :show-inheritance:
 
-aries\_cloudagent.core.in\_memory module
-----------------------------------------
+aries\_cloudagent.core.goal\_code\_registry module
+--------------------------------------------------
 
-.. automodule:: aries_cloudagent.core.in_memory
+.. automodule:: aries_cloudagent.core.goal_code_registry
    :members:
    :undoc-members:
    :show-inheritance:
@@ -69,6 +77,14 @@ aries\_cloudagent.core.protocol\_registry module
 ------------------------------------------------
 
 .. automodule:: aries_cloudagent.core.protocol_registry
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
+aries\_cloudagent.core.util module
+----------------------------------
+
+.. automodule:: aries_cloudagent.core.util
    :members:
    :undoc-members:
    :show-inheritance:

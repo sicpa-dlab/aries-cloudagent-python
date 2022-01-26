@@ -4,6 +4,10 @@ from time import time
 
 from asynctest import mock as async_mock, TestCase as AsyncTestCase
 
+from aries_cloudagent.protocols.issue_credential.v1_0.models.credential_exchange import (
+    V10CredentialExchange,
+)
+
 from .....core.in_memory import InMemoryProfile
 from .....indy.holder import IndyHolder, IndyHolderError
 from .....indy.issuer import IndyIssuer
@@ -17,6 +21,9 @@ from .....indy.models.pres_preview import (
 from .....indy.sdk.verifier import IndySdkVerifier
 from .....indy.verifier import IndyVerifier
 from .....ledger.base import BaseLedger
+from .....ledger.multiple_ledger.ledger_requests_executor import (
+    IndyLedgerRequestsExecutor,
+)
 from .....messaging.decorators.attach_decorator import AttachDecorator
 from .....messaging.request_context import RequestContext
 from .....messaging.responder import BaseResponder, MockResponder
@@ -260,7 +267,14 @@ class TestPresentationManager(AsyncTestCase):
             )
         )
         injector.bind_instance(BaseLedger, self.ledger)
-
+        injector.bind_instance(
+            IndyLedgerRequestsExecutor,
+            async_mock.MagicMock(
+                get_ledger_for_identifier=async_mock.CoroutineMock(
+                    return_value=(None, self.ledger)
+                )
+            ),
+        )
         Holder = async_mock.MagicMock(IndyHolder, autospec=True)
         self.holder = Holder()
         get_creds = async_mock.CoroutineMock(
@@ -396,7 +410,7 @@ class TestPresentationManager(AsyncTestCase):
             name=PROOF_REQ_NAME,
             version=PROOF_REQ_VERSION,
             nonce=PROOF_REQ_NONCE,
-            ledger=self.ledger,
+            profile=self.profile,
         )
         pres_req = PresentationRequest(
             request_presentations_attach=[
@@ -435,7 +449,7 @@ class TestPresentationManager(AsyncTestCase):
             name=PROOF_REQ_NAME,
             version=PROOF_REQ_VERSION,
             nonce=PROOF_REQ_NONCE,
-            ledger=self.ledger,
+            profile=self.profile,
         )
 
         exchange_in.presentation_request = indy_proof_req
@@ -477,7 +491,7 @@ class TestPresentationManager(AsyncTestCase):
             name=PROOF_REQ_NAME,
             version=PROOF_REQ_VERSION,
             nonce=PROOF_REQ_NONCE,
-            ledger=self.ledger,
+            profile=self.profile,
         )
         indy_proof_req["non_revoked"] = None  # simulate interop with indy-vcx
 
@@ -539,7 +553,7 @@ class TestPresentationManager(AsyncTestCase):
             name=PROOF_REQ_NAME,
             version=PROOF_REQ_VERSION,
             nonce=PROOF_REQ_NONCE,
-            ledger=self.ledger,
+            profile=self.profile,
         )
 
         exchange_in.presentation_request = indy_proof_req
@@ -591,7 +605,7 @@ class TestPresentationManager(AsyncTestCase):
             name=PROOF_REQ_NAME,
             version=PROOF_REQ_VERSION,
             nonce=PROOF_REQ_NONCE,
-            ledger=self.ledger,
+            profile=self.profile,
         )
 
         exchange_in.presentation_request = indy_proof_req
@@ -657,7 +671,7 @@ class TestPresentationManager(AsyncTestCase):
             name=PROOF_REQ_NAME,
             version=PROOF_REQ_VERSION,
             nonce=PROOF_REQ_NONCE,
-            ledger=self.ledger,
+            profile=self.profile,
         )
 
         exchange_in.presentation_request = indy_proof_req
@@ -725,7 +739,7 @@ class TestPresentationManager(AsyncTestCase):
             name=PROOF_REQ_NAME,
             version=PROOF_REQ_VERSION,
             nonce=PROOF_REQ_NONCE,
-            ledger=self.ledger,
+            profile=self.profile,
         )
 
         exchange_in.presentation_request = indy_proof_req
@@ -818,7 +832,7 @@ class TestPresentationManager(AsyncTestCase):
             name=PROOF_REQ_NAME,
             version=PROOF_REQ_VERSION,
             nonce=PROOF_REQ_NONCE,
-            ledger=self.ledger,
+            profile=self.profile,
         )
         get_creds = async_mock.CoroutineMock(return_value=())
         self.holder.get_credentials_for_presentation_request_by_referent = get_creds
@@ -1184,7 +1198,7 @@ class TestPresentationManager(AsyncTestCase):
             name=PROOF_REQ_NAME,
             version=PROOF_REQ_VERSION,
             nonce=PROOF_REQ_NONCE,
-            ledger=self.ledger,
+            profile=self.profile,
         )
         pres_req = PresentationRequest(
             request_presentations_attach=[
@@ -1317,7 +1331,7 @@ class TestPresentationManager(AsyncTestCase):
             )
             save_ex.assert_called_once()
 
-            assert ret_exchange.state is None
+            assert ret_exchange.state == V10CredentialExchange.STATE_ABANDONED
 
     async def test_receive_problem_report_x(self):
         connection_id = "connection-id"

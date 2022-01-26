@@ -1,5 +1,6 @@
 import asyncio
 import asyncpg
+import base64
 import functools
 import json
 import logging
@@ -7,8 +8,9 @@ import os
 import random
 import subprocess
 import sys
+import yaml
+
 from timeit import default_timer
-import base64
 
 from aiohttp import (
     web,
@@ -119,6 +121,7 @@ class DemoAgent:
         internal_host: str = None,
         external_host: str = None,
         genesis_data: str = None,
+        genesis_txn_list: str = None,
         seed: str = None,
         label: str = None,
         color: str = None,
@@ -142,6 +145,7 @@ class DemoAgent:
         self.internal_host = internal_host or DEFAULT_INTERNAL_HOST
         self.external_host = external_host or DEFAULT_EXTERNAL_HOST
         self.genesis_data = genesis_data
+        self.genesis_txn_list = genesis_txn_list
         self.label = label or ident
         self.color = color
         self.prefix = prefix
@@ -149,7 +153,10 @@ class DemoAgent:
         self.timing_log = timing_log
         self.postgres = DEFAULT_POSTGRES if postgres is None else postgres
         self.tails_server_base_url = tails_server_base_url
+        self.revocation = revocation
         self.endorser_role = endorser_role
+        self.endorser_did = None  # set this later
+        self.endorser_invite = None  # set this later
         self.extra_args = extra_args
         self.trace_enabled = TRACE_ENABLED
         self.trace_target = TRACE_TARGET
@@ -203,6 +210,21 @@ class DemoAgent:
             self.agency_wallet_seed = self.seed
             self.agency_wallet_did = self.did
             self.agency_wallet_key = self.wallet_key
+
+        if self.genesis_txn_list:
+            updated_config_list = []
+            with open(self.genesis_txn_list, "r") as stream:
+                ledger_config_list = yaml.safe_load(stream)
+            for config in ledger_config_list:
+                if "genesis_url" in config and "/$LEDGER_HOST:" in config.get(
+                    "genesis_url"
+                ):
+                    config["genesis_url"] = config.get("genesis_url").replace(
+                        "$LEDGER_HOST", str(self.external_host)
+                    )
+                updated_config_list.append(config)
+            with open(self.genesis_txn_list, "w") as file:
+                documents = yaml.dump(updated_config_list, file)
 
     async def get_wallets(self):
         """Get registered wallets of agent (this is an agency call)."""
@@ -311,6 +333,7 @@ class DemoAgent:
             ("--wallet-key", self.wallet_key),
             "--preserve-exchange-records",
             "--auto-provision",
+            "--public-invites",
         ]
         if self.aip == 20:
             result.append("--emit-new-didcomm-prefix")
@@ -324,6 +347,8 @@ class DemoAgent:
             )
         if self.genesis_data:
             result.append(("--genesis-transactions", self.genesis_data))
+        if self.genesis_txn_list:
+            result.append(("--genesis-transactions-list", self.genesis_txn_list))
         if self.seed:
             result.append(("--seed", self.seed))
         if self.storage_type:
@@ -353,6 +378,12 @@ class DemoAgent:
                     ("--trace-label", self.label + ".trace"),
                 ]
             )
+
+        if self.revocation:
+            # turn on notifications if revocation is enabled
+            result.append("--notify-revocation")
+        # always enable notification webhooks
+        result.append("--monitor-revocation-notification")
 
         if self.tails_server_base_url:
             result.append(("--tails-server-base-url", self.tails_server_base_url))
@@ -398,6 +429,19 @@ class DemoAgent:
                         ("--endorser-alias", "endorser"),
                     ]
                 )
+                if self.endorser_did:
+                    result.extend(
+                        [
+                            ("--endorser-public-did", self.endorser_did),
+                        ]
+                    )
+                if self.endorser_invite:
+                    result.extend(
+                        (
+                            "--endorser-invitation",
+                            self.endorser_invite,
+                        )
+                    )
             elif self.endorser_role == "endorser":
                 result.extend(
                     [
@@ -474,6 +518,7 @@ class DemoAgent:
         webhook_port: int = None,
         mediator_agent=None,
         cred_type: str = CRED_FORMAT_INDY,
+        endorser_agent=None,
     ):
         if webhook_port is not None:
             await self.listen_webhooks(webhook_port)
@@ -552,6 +597,11 @@ class DemoAgent:
             if not await connect_wallet_to_mediator(self, mediator_agent):
                 log_msg("Mediation setup FAILED :-(")
                 raise Exception("Mediation setup FAILED :-(")
+
+        # if endorser, endorse the wallet ledger operations
+        if endorser_agent:
+            if not await connect_wallet_to_endorser(self, endorser_agent):
+                raise Exception("Endorser setup FAILED :-(")
 
         self.log(f"Created NEW wallet {target_wallet_name}")
         return True
@@ -1095,21 +1145,36 @@ class DemoAgent:
     def reset_postgres_stats(self):
         self.wallet_stats.clear()
 
-    async def get_invite(self, use_did_exchange: bool, auto_accept: bool = True):
+    async def get_invite(
+        self,
+        use_did_exchange: bool,
+        auto_accept: bool = True,
+        reuse_connections: bool = False,
+    ):
         self.connection_id = None
         if use_did_exchange:
             # TODO can mediation be used with DID exchange connections?
+            invi_params = {
+                "auto_accept": json.dumps(auto_accept),
+            }
+            payload = {
+                "handshake_protocols": ["rfc23"],
+                "use_public_did": reuse_connections,
+            }
             invi_rec = await self.admin_POST(
                 "/out-of-band/create-invitation",
-                {"handshake_protocols": ["rfc23"]},
-                params={"auto_accept": json.dumps(auto_accept)},
+                payload,
+                params=invi_params,
             )
         else:
             if self.mediation:
+                invi_params = {
+                    "auto_accept": json.dumps(auto_accept),
+                }
                 invi_rec = await self.admin_POST(
                     "/connections/create-invitation",
                     {"mediation_id": self.mediator_request_id},
-                    params={"auto_accept": json.dumps(auto_accept)},
+                    params=invi_params,
                 )
             else:
                 invi_rec = await self.admin_POST("/connections/create-invitation")
@@ -1120,8 +1185,10 @@ class DemoAgent:
         if self.endorser_role and self.endorser_role == "author":
             params = {"alias": "endorser"}
         else:
-            params = None
+            params = {}
         if "/out-of-band/" in invite.get("@type", ""):
+            # always reuse connections if possible
+            params["use_existing_connection"] = "true"
             connection = await self.admin_POST(
                 "/out-of-band/receive-invitation",
                 invite,
@@ -1175,12 +1242,15 @@ class MediatorAgent(DemoAgent):
         self.log("Received message:", message["content"])
 
 
-async def start_mediator_agent(start_port, genesis):
+async def start_mediator_agent(
+    start_port, genesis: str = None, genesis_txn_list: str = None
+):
     # start mediator agent
     mediator_agent = MediatorAgent(
         start_port,
         start_port + 1,
         genesis_data=genesis,
+        genesis_txn_list=genesis_txn_list,
     )
     await mediator_agent.listen_webhooks(start_port + 2)
     await mediator_agent.start_process()
@@ -1262,21 +1332,47 @@ class EndorserAgent(DemoAgent):
         return self._connection_ready.done() and self._connection_ready.result()
 
     async def handle_connections(self, message):
+        # inviter:
+        conn_id = message["connection_id"]
+        if message["state"] == "invitation":
+            self.connection_id = conn_id
+
+        # author responds to a multi-use invitation
+        if message["state"] == "request":
+            self.endorser_connection_id = message["connection_id"]
+            self._connection_ready = asyncio.Future()
+
+        # finish off the connection
         if message["connection_id"] == self.endorser_connection_id:
             if message["state"] == "active" and not self._connection_ready.done():
                 self.log("Endorser Connected")
                 self._connection_ready.set_result(True)
 
+                # setup endorser meta-data on our connection
+                log_msg("Setup endorser agent meta-data ...")
+                await self.admin_POST(
+                    "/transactions/"
+                    + self.endorser_connection_id
+                    + "/set-endorser-role",
+                    params={"transaction_my_job": "TRANSACTION_ENDORSER"},
+                )
+
     async def handle_basicmessages(self, message):
         self.log("Received message:", message["content"])
 
 
-async def start_endorser_agent(start_port, genesis):
+async def start_endorser_agent(
+    start_port,
+    genesis: str = None,
+    genesis_txn_list: str = None,
+    use_did_exchange: bool = True,
+):
     # start mediator agent
     endorser_agent = EndorserAgent(
         start_port,
         start_port + 1,
         genesis_data=genesis,
+        genesis_txn_list=genesis_txn_list,
     )
     await endorser_agent.register_did(cred_type=CRED_FORMAT_INDY)
     await endorser_agent.listen_webhooks(start_port + 2)
@@ -1285,6 +1381,34 @@ async def start_endorser_agent(start_port, genesis):
     log_msg("Endorser Admin URL is at:", endorser_agent.admin_url)
     log_msg("Endorser Endpoint URL is at:", endorser_agent.endpoint)
     log_msg("Endorser webhooks listening on:", start_port + 2)
+
+    # get a reusable invitation to connect to this endorser
+    log_msg("Generate endorser multi-use invite ...")
+    endorser_agent.endorser_connection_id = None
+    endorser_agent.endorser_public_did = None
+    endorser_agent.use_did_exchange = use_did_exchange
+    if use_did_exchange:
+        endorser_connection = await endorser_agent.admin_POST(
+            "/out-of-band/create-invitation",
+            {"handshake_protocols": ["rfc23"]},
+            params={
+                "alias": "EndorserMultiuse",
+                "auto_accept": "true",
+                "multi_use": "true",
+            },
+        )
+    else:
+        # old-style connection
+        endorser_connection = await endorser_agent.admin_POST(
+            "/connections/create-invitation?alias=EndorserMultiuse&auto_accept=true&multi_use=true"
+        )
+    endorser_agent.endorser_multi_connection = endorser_connection
+    endorser_agent.endorser_multi_invitation = endorser_connection["invitation"]
+    endorser_agent.endorser_multi_invitation_url = endorser_connection["invitation_url"]
+
+    endorser_agent_public_did = await endorser_agent.admin_GET("/wallet/did/public")
+    endorser_did = endorser_agent_public_did["result"]["did"]
+    endorser_agent.endorser_public_did = endorser_did
 
     return endorser_agent
 
@@ -1300,11 +1424,18 @@ async def connect_wallet_to_endorser(agent, endorser_agent):
 
     # accept the invitation
     log_msg("Accept endorser invite ...")
-    connection = await agent.admin_POST(
-        "/connections/receive-invitation",
-        endorser_connection["invitation"],
-        params={"alias": "endorser"},
-    )
+    if endorser_agent.use_did_exchange:
+        connection = await agent.admin_POST(
+            "/out-of-band/receive-invitation",
+            endorser_connection["invitation"],
+            params={"alias": "endorser"},
+        )
+    else:
+        connection = await agent.admin_POST(
+            "/connections/receive-invitation",
+            endorser_connection["invitation"],
+            params={"alias": "endorser"},
+        )
     agent.endorser_connection_id = connection["connection_id"]
 
     log_msg("Await endorser connection status ...")
@@ -1312,19 +1443,12 @@ async def connect_wallet_to_endorser(agent, endorser_agent):
     log_msg("Connected agent to endorser:", agent.ident, endorser_agent.ident)
 
     # setup endorser meta-data on our connection
-    log_msg("Setup endorser agent meta-data ...")
-    await endorser_agent.admin_POST(
-        "/transactions/" + endorser_agent.endorser_connection_id + "/set-endorser-role",
-        params={"transaction_my_job": "TRANSACTION_ENDORSER"},
-    )
-    await asyncio.sleep(1.0)
     log_msg("Setup author agent meta-data ...")
     await agent.admin_POST(
         f"/transactions/{agent.endorser_connection_id }/set-endorser-role",
         params={"transaction_my_job": "TRANSACTION_AUTHOR"},
     )
-    endorser_agent_public_did = await endorser_agent.admin_GET("/wallet/did/public")
-    endorser_did = endorser_agent_public_did["result"]["did"]
+    endorser_did = endorser_agent.endorser_public_did
     await agent.admin_POST(
         f"/transactions/{agent.endorser_connection_id}/set-endorser-info",
         params={"endorser_did": endorser_did, "endorser_name": "endorser"},

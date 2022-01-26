@@ -13,6 +13,8 @@
 import os
 import sys
 
+from sphinx.domains.python import PythonDomain
+
 sys.path.insert(0, os.path.abspath(".."))
 
 autodoc_mock_imports = [
@@ -39,9 +41,11 @@ autodoc_mock_imports = [
     "ecdsa",
     "indy_credx",
     "dateutil",
+    "packaging",
     "jsonpath_ng",
     "unflatten",
-    "aries_cloudagent.vc",
+    "qrcode",
+    "rlp",
 ]
 
 #    "aries_cloudagent.tests.test_conductor",
@@ -236,3 +240,17 @@ epub_exclude_files = ["search.html", "README.md"]
 
 # Example configuration for intersphinx: refer to the Python standard library.
 intersphinx_mapping = {"https://docs.python.org/": None}
+
+# To supress cross-reference warnings
+# https://github.com/sphinx-doc/sphinx/issues/3866#issuecomment-768167824
+class PatchedPythonDomain(PythonDomain):
+    def resolve_xref(self, env, fromdocname, builder, typ, target, node, contnode):
+        if "refspecific" in node:
+            del node["refspecific"]
+        return super(PatchedPythonDomain, self).resolve_xref(
+            env, fromdocname, builder, typ, target, node, contnode
+        )
+
+
+def setup(sphinx):
+    sphinx.add_domain(PatchedPythonDomain, override=True)

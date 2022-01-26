@@ -12,7 +12,7 @@ from datetime import datetime, date
 from io import StringIO
 from pathlib import Path
 from time import time
-from typing import Sequence, Tuple, Union
+from typing import Sequence, Tuple, Union, Optional
 
 from indy_vdr import ledger, open_pool, Pool, Request, VdrError
 
@@ -938,8 +938,14 @@ class IndyVdrLedger(BaseLedger):
         return False
 
     async def register_nym(
-        self, did: str, verkey: str, alias: str = None, role: str = None
-    ):
+        self,
+        did: str,
+        verkey: str,
+        alias: str = None,
+        role: str = None,
+        write_ledger: bool = True,
+        endorser_did: str = None,
+    ) -> Tuple[bool, dict]:
         """
         Register a nym on the ledger.
 
@@ -965,8 +971,14 @@ class IndyVdrLedger(BaseLedger):
         except VdrError as err:
             raise LedgerError("Exception when building nym request") from err
 
-        await self._submit(nym_req, sign=True, sign_did=public_info)
+        if endorser_did and not write_ledger:
+            nym_req.set_endorser(endorser_did)
 
+        resp = await self._submit(
+            nym_req, sign=True, sign_did=public_info, write_ledger=write_ledger
+        )
+        if not write_ledger:
+            return True, {"signed_txn": resp}
         async with self.profile.session() as session:
             wallet = session.inject(BaseWallet)
             try:
@@ -976,6 +988,7 @@ class IndyVdrLedger(BaseLedger):
             else:
                 metadata = {**did_info.metadata, **DIDPosture.POSTED.metadata}
                 await wallet.replace_local_did_metadata(did, metadata)
+        return True, None
 
     async def get_nym_role(self, did: str) -> Role:
         """
@@ -1005,6 +1018,21 @@ class IndyVdrLedger(BaseLedger):
             # remove any existing prefix
             nym = self.did_to_nym(nym)
             return f"did:sov:{nym}"
+
+    async def build_and_return_get_nym_request(
+        self, submitter_did: Optional[str], target_did: str
+    ) -> str:
+        """Build GET_NYM request and return request_json."""
+        try:
+            request_json = ledger.build_get_nym_request(submitter_did, target_did)
+            return request_json
+        except VdrError as err:
+            raise LedgerError("Exception when building get-nym request") from err
+
+    async def submit_get_nym_request(self, request_json: str) -> str:
+        """Submit GET_NYM request to ledger and return response_json."""
+        response_json = await self._submit(request_json)
+        return response_json
 
     async def rotate_public_did_keypair(self, next_seed: str = None) -> None:
         """
