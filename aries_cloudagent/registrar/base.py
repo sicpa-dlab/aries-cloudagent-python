@@ -64,7 +64,7 @@ class BaseDidRegistrar(ABC):
     async def create(
         self,
         profile: Profile,
-        method: Optional[str] = None,
+        method: str,
         did: Optional[str] = None,
         document: Optional[dict] = None,
         **options: dict
