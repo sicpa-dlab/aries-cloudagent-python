@@ -6,7 +6,7 @@ writting did's to different sources provided by the method type.
 """
 
 import logging
-from typing import Sequence, Optional
+from typing import Optional, Sequence
 
 from ..core.profile import Profile
 from .base import BaseDidRegistrar
@@ -31,9 +31,12 @@ class DIDRegistrar(BaseDidRegistrar):
         **options: dict
     ) -> JobRecord:
         """Create a DID from a given method."""
+        return JobRecord()
 
     async def update(self, did: str, document: dict, **options: dict) -> JobRecord:
         """Update DID."""
+        return JobRecord()
 
     async def deactivate(self, did: str, **options: dict) -> JobRecord:
         """Deactivate DID."""
+        return JobRecord()

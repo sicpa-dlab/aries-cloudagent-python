@@ -1,14 +1,14 @@
 """Base Class for DID registrars."""
 
-import logging
-
 from abc import ABC, abstractmethod
 from enum import Enum
+import logging
 from typing import Optional
 
 from ..config.injection_context import InjectionContext
 from ..core.error import BaseError
 from ..core.profile import Profile
+from .models.job import JobRecord
 
 
 class RegistrarError(BaseError):
@@ -68,25 +68,17 @@ class BaseDidRegistrar(ABC):
         did: Optional[str] = None,
         document: Optional[dict] = None,
         **options: dict
-    ) -> Optional[dict]:
+    ) -> JobRecord:
         """Create a new DID."""
-
-    @abstractmethod
-    async def ready_to_register(self, profile: Profile, did: str) -> bool:
-        """Check if DID is ready to be registered."""
-
-    @abstractmethod
-    async def register(self, profile: Profile, did: str, document: dict):
-        """Register the DID as defined by the DID method."""
 
     @abstractmethod
     async def update(
         self, profile: Profile, did: str, document: dict, **options: dict
-    ) -> Optional[dict]:
+    ) -> JobRecord:
         """Updates a did."""
 
     @abstractmethod
     async def deactivate(
         self, profile: Profile, did: str, **options: dict
-    ) -> Optional[dict]:
+    ) -> JobRecord:
         """Deactivates a did."""
