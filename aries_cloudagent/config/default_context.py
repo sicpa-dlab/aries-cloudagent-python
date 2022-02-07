@@ -59,7 +59,7 @@ class DefaultContextBuilder(ContextBuilder):
         context.injector.bind_instance(DIDResolver, DIDResolver(did_resolver_registry))
 
         # Global did ledger registry
-        did_ledger_registry = DIDRegistrar()
+        did_ledger_registry = DIDRegistrar([])
         context.injector.bind_instance(DIDRegistrar, did_ledger_registry)
 
         await self.bind_providers(context)

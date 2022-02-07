@@ -5,15 +5,23 @@ Manage did and did document admin routes.
 
 from aiohttp import web
 from aiohttp_apispec import docs, match_info_schema, response_schema
+from aries_cloudagent.messaging.models.openapi import OpenAPISchema
+from marshmallow import fields
 
 from ..admin.request_context import AdminRequestContext
-from ..resolver.routes import DIDMatchInfoSchema, ResolutionResultSchema
+from ..resolver.routes import (DIDMatchInfoSchema, ResolutionResultSchema,
+                               _W3cDID)
 from .base import DIDMethodNotSupported, DIDNotFound, RegistrarError
 from .did_registrar import DIDRegistrar
 
 
+class DIDRarMatchInfoSchema(OpenAPISchema):
+    """Path parameters and validators for request taking DID."""
+
+    did = fields.Str(description="DID", required=False, **_W3cDID)
+
 @docs(tags=["registrar"], summary="create and publish a did.")
-@match_info_schema(DIDMatchInfoSchema())
+@match_info_schema(DIDRarMatchInfoSchema())
 @response_schema(ResolutionResultSchema(), 200)
 async def create_did(request: web.Request):
     """Create a did."""
@@ -79,9 +87,9 @@ async def register(app: web.Application):
 
     app.add_routes(
         [
-            web.post("/registrar/create/{method}", create_did, allow_head=False),
-            web.post("/registrar/update/{did}", update_did, allow_head=False),
-            web.post("/registrar/deactivate/{did}", deactivate_did, allow_head=False),
+            web.post("/registrar/create/{method}", create_did),
+            web.post("/registrar/update/{did}", update_did),
+            web.post("/registrar/deactivate/{did}", deactivate_did),
         ]
     )
 
