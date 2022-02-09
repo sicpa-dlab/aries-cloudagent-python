@@ -16,6 +16,7 @@ class JobRecord(BaseRecord):
     STATE_CREATED = "created"
     STATE_PENDING = "pending"
     STATE_REGISTERED = "registered"
+
     OP_CREATE = "create"
     OP_UPDATE = "update"
     OP_DEACTIVATE = "deactivate"

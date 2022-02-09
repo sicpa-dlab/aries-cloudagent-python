@@ -4,7 +4,7 @@ Resolution is performed using the IndyLedger class.
 """
 
 import json
-from typing import Dict, Optional
+from typing import Optional
 
 from ...connections.models.conn_record import ConnRecord
 from ...core.profile import Profile
@@ -46,7 +46,7 @@ class IndyDIDRegistrar(BaseDidRegistrar):
     async def create(
         self,
         profile: Profile,
-        method: str,
+        method: Optional[str],
         did: Optional[str] = None,
         document: Optional[dict] = None,
         **options: dict,

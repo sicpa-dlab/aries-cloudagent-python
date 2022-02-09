@@ -3,17 +3,18 @@ Manage did and did document admin routes.
 
 """
 
-from crypt import methods
-from ssl import Options
 from aiohttp import web
-from aiohttp_apispec import (docs, match_info_schema, querystring_schema,
-                             request_schema, response_schema)
+from aiohttp_apispec import (
+    docs,
+    match_info_schema,
+    request_schema,
+    response_schema,
+)
 from aries_cloudagent.messaging.models.openapi import OpenAPISchema
 from marshmallow import fields
 
 from ..admin.request_context import AdminRequestContext
-from ..resolver.routes import (DIDMatchInfoSchema, ResolutionResultSchema,
-                               _W3cDID)
+from ..resolver.routes import DIDMatchInfoSchema, ResolutionResultSchema, _W3cDID
 from .base import DIDMethodNotSupported, DIDNotFound, RegistrarError
 from .did_registrar import DIDRegistrar
 
@@ -21,39 +22,51 @@ from .did_registrar import DIDRegistrar
 class DIDOptionMatchInfoSchema(OpenAPISchema):
     """Path parameters and validators for request taking DID."""
 
-    Options = fields.Str(description="DID creation options", required=False) # TODO: get validator
-class DIDcreateMatchInfoSchema(DIDOptionMatchInfoSchema):
+    Options = fields.Str(
+        description="DID creation options", required=False
+    )  # TODO: get validator
+
+
+class DIDCreateMatchInfoSchema(DIDOptionMatchInfoSchema):
     """Path parameters and validators for request creating DID."""
 
     did = fields.Str(description="DID", required=False, **_W3cDID)
-    method = fields.Str(description="DID method", required=False) # TODO: get validator 
-    document = fields.Str(description="DID document", required=False) # TODO: get validator
+    method = fields.Str(description="DID method", required=False)  # TODO: get validator
+    document = fields.Dict(
+        description="DID document", required=False
+    )  # TODO: get validator
+
+
 class DIDUpdateMatchInfoSchema(DIDOptionMatchInfoSchema):
     """Path parameters and validators for request taking DID."""
 
-    document = fields.Str(description="DID document", required=False) # TODO: get validator
+    document = fields.Dict(
+        description="DID document", required=False
+    )  # TODO: get validator
 
 
 @docs(tags=["registrar"], summary="create and publish a did.")
-@request_schema(DIDcreateMatchInfoSchema())
+@request_schema(DIDCreateMatchInfoSchema())
 @response_schema(ResolutionResultSchema(), 200)
 async def create_did(request: web.Request):
     """Create a did."""
     context: AdminRequestContext = request["context"]
     body = await request.json()
     did = body.get("did")
-    method = body.get("method","sov") # TODO: get default method from default
+    method = body.get("method", "sov")  # TODO: get default method from default
     document = body.get("document")
-    options = body.get("options",{})
+    options = body.get("options", {})
     try:
         session = await context.session()
         registrar = session.inject(DIDRegistrar)
-        result = await registrar.create(context.profile, method, did, document, **options)
+        result = await registrar.create(
+            context.profile, method, did, document, **options
+        )
     except DIDMethodNotSupported as err:
         raise web.HTTPNotImplemented(reason=err.roll_up) from err
     except RegistrarError as err:
         raise web.HTTPInternalServerError(reason=err.roll_up) from err
-    return web.json_response( await result)
+    return web.json_response(result.serialize())
 
 
 @docs(tags=["registrar"], summary="Update a did.")
@@ -66,7 +79,7 @@ async def update_did(request: web.Request):
     body = await request.json()
     did = request.match_info["did"]
     document = body.get("document")
-    options = body.get("options",{})
+    options = body.get("options", {})
 
     try:
         session = await context.session()
@@ -91,7 +104,7 @@ async def deactivate_did(request: web.Request):
     context: AdminRequestContext = request["context"]
     did = request.match_info["did"]
     body = await request.json()
-    options = body.get("options",{})
+    options = body.get("options", {})
 
     try:
         session = await context.session()
