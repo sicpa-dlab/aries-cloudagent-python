@@ -18,16 +18,24 @@ from .base import DIDMethodNotSupported, DIDNotFound, RegistrarError
 from .did_registrar import DIDRegistrar
 
 
-class DIDRarMatchInfoSchema(OpenAPISchema):
+class DIDOptionMatchInfoSchema(OpenAPISchema):
     """Path parameters and validators for request taking DID."""
+
+    Options = fields.Str(description="DID creation options", required=False) # TODO: get validator
+class DIDcreateMatchInfoSchema(DIDOptionMatchInfoSchema):
+    """Path parameters and validators for request creating DID."""
 
     did = fields.Str(description="DID", required=False, **_W3cDID)
     method = fields.Str(description="DID method", required=False) # TODO: get validator 
     document = fields.Str(description="DID document", required=False) # TODO: get validator
-    Options = fields.Str(description="DID creation options", required=False) # TODO: get validator
+class DIDUpdateMatchInfoSchema(DIDOptionMatchInfoSchema):
+    """Path parameters and validators for request taking DID."""
+
+    document = fields.Str(description="DID document", required=False) # TODO: get validator
+
 
 @docs(tags=["registrar"], summary="create and publish a did.")
-@request_schema(DIDRarMatchInfoSchema())
+@request_schema(DIDcreateMatchInfoSchema())
 @response_schema(ResolutionResultSchema(), 200)
 async def create_did(request: web.Request):
     """Create a did."""
@@ -40,55 +48,62 @@ async def create_did(request: web.Request):
     try:
         session = await context.session()
         registrar = session.inject(DIDRegistrar)
-        result = await registrar.create(context.profile, method, did, document)
+        result = await registrar.create(context.profile, method, did, document, **options)
     except DIDMethodNotSupported as err:
         raise web.HTTPNotImplemented(reason=err.roll_up) from err
     except RegistrarError as err:
         raise web.HTTPInternalServerError(reason=err.roll_up) from err
-    return web.json_response(result)
+    return web.json_response( await result)
 
 
 @docs(tags=["registrar"], summary="Update a did.")
 @match_info_schema(DIDMatchInfoSchema())
+@request_schema(DIDUpdateMatchInfoSchema())
 @response_schema(ResolutionResultSchema(), 200)
 async def update_did(request: web.Request):
     """Update a did."""
     context: AdminRequestContext = request["context"]
-
+    body = await request.json()
     did = request.match_info["did"]
+    document = body.get("document")
+    options = body.get("options",{})
+
     try:
         session = await context.session()
         registrar = session.inject(DIDRegistrar)
-        result = await registrar.update(context.profile, did)
+        result = await registrar.update(context.profile, did, document, **options)
     except DIDNotFound as err:
         raise web.HTTPNotFound(reason=err.roll_up) from err
     except DIDMethodNotSupported as err:
         raise web.HTTPNotImplemented(reason=err.roll_up) from err
     except RegistrarError as err:
         raise web.HTTPInternalServerError(reason=err.roll_up) from err
-    return web.json_response(result)
+    return web.json_response(await result)
 
 
 @docs(tags=["registrar"], summary="Deactivate a did.")
 @match_info_schema(DIDMatchInfoSchema())
+@request_schema(DIDOptionMatchInfoSchema())
 @response_schema(ResolutionResultSchema(), 200)
 async def deactivate_did(request: web.Request):
     """deactivate a did."""
     # you never quite the did club
     context: AdminRequestContext = request["context"]
-
     did = request.match_info["did"]
+    body = await request.json()
+    options = body.get("options",{})
+
     try:
         session = await context.session()
         registrar = session.inject(DIDRegistrar)
-        result = await registrar.deactivate(context.profile, did)
+        result = await registrar.deactivate(context.profile, did, **options)
     except DIDNotFound as err:
         raise web.HTTPNotFound(reason=err.roll_up) from err
     except DIDMethodNotSupported as err:
         raise web.HTTPNotImplemented(reason=err.roll_up) from err
     except RegistrarError as err:
         raise web.HTTPInternalServerError(reason=err.roll_up) from err
-    return web.json_response(result)
+    return web.json_response(await result)
 
 
 async def register(app: web.Application):
