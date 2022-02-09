@@ -1,5 +1,9 @@
 """Classes for configuring the default injection context."""
 
+from email.policy import default
+from aries_cloudagent import registrar
+
+from aries_cloudagent.registrar.default.indy import IndyDIDRegistrar
 from .base_context import ContextBuilder
 from .injection_context import InjectionContext
 from .provider import CachedProvider, ClassProvider
@@ -59,7 +63,9 @@ class DefaultContextBuilder(ContextBuilder):
         context.injector.bind_instance(DIDResolver, DIDResolver(did_resolver_registry))
 
         # Global did ledger registry
-        did_ledger_registry = DIDRegistrar([])
+        default_registrar = IndyDIDRegistrar() # TODO: do in a better place
+        registrars = {"sov":default_registrar}
+        did_ledger_registry = DIDRegistrar(registrars)
         context.injector.bind_instance(DIDRegistrar, did_ledger_registry)
 
         await self.bind_providers(context)

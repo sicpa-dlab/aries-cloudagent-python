@@ -3,8 +3,11 @@ Manage did and did document admin routes.
 
 """
 
+from crypt import methods
+from ssl import Options
 from aiohttp import web
-from aiohttp_apispec import docs, match_info_schema, response_schema
+from aiohttp_apispec import (docs, match_info_schema, querystring_schema,
+                             request_schema, response_schema)
 from aries_cloudagent.messaging.models.openapi import OpenAPISchema
 from marshmallow import fields
 
@@ -19,19 +22,25 @@ class DIDRarMatchInfoSchema(OpenAPISchema):
     """Path parameters and validators for request taking DID."""
 
     did = fields.Str(description="DID", required=False, **_W3cDID)
+    method = fields.Str(description="DID method", required=False) # TODO: get validator 
+    document = fields.Str(description="DID document", required=False) # TODO: get validator
+    Options = fields.Str(description="DID creation options", required=False) # TODO: get validator
 
 @docs(tags=["registrar"], summary="create and publish a did.")
-@match_info_schema(DIDRarMatchInfoSchema())
+@request_schema(DIDRarMatchInfoSchema())
 @response_schema(ResolutionResultSchema(), 200)
 async def create_did(request: web.Request):
     """Create a did."""
     context: AdminRequestContext = request["context"]
-
-    did = request.match_info["did"]
+    body = await request.json()
+    did = body.get("did")
+    method = body.get("method","sov") # TODO: get default method from default
+    document = body.get("document")
+    options = body.get("options",{})
     try:
         session = await context.session()
         registrar = session.inject(DIDRegistrar)
-        result = await registrar.create(context.profile, did)
+        result = await registrar.create(context.profile, method, did, document)
     except DIDMethodNotSupported as err:
         raise web.HTTPNotImplemented(reason=err.roll_up) from err
     except RegistrarError as err:
@@ -87,7 +96,7 @@ async def register(app: web.Application):
 
     app.add_routes(
         [
-            web.post("/registrar/create/{method}", create_did),
+            web.post("/registrar/create", create_did),
             web.post("/registrar/update/{did}", update_did),
             web.post("/registrar/deactivate/{did}", deactivate_did),
         ]

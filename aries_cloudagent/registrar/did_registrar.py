@@ -6,7 +6,9 @@ writting did's to different sources provided by the method type.
 """
 
 import logging
-from typing import Optional, Sequence
+from typing import Dict, Optional, Pattern, Sequence
+
+from aries_cloudagent.holder.routes import register
 
 from ..core.profile import Profile
 from .base import BaseDidRegistrar
@@ -14,11 +16,10 @@ from .models.job import JobRecord
 
 LOGGER = logging.getLogger(__name__)
 
-
 class DIDRegistrar(BaseDidRegistrar):
     """did registrar singleton."""
 
-    def __init__(self, registrars: Sequence[BaseDidRegistrar]):
+    def __init__(self, registrars: Dict[Pattern, BaseDidRegistrar]):
         """Create DID registrar."""
         self.registrars = registrars
 
@@ -31,7 +32,8 @@ class DIDRegistrar(BaseDidRegistrar):
         **options: dict
     ) -> JobRecord:
         """Create a DID from a given method."""
-        return JobRecord()
+        # TODO: method should not need ot be passed into create...
+        return self.registrars[method].create(profile,method,did,document)
 
     async def update(self, did: str, document: dict, **options: dict) -> JobRecord:
         """Update DID."""

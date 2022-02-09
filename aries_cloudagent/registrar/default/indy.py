@@ -4,7 +4,7 @@ Resolution is performed using the IndyLedger class.
 """
 
 import json
-from typing import Optional
+from typing import Dict, Optional
 
 from ...connections.models.conn_record import ConnRecord
 from ...core.profile import Profile
@@ -49,7 +49,7 @@ class IndyDIDRegistrar(BaseDidRegistrar):
         method: str,
         did: Optional[str] = None,
         document: Optional[dict] = None,
-        **options: str,
+        **options: dict,
     ) -> JobRecord:
         """Create a DID from a given method."""
         responder = profile.inject(BaseResponder)
