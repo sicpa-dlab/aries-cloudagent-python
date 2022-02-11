@@ -6,10 +6,11 @@ writting did's to different sources provided by the method type.
 """
 
 import logging
-from typing import Sequence, Optional
+from typing import Optional, Sequence
 
 from ..core.profile import Profile
 from .base import BaseDidRegistrar
+from .models.job import JobRecord
 
 LOGGER = logging.getLogger(__name__)
 
@@ -28,17 +29,14 @@ class DIDRegistrar(BaseDidRegistrar):
         did: Optional[str] = None,
         document: Optional[dict] = None,
         **options: dict
-    ) -> Optional[dict]:
+    ) -> JobRecord:
         """Create a DID from a given method."""
+        return JobRecord()
 
-    async def ready_to_register(self) -> bool:
-        """Determine if DID is ready to register."""
-
-    async def register(self, profile: Profile, did: str, document: dict):
-        """Register DID."""
-
-    async def update(self, did: str, document: dict, **options: dict) -> Optional[dict]:
+    async def update(self, did: str, document: dict, **options: dict) -> JobRecord:
         """Update DID."""
+        return JobRecord()
 
-    async def deactivate(self, did: str, **options: dict) -> Optional[dict]:
+    async def deactivate(self, did: str, **options: dict) -> JobRecord:
         """Deactivate DID."""
+        return JobRecord()
