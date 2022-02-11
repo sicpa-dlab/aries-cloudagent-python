@@ -21,10 +21,7 @@ class DIDRegistrar(BaseDidRegistrar):
 
     def __init__(self, registrars: Sequence[BaseDidRegistrar] = None):
         """Create DID registrar."""
-        self.method_to_registrar = {
-            registrar.method: registrar for registrar in registrars or []
-        }
-
+        
     def register_registrar(self, registrar: BaseDidRegistrar):
         """Register a new registrar."""
         self.method_to_registrar[registrar.method] = registrar
@@ -42,7 +39,7 @@ class DIDRegistrar(BaseDidRegistrar):
         if not method and not did:
             raise ValueError("Either did or method must be provided")
 
-        if not method and did:
+        if not method:
             method = DID(did).method
 
         if not method:
@@ -52,10 +49,16 @@ class DIDRegistrar(BaseDidRegistrar):
             profile, method, did, document, **options
         )
 
-    async def update(self, did: str, document: dict, **options: dict) -> JobRecord:
+    async def update(self, profile: Profile, did: str, document: dict, **options: dict) -> JobRecord:
         """Update DID."""
-        return JobRecord()
+        if not document and not did:
+            raise ValueError("did and document must be provided")
+        method = did.split(":")[1] # TODO: use did lib to do this
+        return await self.method_to_registrar[method].update(profile, did, document, **options)
 
-    async def deactivate(self, did: str, **options: dict) -> JobRecord:
+    async def deactivate(self, profile: Profile, did: str, **options: dict) -> JobRecord:
         """Deactivate DID."""
-        return JobRecord()
+        if not did:
+            raise ValueError("did must be provided")
+        method = did.split(":")[1] # TODO: use did lib to do this
+        return await self.method_to_registrar[method].deactivate(profile, did, **options)

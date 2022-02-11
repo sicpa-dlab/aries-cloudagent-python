@@ -11,6 +11,7 @@ from aiohttp_apispec import (
     response_schema,
 )
 from aries_cloudagent.messaging.models.openapi import OpenAPISchema
+from aries_cloudagent.registrar.models.job import JobRecord
 from marshmallow import fields
 
 from ..admin.request_context import AdminRequestContext
@@ -91,7 +92,7 @@ async def update_did(request: web.Request):
         raise web.HTTPNotImplemented(reason=err.roll_up) from err
     except RegistrarError as err:
         raise web.HTTPInternalServerError(reason=err.roll_up) from err
-    return web.json_response(await result)
+    return web.json_response(result.serialize())
 
 
 @docs(tags=["registrar"], summary="Deactivate a did.")
@@ -100,7 +101,7 @@ async def update_did(request: web.Request):
 @response_schema(ResolutionResultSchema(), 200)
 async def deactivate_did(request: web.Request):
     """deactivate a did."""
-    # you never quite the did club
+    # you never quit the did club
     context: AdminRequestContext = request["context"]
     did = request.match_info["did"]
     body = await request.json()
@@ -116,8 +117,24 @@ async def deactivate_did(request: web.Request):
         raise web.HTTPNotImplemented(reason=err.roll_up) from err
     except RegistrarError as err:
         raise web.HTTPInternalServerError(reason=err.roll_up) from err
-    return web.json_response(await result)
+    return web.json_response(await result.serialize())
 
+
+@docs(tags=["registrar"], summary="did registration status.")
+@match_info_schema(DIDMatchInfoSchema())
+@response_schema(ResolutionResultSchema(), 200)
+async def status_job(request: web.Request):
+    """Check status of requested did"""
+    context: AdminRequestContext = request["context"]
+    did = request.match_info["did"]
+
+    try:
+        session = await context.session()
+        result = JobRecord.retrieve_by_did(session, did)
+
+    except Exception as err:
+        raise web.HTTPInternalServerError(reason=err.roll_up) from err
+    return web.json_response(result)
 
 async def register(app: web.Application):
     """Register routes."""
@@ -127,6 +144,7 @@ async def register(app: web.Application):
             web.post("/registrar/create", create_did),
             web.post("/registrar/update/{did}", update_did),
             web.post("/registrar/deactivate/{did}", deactivate_did),
+            web.post("/registrar/status/{did}", status_job),
         ]
     )
 

@@ -30,6 +30,7 @@ from ..base import BaseDidRegistrar, RegistrarError, RegistrarType
 from ..models.job import JobRecord
 
 
+DID_CREATION_TOPIC = "indy_register_did"
 class NoIndyLedger(RegistrarError):
     """Raised when there is no Indy ledger instance configured."""
 
@@ -43,6 +44,15 @@ class IndyDIDRegistrar(BaseDidRegistrar):
         """Initialize Indy Registrar."""
         super().__init__(RegistrarType.INTERNAL)
 
+
+    async def _check_ledger(self, ledger, wallet_type):
+        if not ledger:
+            reason = "No Indy ledger available"
+        if not wallet_type:
+            reason += ": missing wallet-type?"
+        raise NoIndyLedger(reason)
+    
+    
     async def create(
         self,
         profile: Profile,
@@ -56,11 +66,7 @@ class IndyDIDRegistrar(BaseDidRegistrar):
         # TODO Add multi-ledger suppport through (pseudo) did indy method support
         async with profile.session() as session:
             ledger = session.inject_or(BaseLedger)
-            if not ledger:
-                reason = "No Indy ledger available"
-                if not session.settings.get_value("wallet.type"):
-                    reason += ": missing wallet-type?"
-                raise NoIndyLedger(reason)
+            await self._check_ledger(ledger, session.settings.get_value("wallet.type"))
 
             # Create DID
             wallet = session.inject(BaseWallet)
@@ -99,8 +105,8 @@ class IndyDIDRegistrar(BaseDidRegistrar):
             if not connection_id:
                 # author has not provided a connection id, so determine which to use
                 connection_id = await get_endorser_connection_id(profile)
-                if not connection_id:
-                    raise RegistrarError("No endorser connection found")
+            if not connection_id:
+                raise RegistrarError("No endorser connection found")
 
         if not write_ledger and connection_id:
             try:
@@ -158,11 +164,10 @@ class IndyDIDRegistrar(BaseDidRegistrar):
         meta_data = {"verkey": verkey, "alias": alias, "role": role}
         if not create_transaction_for_endorser:
             # Notify event
-            await notify_did_event(profile, did, meta_data)
-            # return web.json_response({"success": success})
-
-            # TODO Determine what the actual state is here
-            return JobRecord(state=JobRecord.STATE_REGISTERED)
+            await profile.notify(
+                DID_CREATION_TOPIC + did,
+                meta_data,
+            )
         else:
             transaction_mgr = TransactionManager(profile)
             try:
@@ -191,11 +196,8 @@ class IndyDIDRegistrar(BaseDidRegistrar):
 
                 await responder.send(transaction_request, connection_id=connection_id)
 
-            # return web.json_response({"success": success, "txn": txn})
-            # TODO Determine what the actual state is here
-            # TODO Add event handlers for DID Transactions returning from endorser
-            # TODO Update JobRecord state based on event handlers
-            return JobRecord(state=JobRecord.STATE_REGISTERED)
+        # TODO Determine what the actual state is here
+        return JobRecord(state=JobRecord.STATE_REGISTERED)
 
     async def update(self, did: str, document: dict, **options: dict) -> JobRecord:
         """Update DID."""
