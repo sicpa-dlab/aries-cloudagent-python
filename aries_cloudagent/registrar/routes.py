@@ -117,7 +117,7 @@ async def deactivate_did(request: web.Request):
         raise web.HTTPNotImplemented(reason=err.roll_up) from err
     except RegistrarError as err:
         raise web.HTTPInternalServerError(reason=err.roll_up) from err
-    return web.json_response(await result.serialize())
+    return web.json_response(result.serialize())
 
 
 @docs(tags=["registrar"], summary="did registration status.")
@@ -132,9 +132,9 @@ async def status_job(request: web.Request):
         session = await context.session()
         result = JobRecord.retrieve_by_did(session, did)
 
-    except Exception as err:
+    except Exception as err: # TODO: update to storage not found, and other
         raise web.HTTPInternalServerError(reason=err.roll_up) from err
-    return web.json_response(result)
+    return web.json_response(result.serialize)
 
 async def register(app: web.Application):
     """Register routes."""
