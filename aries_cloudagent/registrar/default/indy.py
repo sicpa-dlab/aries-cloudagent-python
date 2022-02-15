@@ -164,51 +164,56 @@ class IndyDIDRegistrar(BaseDidRegistrar):
             # Create DID
             did_info = await self._create_did(session, method, options)
 
-        # TODO how should this interact with optional did param?
-        did, verkey = did_info.did, did_info.verkey
+            # TODO how should this interact with optional did param?
+            did, verkey = did_info.did, did_info.verkey
 
-        alias = options.get("alias")
-        role = options.get("role")
-        if role == "reset":  # indy: empty to reset, null for regular user
-            role = ""  # visually: confusing - correct 'reset' to empty string here
-        author = is_author(profile)
-        if author:
-            endorser_connection_id = await self._retreive_endorsor_connection_id()
-            endorser_did = self._retreive_endorsor_did(profile, endorser_connection_id)
+            alias = options.get("alias")
+            role = options.get("role")
+            if role == "reset":  # indy: empty to reset, null for regular user
+                role = ""  # visually: confusing - correct 'reset' to empty string here
+            author = is_author(profile)
+            if author:
+                endorser_connection_id = await self._retreive_endorsor_connection_id()
+                endorser_did = self._retreive_endorsor_did(profile, endorser_connection_id)
 
-        (success, txn) = self._register_nym(ledger, did, verkey, alias, role, not author, endorser_did)
-        
-        meta_data = {"verkey": verkey, "alias": alias, "role": role}
-        if author:
-            _endorser, endorsement = self._endorse_txn(profile, endorser_connection_id, txn, meta_data)
-            # if auto-request, send the request to the endorser
-            if profile.settings.get_value("endorser.auto_request"):
-                try:
-                    (
-                        endorsement,
-                        transaction_request,
-                    ) = await _endorser.create_request(
-                        transaction=endorsement,
-                        # TODO see if we need to parameterize these params
-                        # expires_time=expires_time,
-                        # endorser_write_txn=endorser_write_txn,
-                    )
-                except (StorageError, TransactionManagerError) as err:
-                    raise RegistrarError(err.roll_up) from err
+            (success, txn) = self._register_nym(ledger, did, verkey, alias, role, not author, endorser_did)
+            
+            meta_data = {"verkey": verkey, "alias": alias, "role": role}
+            if author:
+                _endorser, endorsement = self._endorse_txn(profile, endorser_connection_id, txn, meta_data)
+                # if auto-request, send the request to the endorser
+                if profile.settings.get_value("endorser.auto_request"):
+                    try:
+                        (
+                            endorsement,
+                            transaction_request,
+                        ) = await _endorser.create_request(
+                            transaction=endorsement,
+                            # TODO see if we need to parameterize these params
+                            # expires_time=expires_time,
+                            # endorser_write_txn=endorser_write_txn,
+                        )
+                    except (StorageError, TransactionManagerError) as err:
+                        raise RegistrarError(err.roll_up) from err
 
-                await responder.send(transaction_request, connection_id=endorser_connection_id)
-        else:
-            await profile.notify(
-                DID_CREATION_TOPIC + did,
-                meta_data,
-            )
-        # TODO Determine what the actual state is here
-        return JobRecord(state=JobRecord.STATE_REGISTERED)
+                    await responder.send(transaction_request, connection_id=endorser_connection_id)
+            else:
+                await profile.notify(
+                    DID_CREATION_TOPIC + did,
+                    meta_data,
+                )
+            # TODO: send attrib txn with doc
+            # TODO: Determine what the actual state is here
+            return JobRecord(state=JobRecord.STATE_REGISTERED)
 
     async def update(self, did: str, document: dict, **options: dict) -> JobRecord:
         """Update DID."""
+        # TODO: send attrib txn with doc
+        # TODO: should nym role be updated here?
+        # TODO: should key rotation be done here?
         return JobRecord()
 
     async def deactivate(self, did: str, **options: dict) -> JobRecord:
         """Deactivate DID."""
+        # TODO: send attrib txn with doc
         return JobRecord()
