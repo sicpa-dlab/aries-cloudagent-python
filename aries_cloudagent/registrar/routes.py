@@ -12,6 +12,7 @@ from aiohttp_apispec import (
 )
 from aries_cloudagent.messaging.models.openapi import OpenAPISchema
 from aries_cloudagent.registrar.models.job import JobRecord
+from aries_cloudagent.storage.error import StorageNotFoundError
 from marshmallow import fields
 
 from ..admin.request_context import AdminRequestContext
@@ -132,8 +133,8 @@ async def status_job(request: web.Request):
         session = await context.session()
         result = JobRecord.retrieve_by_did(session, did)
 
-    except Exception as err: # TODO: update to storage not found, and other
-        raise web.HTTPInternalServerError(reason=err.roll_up) from err
+    except StorageNotFoundError as err: # TODO: update to include other errors
+        raise web.HTTPNotFound(reason=err.roll_up) from err
     return web.json_response(result.serialize)
 
 async def register(app: web.Application):

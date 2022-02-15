@@ -14,12 +14,12 @@ from ...ledger.util import notify_did_event
 from ...messaging.models.base import BaseModelError
 from ...messaging.responder import BaseResponder
 from ...protocols.endorse_transaction.v1_0.manager import (
-    TransactionManager,
+    TransactionManager as endorser ,
     TransactionManagerError,
 )
 from ...protocols.endorse_transaction.v1_0.util import (
     get_endorser_connection_id,
-    is_author_role,
+    is_author_role as is_author,
 )
 from ...storage.error import StorageError, StorageNotFoundError
 from ...wallet.base import BaseWallet
@@ -52,7 +52,101 @@ class IndyDIDRegistrar(BaseDidRegistrar):
             reason += ": missing wallet-type?"
         raise NoIndyLedger(reason)
     
-    
+    async def _create_did(self,session, method, options ):
+        # Create DID
+        wallet = session.inject(BaseWallet)
+        # TODO Need to plugin-ify the DIDMethod class
+        did_method = DIDMethod.from_method(method)
+        if not did_method:
+            raise RegistrarError("Unknown DID Method")
+
+        return await wallet.create_local_did(
+            did_method,
+            # TODO keytype needs to be plugin-fifed too
+            key_type=KeyType.from_key_type(options["key_type"])
+            or did_method.supported_key_types[0],
+        )
+         
+    async def _retreive_endorsor_did(self, profile, connection_id):
+        try:
+            async with profile.session() as session:
+                connection_record = await ConnRecord.retrieve_by_id(
+                    session, connection_id
+                )
+        except StorageNotFoundError as err:
+            raise RegistrarError(err.roll_up) from err
+        except BaseModelError as err:
+            raise RegistrarError(err.roll_up) from err
+
+        async with profile.session() as session:
+            endorser_info = await connection_record.metadata_get(
+                session, "endorser_info"
+            )
+        if not endorser_info:
+            raise RegistrarError(
+                "Endorser Info is not set up in "
+                "connection metadata for this connection record"
+            )
+        if "endorser_did" not in endorser_info.keys():
+            raise RegistrarError(
+                '"endorser_did" is not set in "endorser_info"'
+                " in connection metadata for this connection record"
+            )
+        return endorser_info["endorser_did"]
+
+
+    async def _retreive_endorsor_connection_id(self, profile, options):
+        endorser_connection_id = options.get("connection_id")
+        # author has not provided a endorser connection id
+        if endorser_connection_id is None:
+            endorser_connection_id = await get_endorser_connection_id(profile)
+        # check if we are an author that needs endorseing with no endorsor
+        if endorser_connection_id is None:
+            raise RegistrarError("No endorser connection found")
+        return endorser_connection_id
+
+
+    async def _endorse_txn(self, profile, endorser_connection_id, txn, meta_data):
+        _endorser = endorser(profile)
+        try:
+            endorsement = await _endorser.create_record(
+                messages_attach=txn["signed_txn"],
+                connection_id=endorser_connection_id,
+                meta_data=meta_data,
+            )
+        except StorageError as err:
+            raise RegistrarError(err.roll_up) from err
+        return _endorser, endorsement
+
+
+    async def _register_nym(self, ledger, did, verkey, alias, role, endorsed, endorser_did):
+        txn = None
+        async with ledger:
+            try:
+                (success, txn) = await ledger.register_nym(
+                    did,
+                    verkey,
+                    alias,
+                    role,
+                    write_ledger= endorsed, # endorsers will write txn and not authors
+                    endorser_did=endorser_did,
+                )
+            except LedgerTransactionError as err:
+                raise RegistrarError(err.roll_up) from err
+            except LedgerError as err:
+                raise RegistrarError(err.roll_up) from err
+            except WalletNotFoundError as err:
+                raise RegistrarError(err.roll_up) from err
+            except WalletError as err:
+                raise RegistrarError(
+                    (
+                        f"Registered NYM for DID {did} on ledger but could not "
+                        f"replace metadata in wallet: {err.roll_up}"
+                    )
+                ) from err
+        return (success, txn)
+
+
     async def create(
         self,
         profile: Profile,
@@ -67,20 +161,8 @@ class IndyDIDRegistrar(BaseDidRegistrar):
         async with profile.session() as session:
             ledger = session.inject_or(BaseLedger)
             await self._check_ledger(ledger, session.settings.get_value("wallet.type"))
-
             # Create DID
-            wallet = session.inject(BaseWallet)
-            # TODO Need to plugin-ify the DIDMethod class
-            did_method = DIDMethod.from_method(method)
-            if not did_method:
-                raise RegistrarError("Unknown DID Method")
-
-            did_info = await wallet.create_local_did(
-                did_method,
-                # TODO keytype needs to be plugin-ified too
-                key_type=KeyType.from_key_type(options["key_type"])
-                or did_method.supported_key_types[0],
-            )
+            did_info = await self._create_did(session, method, options)
 
         # TODO how should this interact with optional did param?
         did, verkey = did_info.did, did_info.verkey
@@ -89,104 +171,24 @@ class IndyDIDRegistrar(BaseDidRegistrar):
         role = options.get("role")
         if role == "reset":  # indy: empty to reset, null for regular user
             role = ""  # visually: confusing - correct 'reset' to empty string here
+        author = is_author(profile)
+        if author:
+            endorser_connection_id = await self._retreive_endorsor_connection_id()
+            endorser_did = self._retreive_endorsor_did(profile, endorser_connection_id)
 
-        create_transaction_for_endorser = json.loads(
-            options.get("create_transaction_for_endorser", "false")
-        )
-        write_ledger = not create_transaction_for_endorser
-        endorser_did = None
-        connection_id = options.get("conn_id")
-
-        # check if we need to endorse
-        if is_author_role(profile):
-            # authors cannot write to the ledger
-            write_ledger = False
-            create_transaction_for_endorser = True
-            if not connection_id:
-                # author has not provided a connection id, so determine which to use
-                connection_id = await get_endorser_connection_id(profile)
-            if not connection_id:
-                raise RegistrarError("No endorser connection found")
-
-        if not write_ledger and connection_id:
-            try:
-                async with profile.session() as session:
-                    connection_record = await ConnRecord.retrieve_by_id(
-                        session, connection_id
-                    )
-            except StorageNotFoundError as err:
-                raise RegistrarError(err.roll_up) from err
-            except BaseModelError as err:
-                raise RegistrarError(err.roll_up) from err
-
-            async with profile.session() as session:
-                endorser_info = await connection_record.metadata_get(
-                    session, "endorser_info"
-                )
-            if not endorser_info:
-                raise RegistrarError(
-                    "Endorser Info is not set up in "
-                    "connection metadata for this connection record"
-                )
-            if "endorser_did" not in endorser_info.keys():
-                raise RegistrarError(
-                    '"endorser_did" is not set in "endorser_info"'
-                    " in connection metadata for this connection record"
-                )
-            endorser_did = endorser_info["endorser_did"]
-
-        success = False
-        txn = None
-        async with ledger:
-            try:
-                (success, txn) = await ledger.register_nym(
-                    did,
-                    verkey,
-                    alias,
-                    role,
-                    write_ledger=write_ledger,
-                    endorser_did=endorser_did,
-                )
-            except LedgerTransactionError as err:
-                raise RegistrarError(err.roll_up)
-            except LedgerError as err:
-                raise RegistrarError(err.roll_up)
-            except WalletNotFoundError as err:
-                raise RegistrarError(err.roll_up)
-            except WalletError as err:
-                raise RegistrarError(
-                    (
-                        f"Registered NYM for DID {did} on ledger but could not "
-                        f"replace metadata in wallet: {err.roll_up}"
-                    )
-                )
-
+        (success, txn) = self._register_nym(ledger, did, verkey, alias, role, not author, endorser_did)
+        
         meta_data = {"verkey": verkey, "alias": alias, "role": role}
-        if not create_transaction_for_endorser:
-            # Notify event
-            await profile.notify(
-                DID_CREATION_TOPIC + did,
-                meta_data,
-            )
-        else:
-            transaction_mgr = TransactionManager(profile)
-            try:
-                transaction = await transaction_mgr.create_record(
-                    messages_attach=txn["signed_txn"],
-                    connection_id=connection_id,
-                    meta_data=meta_data,
-                )
-            except StorageError as err:
-                raise RegistrarError(err.roll_up) from err
-
+        if author:
+            _endorser, endorsement = self._endorse_txn(profile, endorser_connection_id, txn, meta_data)
             # if auto-request, send the request to the endorser
             if profile.settings.get_value("endorser.auto_request"):
                 try:
                     (
-                        transaction,
+                        endorsement,
                         transaction_request,
-                    ) = await transaction_mgr.create_request(
-                        transaction=transaction,
+                    ) = await _endorser.create_request(
+                        transaction=endorsement,
                         # TODO see if we need to parameterize these params
                         # expires_time=expires_time,
                         # endorser_write_txn=endorser_write_txn,
@@ -194,8 +196,12 @@ class IndyDIDRegistrar(BaseDidRegistrar):
                 except (StorageError, TransactionManagerError) as err:
                     raise RegistrarError(err.roll_up) from err
 
-                await responder.send(transaction_request, connection_id=connection_id)
-
+                await responder.send(transaction_request, connection_id=endorser_connection_id)
+        else:
+            await profile.notify(
+                DID_CREATION_TOPIC + did,
+                meta_data,
+            )
         # TODO Determine what the actual state is here
         return JobRecord(state=JobRecord.STATE_REGISTERED)
 
