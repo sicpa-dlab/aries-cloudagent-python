@@ -156,6 +156,7 @@ class IndyDIDRegistrar(BaseDidRegistrar):
         **options: dict,
     ) -> JobRecord:
         """Create a DID from a given method."""
+        raise NotImplementedError
         responder = profile.inject(BaseResponder)
         # TODO Add multi-ledger suppport through (pseudo) did indy method support
         async with profile.session() as session:
@@ -208,6 +209,7 @@ class IndyDIDRegistrar(BaseDidRegistrar):
 
     async def update(self, did: str, document: dict, **options: dict) -> JobRecord:
         """Update DID."""
+        raise NotImplementedError
         # TODO: send attrib txn with doc
         # TODO: should nym role be updated here?
         # TODO: should key rotation be done here?
@@ -215,5 +217,6 @@ class IndyDIDRegistrar(BaseDidRegistrar):
 
     async def deactivate(self, did: str, **options: dict) -> JobRecord:
         """Deactivate DID."""
+        raise NotImplementedError
         # TODO: send attrib txn with doc
         return JobRecord()
