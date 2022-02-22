@@ -18,7 +18,7 @@ from marshmallow import fields
 from ..admin.request_context import AdminRequestContext
 from ..resolver.routes import DIDMatchInfoSchema, ResolutionResultSchema, _W3cDID
 from .base import DIDMethodNotSupported, DIDNotFound, RegistrarError
-from .did_registrar import DIDRegistrar
+from .did_registrars import DIDRegistrars
 
 
 class DIDOptionMatchInfoSchema(OpenAPISchema):
@@ -60,7 +60,7 @@ async def create_did(request: web.Request):
     options = body.get("options", {})
     try:
         session = await context.session()
-        registrar = session.inject(DIDRegistrar)
+        registrar = session.inject(DIDRegistrars)
         result = await registrar.create(
             context.profile, method, did, document, **options
         )
@@ -85,7 +85,7 @@ async def update_did(request: web.Request):
 
     try:
         session = await context.session()
-        registrar = session.inject(DIDRegistrar)
+        registrar = session.inject(DIDRegistrars)
         result = await registrar.update(context.profile, did, document, **options)
     except DIDNotFound as err:
         raise web.HTTPNotFound(reason=err.roll_up) from err
@@ -110,7 +110,7 @@ async def deactivate_did(request: web.Request):
 
     try:
         session = await context.session()
-        registrar = session.inject(DIDRegistrar)
+        registrar = session.inject(DIDRegistrars)
         result = await registrar.deactivate(context.profile, did, **options)
     except DIDNotFound as err:
         raise web.HTTPNotFound(reason=err.roll_up) from err

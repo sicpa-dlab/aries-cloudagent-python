@@ -43,8 +43,16 @@ class IndyDIDRegistrar(BaseDidRegistrar):
     def __init__(self):
         """Initialize Indy Registrar."""
         super().__init__(RegistrarType.INTERNAL)
+        self.method = "sov"
 
-
+    @property
+    def method(self):
+        return self._method
+    
+    @method.setter
+    def method(self, value):
+        self._method = value
+    
     async def _check_ledger(self, ledger, wallet_type):
         if not ledger:
             reason = "No Indy ledger available"

@@ -75,15 +75,18 @@ class BaseDidRegistrar(ABC):
         **options: dict
     ) -> JobRecord:
         """Create a new DID."""
+        raise NotImplementedError
 
     @abstractmethod
     async def update(
         self, profile: Profile, did: str, document: dict, **options: dict
     ) -> JobRecord:
         """Updates a did."""
+        raise NotImplementedError
 
     @abstractmethod
     async def deactivate(
         self, profile: Profile, did: str, **options: dict
     ) -> JobRecord:
         """Deactivates a did."""
+        raise NotImplementedError

@@ -4,14 +4,14 @@ import logging
 
 from ..config.injection_context import InjectionContext
 from ..config.provider import ClassProvider
-from ..registrar.did_registrar import DIDRegistrar
+from .did_registrars import DIDRegistrars
 
 LOGGER = logging.getLogger(__name__)
 
 
 async def setup(context: InjectionContext):
     """Set up default registrars."""
-    registry = context.inject_or(DIDRegistrar)
+    registry = context.inject_or(DIDRegistrars)
     if not registry:
         LOGGER.warning("No DID registrar Registry instance found in context")
         return
