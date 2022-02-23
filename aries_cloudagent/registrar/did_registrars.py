@@ -24,7 +24,7 @@ class DIDRegistrars:
     def __init__(self):
         """Create DID registrar."""
         self.method_to_registrar: Dict[Str, BaseDidRegistrar] = {}
-        
+
     def register_registrar(self, registrar: BaseDidRegistrar):
         """Register a new registrar."""
         self.method_to_registrar[registrar.method] = registrar
@@ -46,7 +46,7 @@ class DIDRegistrars:
 
         if not method:
             raise ValueError("Either did or method must be provided")
-        
+
         if self.method_to_registrar and method not in self.method_to_registrar.keys():
             raise ValueError("No registrar for method", method)
 
@@ -55,24 +55,32 @@ class DIDRegistrars:
             profile, method, did, document, **options
         )
 
-    async def update(self, profile: Profile, did: str, document: dict, **options: dict) -> JobRecord:
+    async def update(
+        self, profile: Profile, did: str, document: dict, **options: dict
+    ) -> JobRecord:
         """Update DID."""
         if not document and not did:
             raise ValueError("did and document must be provided")
-        method = did.split(":")[1] # TODO: use did lib to do this
-        
+        method = did.split(":")[1]  # TODO: use did lib to do this
+
         if self.method_to_registrar and method not in self.method_to_registrar.keys():
             raise ValueError("No registrar for method", method)
-        
-        return await self.method_to_registrar[method].update(profile, did, document, **options)
 
-    async def deactivate(self, profile: Profile, did: str, **options: dict) -> JobRecord:
+        return await self.method_to_registrar[method].update(
+            profile, did, document, **options
+        )
+
+    async def deactivate(
+        self, profile: Profile, did: str, **options: dict
+    ) -> JobRecord:
         """Deactivate DID."""
         if not did:
             raise ValueError("did must be provided")
-        method = did.split(":")[1] # TODO: use did lib to do this
-        
+        method = did.split(":")[1]  # TODO: use did lib to do this
+
         if self.method_to_registrar and method not in self.method_to_registrar.keys():
             raise ValueError("No registrar for method", method)
-        
-        return await self.method_to_registrar[method].deactivate(profile, did, **options)
+
+        return await self.method_to_registrar[method].deactivate(
+            profile, did, **options
+        )

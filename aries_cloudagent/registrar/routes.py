@@ -133,9 +133,10 @@ async def status_job(request: web.Request):
         session = await context.session()
         result = JobRecord.retrieve_by_did(session, did)
 
-    except StorageNotFoundError as err: # TODO: update to include other errors
+    except StorageNotFoundError as err:  # TODO: update to include other errors
         raise web.HTTPNotFound(reason=err.roll_up) from err
     return web.json_response(result.serialize)
+
 
 async def register(app: web.Application):
     """Register routes."""
