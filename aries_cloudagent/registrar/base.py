@@ -1,6 +1,6 @@
 """Base Class for DID registrars."""
 
-from abc import ABC, abstractmethod
+from abc import ABC, abstractmethod, abstractproperty
 from enum import Enum
 import logging
 from typing import Optional
@@ -60,11 +60,16 @@ class BaseDidRegistrar(ABC):
             "Setup from %s called with context: %s", self.__class__.__name__, context
         )
 
+    @abstractproperty
+    def method(self) -> str:
+        """Return method handled by this registrar."""
+        ...
+
     @abstractmethod
     async def create(
         self,
         profile: Profile,
-        method: str,
+        method: Optional[str],
         did: Optional[str] = None,
         document: Optional[dict] = None,
         **options: dict
