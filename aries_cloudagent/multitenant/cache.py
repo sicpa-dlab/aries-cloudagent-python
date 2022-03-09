@@ -25,19 +25,22 @@ class ProfileCache:
         self.capacity = capacity
 
     async def _cleanup(self):
-        for (key, profile) in self.profiles.items():
-            # When ref count is 4 we can assume the profile is not referenced
-            # 1 = profiles dict
-            # 2 = self.profiles.items()
-            # 3 = profile above
-            # 4 = sys.getrefcount
-            if sys.getrefcount(profile) <= 4:
-                LOGGER.debug(f"closing profile with id {key}")
-                del self.profiles[key]
-                await profile.close()
+        # When ref count is <= 4 we can assume the profile is not referenced
+        # 1 = profiles dict
+        # 2 = self.profiles.items()
+        # 3 = profile above
+        # 4 = sys.getrefcount
+        keys_to_remove = [
+            key
+            for (key, profile) in self.profiles.items()
+            if sys.getrefcount(profile) <= 4
+        ]
 
-                if len(self.profiles) <= self.capacity:
-                    break
+        for key in keys_to_remove:
+            LOGGER.debug(f"closing profile with id {key}")
+            profile =  self.profiles[key]
+            del self.profiles[key]
+            await profile.close()
 
     def get(self, key: str) -> Optional[Profile]:
         """Get profile with associated key from cache.
@@ -51,9 +54,8 @@ class ProfileCache:
         """
         if key not in self.profiles:
             return None
-        else:
-            self.profiles.move_to_end(key)
-            return self.profiles[key]
+        self.profiles.move_to_end(key)
+        return self.profiles[key]
 
     def has(self, key: str) -> bool:
         """Check whether there is a profile with associated key in the cache.
