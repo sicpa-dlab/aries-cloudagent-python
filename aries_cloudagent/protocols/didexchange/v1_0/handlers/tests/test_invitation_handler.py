@@ -2,11 +2,13 @@ import pytest
 
 from ......messaging.request_context import RequestContext
 from ......messaging.responder import MockResponder
-from ......protocols.out_of_band.v1_0.messages.invitation import InvitationMessage
 from ......transport.inbound.receipt import MessageReceipt
 
+from .....out_of_band.v1_0.messages.invitation import InvitationMessage
+from .....problem_report.v1_0.message import ProblemReport
+
 from ...handlers.invitation_handler import InvitationHandler
-from ...messages.problem_report import ProblemReport, ProblemReportReason
+from ...messages.problem_report_reason import ProblemReportReason
 
 
 @pytest.fixture()
@@ -26,8 +28,8 @@ class TestDIDXInvitationHandler:
         messages = responder.messages
         assert len(messages) == 1
         result, target = messages[0]
-        assert (
-            isinstance(result, ProblemReport)
-            and result.problem_code == ProblemReportReason.INVITATION_NOT_ACCEPTED
+        assert isinstance(result, ProblemReport) and (
+            result.description["code"]
+            == ProblemReportReason.INVITATION_NOT_ACCEPTED.value
         )
         assert not target

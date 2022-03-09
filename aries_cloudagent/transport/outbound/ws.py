@@ -15,14 +15,14 @@ class WsTransport(BaseOutboundTransport):
 
     schemes = ("ws", "wss")
 
-    def __init__(self) -> None:
+    def __init__(self, **kwargs) -> None:
         """Initialize an `WsTransport` instance."""
-        super().__init__()
+        super().__init__(**kwargs)
         self.logger = logging.getLogger(__name__)
 
     async def start(self):
         """Start the outbound transport."""
-        self.client_session = ClientSession(cookie_jar=DummyCookieJar())
+        self.client_session = ClientSession(cookie_jar=DummyCookieJar(), trust_env=True)
         return self
 
     async def stop(self):
@@ -36,6 +36,7 @@ class WsTransport(BaseOutboundTransport):
         payload: Union[str, bytes],
         endpoint: str,
         metadata: dict = None,
+        api_key: str = None,
     ):
         """
         Handle message from queue.

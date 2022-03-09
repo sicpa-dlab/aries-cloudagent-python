@@ -1,4 +1,4 @@
-"""Message and inner object type identifiers for Connections."""
+"""Message and inner object type identifiers for present-proof protocol v1.0."""
 
 from ...didcomm_prefix import DIDCommPrefix
 
@@ -12,6 +12,7 @@ PRESENTATION_PROPOSAL = "present-proof/1.0/propose-presentation"
 PRESENTATION_REQUEST = "present-proof/1.0/request-presentation"
 PRESENTATION = "present-proof/1.0/presentation"
 PRESENTATION_ACK = "present-proof/1.0/ack"
+PRESENTATION_PROBLEM_REPORT = "present-proof/1.0/problem-report"
 
 PROTOCOL_PACKAGE = "aries_cloudagent.protocols.present_proof.v1_0"
 
@@ -27,14 +28,19 @@ MESSAGE_TYPES = DIDCommPrefix.qualify_all(
         PRESENTATION_ACK: (
             f"{PROTOCOL_PACKAGE}.messages.presentation_ack.PresentationAck"
         ),
+        PRESENTATION_PROBLEM_REPORT: (
+            f"{PROTOCOL_PACKAGE}.messages.presentation_problem_report."
+            "PresentationProblemReport"
+        ),
     }
 )
-
-# Inner object types
-PRESENTATION_PREVIEW = "present-proof/1.0/presentation-preview"
 
 # Identifiers to use in attachment decorators
 ATTACH_DECO_IDS = {
     PRESENTATION_REQUEST: "libindy-request-presentation-0",
     PRESENTATION: "libindy-presentation-0",
 }
+
+CONTROLLERS = DIDCommPrefix.qualify_all(
+    {"present-proof/1.0": f"{PROTOCOL_PACKAGE}.controller.Controller"}
+)

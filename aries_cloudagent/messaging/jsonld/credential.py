@@ -2,31 +2,23 @@
 
 import json
 
-from ...wallet.util import (
-    b58_to_bytes,
-    b64_to_bytes,
-    b64_to_str,
-    bytes_to_b58,
-    bytes_to_b64,
-    str_to_b64,
-)
+from ...did.did_key import DIDKey
+from ...vc.ld_proofs import DocumentLoader
+from ...wallet.base import BaseWallet
+from ...wallet.key_type import KeyType
+from ...wallet.util import b64_to_bytes, b64_to_str, bytes_to_b64, str_to_b64
 
 from .create_verify_data import create_verify_data
-
-
-MULTIBASE_B58_BTC = "z"
-MULTICODEC_ED25519_PUB = b"\xed"
+from .error import BadJWSHeaderError
 
 
 def did_key(verkey: str) -> str:
     """Qualify verkey into DID key if need be."""
 
-    if verkey.startswith(f"did:key:{MULTIBASE_B58_BTC}"):
+    if verkey.startswith("did:key:"):
         return verkey
 
-    return f"did:key:{MULTIBASE_B58_BTC}" + bytes_to_b58(
-        MULTICODEC_ED25519_PUB + b58_to_bytes(verkey)
-    )
+    return DIDKey.from_public_key_b58(verkey, KeyType.ED25519).did
 
 
 def b64encode(str):
@@ -44,7 +36,7 @@ def create_jws(encoded_header, verify_data):
     return (encoded_header + ".").encode("utf-8") + verify_data
 
 
-async def jws_sign(verify_data, verkey, wallet):
+async def jws_sign(session, verify_data, verkey):
     """Sign JWS."""
 
     header = {"alg": "EdDSA", "b64": False, "crit": ["b64"]}
@@ -53,6 +45,7 @@ async def jws_sign(verify_data, verkey, wallet):
 
     jws_to_sign = create_jws(encoded_header, verify_data)
 
+    wallet = session.inject(BaseWallet)
     signature = await wallet.sign_message(jws_to_sign, verkey)
 
     encoded_signature = bytes_to_b64(signature, urlsafe=True, pad=False)
@@ -63,20 +56,13 @@ async def jws_sign(verify_data, verkey, wallet):
 def verify_jws_header(header):
     """Check header requirements."""
 
-    if (
-        not (
-            header["alg"] == "EdDSA"
-            and header["b64"] is False
-            and isinstance(header["crit"], list)
-            and len(header["crit"]) == 1
-            and header["crit"][0] == "b64"
+    if header != {"alg": "EdDSA", "b64": False, "crit": ["b64"]}:
+        raise BadJWSHeaderError(
+            "Invalid JWS header parameters for Ed25519Signature2018."
         )
-        and len(header) == 3
-    ):
-        raise Exception("Invalid JWS header parameters for Ed25519Signature2018.")
 
 
-async def jws_verify(verify_data, signature, public_key, wallet):
+async def jws_verify(session, verify_data, signature, public_key):
     """Detatched jws verify handling."""
 
     encoded_header, _, encoded_signature = signature.partition("..")
@@ -88,25 +74,37 @@ async def jws_verify(verify_data, signature, public_key, wallet):
 
     jws_to_verify = create_jws(encoded_header, verify_data)
 
-    verified = await wallet.verify_message(jws_to_verify, decoded_signature, public_key)
+    wallet = session.inject(BaseWallet)
+    verified = await wallet.verify_message(
+        jws_to_verify, decoded_signature, public_key, KeyType.ED25519
+    )
 
     return verified
 
 
-async def sign_credential(credential, signature_options, verkey, wallet):
+async def sign_credential(session, credential, signature_options, verkey):
     """Sign Credential."""
 
-    framed, verify_data_hex_string = create_verify_data(credential, signature_options)
+    document_loader = session.profile.inject_or(DocumentLoader)
+    framed, verify_data_hex_string = create_verify_data(
+        credential,
+        signature_options,
+        document_loader,
+    )
     verify_data_bytes = bytes.fromhex(verify_data_hex_string)
-    jws = await jws_sign(verify_data_bytes, verkey, wallet)
-    document_with_proof = {**credential, "proof": {**signature_options, "jws": jws}}
-    return document_with_proof
+    jws = await jws_sign(session, verify_data_bytes, verkey)
+    return {**credential, "proof": {**signature_options, "jws": jws}}
 
 
-async def verify_credential(doc, verkey, wallet):
+async def verify_credential(session, doc, verkey):
     """Verify credential."""
 
-    framed, verify_data_hex_string = create_verify_data(doc, doc["proof"])
+    document_loader = session.profile.inject_or(DocumentLoader)
+    framed, verify_data_hex_string = create_verify_data(
+        doc,
+        doc["proof"],
+        document_loader,
+    )
     verify_data_bytes = bytes.fromhex(verify_data_hex_string)
-    valid = await jws_verify(verify_data_bytes, framed["proof"]["jws"], verkey, wallet)
+    valid = await jws_verify(session, verify_data_bytes, framed["proof"]["jws"], verkey)
     return valid

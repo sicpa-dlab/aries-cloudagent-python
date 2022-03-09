@@ -1,14 +1,11 @@
 """Connection request handler."""
 
-from .....messaging.base_handler import (
-    BaseHandler,
-    BaseResponder,
-    RequestContext,
-)
-
+from .....connections.models.conn_record import ConnRecord
+from .....messaging.base_handler import BaseHandler, BaseResponder, RequestContext
+from ....coordinate_mediation.v1_0.manager import MediationManager
 from ..manager import ConnectionManager, ConnectionManagerError
 from ..messages.connection_request import ConnectionRequest
-from ..messages.problem_report import ProblemReport
+from ..messages.problem_report import ConnectionProblemReport
 
 
 class ConnectionRequestHandler(BaseHandler):
@@ -26,22 +23,33 @@ class ConnectionRequestHandler(BaseHandler):
         self._logger.debug(f"ConnectionRequestHandler called with context {context}")
         assert isinstance(context.message, ConnectionRequest)
 
-        session = await context.session()
-        mgr = ConnectionManager(session)
+        profile = context.profile
+        mgr = ConnectionManager(profile)
 
+        mediation_id = None
         if context.connection_record:
-            mediation_metadata = await context.connection_record.metadata_get(
-                session, "mediation", {}
-            )
-        else:
-            mediation_metadata = {}
+            async with profile.session() as session:
+                mediation_metadata = await context.connection_record.metadata_get(
+                    session, MediationManager.METADATA_KEY, {}
+                )
+            mediation_id = mediation_metadata.get(MediationManager.METADATA_ID)
 
         try:
-            await mgr.receive_request(
+            connection = await mgr.receive_request(
                 context.message,
                 context.message_receipt,
-                mediation_id=mediation_metadata.get("id"),
+                mediation_id=mediation_id,
             )
+
+            if connection.accept == ConnRecord.ACCEPT_AUTO:
+                response = await mgr.create_response(
+                    connection, mediation_id=mediation_id
+                )
+                await responder.send_reply(
+                    response, connection_id=connection.connection_id
+                )
+            else:
+                self._logger.debug("Connection request will await acceptance")
         except ConnectionManagerError as e:
             self._logger.exception("Error receiving connection request")
             if e.error_code:
@@ -57,6 +65,6 @@ class ConnectionRequestHandler(BaseHandler):
                             "Error parsing DIDDoc for problem report"
                         )
                 await responder.send_reply(
-                    ProblemReport(problem_code=e.error_code, explain=str(e)),
+                    ConnectionProblemReport(problem_code=e.error_code, explain=str(e)),
                     target_list=targets,
                 )

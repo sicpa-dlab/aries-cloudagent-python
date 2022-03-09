@@ -1,18 +1,26 @@
 import asyncio
 import json
-from os import path
 import tempfile
 import pytest
 
-from asynctest import TestCase as AsyncTestCase
-from asynctest import mock as async_mock
+from os import path
 
+from asynctest import mock as async_mock, TestCase as AsyncTestCase
+
+from ...config.injection_context import InjectionContext
+from ...core.in_memory import InMemoryProfile
 from ...cache.in_memory import InMemoryCache
 from ...indy.issuer import IndyIssuer, IndyIssuerError
+from ...indy.sdk.profile import IndySdkProfile
+from ...indy.sdk.wallet_setup import IndyWalletConfig
 from ...storage.record import StorageRecord
-from ...wallet.base import DIDInfo
+from ...wallet.base import BaseWallet
+from ...wallet.did_info import DIDInfo
 from ...wallet.did_posture import DIDPosture
 from ...wallet.error import WalletNotFoundError
+from ...wallet.indy import IndyOpenWallet, IndySdkWallet
+from ...wallet.key_type import KeyType
+from ...wallet.did_method import DIDMethod
 
 from ..endpoint_type import EndpointType
 from ..indy import (
@@ -31,36 +39,6 @@ from ..indy import (
     Role,
     TAA_ACCEPTED_RECORD_TYPE,
 )
-
-
-class TestRole(AsyncTestCase):
-    async def test_role(self):
-        assert Role.get(2) is Role.STEWARD
-        assert Role.get(0) is Role.TRUSTEE
-        assert Role.get(101) is Role.ENDORSER
-        assert Role.get(201) is Role.NETWORK_MONITOR
-        assert Role.get(None) is Role.USER
-        assert Role.get(-1) is None
-        assert Role.get("user") is Role.USER
-        assert Role.get("steward") is Role.STEWARD
-        assert Role.get("trustee") is Role.TRUSTEE
-        assert Role.get("endorser") is Role.ENDORSER
-        assert Role.get("network_monitor") is Role.NETWORK_MONITOR
-        assert Role.get("ROLE_REMOVE") is None
-
-        assert Role.STEWARD.to_indy_num_str() == "2"
-        assert Role.TRUSTEE.to_indy_num_str() == "0"
-        assert Role.ENDORSER.to_indy_num_str() == "101"
-        assert Role.NETWORK_MONITOR.to_indy_num_str() == "201"
-        assert Role.USER.to_indy_num_str() is None
-        assert Role.ROLE_REMOVE.to_indy_num_str() == ""
-
-        assert Role.STEWARD.token() == "STEWARD"
-        assert Role.TRUSTEE.token() == "TRUSTEE"
-        assert Role.ENDORSER.token() == "ENDORSER"
-        assert Role.NETWORK_MONITOR.token() == "NETWORK_MONITOR"
-        assert Role.USER.token() is None
-        assert Role.ROLE_REMOVE.to_indy_num_str() == ""
 
 
 GENESIS_TRANSACTION_PATH = path.join(
@@ -86,11 +64,23 @@ class TestIndySdkLedgerPoolProvider(AsyncTestCase):
 
 @pytest.mark.indy
 class TestIndySdkLedger(AsyncTestCase):
-    test_did = "55GkHamhTU1ZbTbV2ab9DE"
-    test_did_info = DIDInfo(
-        test_did, "3Dn1SJNPaCXcvvJvSbsFWP2xaCjMom3can8CQNhWrTRx", None
-    )
-    test_verkey = "3Dn1SJNPaCXcvvJvSbsFWP2xaCjMom3can8CQNhWrTRx"
+    async def setUp(self):
+        self.test_did = "55GkHamhTU1ZbTbV2ab9DE"
+        self.test_did_info = DIDInfo(
+            did=self.test_did,
+            verkey="3Dn1SJNPaCXcvvJvSbsFWP2xaCjMom3can8CQNhWrTRx",
+            metadata={"test": "test"},
+            method=DIDMethod.SOV,
+            key_type=KeyType.ED25519,
+        )
+        self.test_verkey = "3Dn1SJNPaCXcvvJvSbsFWP2xaCjMom3can8CQNhWrTRx"
+        context = InjectionContext()
+        context.injector.bind_instance(IndySdkLedgerPool, IndySdkLedgerPool("name"))
+        self.profile = IndySdkProfile(
+            async_mock.CoroutineMock(),
+            context,
+        )
+        self.session = await self.profile.session()
 
     @async_mock.patch("indy.pool.create_pool_ledger_config")
     @async_mock.patch("indy.pool.list_pools")
@@ -103,15 +93,16 @@ class TestIndySdkLedger(AsyncTestCase):
         mock_list_pools.return_value = []
 
         mock_wallet = async_mock.MagicMock()
+        self.session.context.injector.bind_provider(BaseWallet, mock_wallet)
         ledger = IndySdkLedger(
             IndySdkLedgerPool("name", genesis_transactions="genesis_transactions"),
-            mock_wallet,
+            self.profile,
         )
 
         assert ledger.pool_name == "name"
         assert not ledger.read_only
         assert ledger.backend
-        assert ledger.wallet is mock_wallet
+        assert ledger.profile is self.profile
 
         await ledger.__aenter__()
 
@@ -135,11 +126,12 @@ class TestIndySdkLedger(AsyncTestCase):
         mock_list_pools.return_value = []
 
         mock_wallet = async_mock.MagicMock()
-        ledger = IndySdkLedger(IndySdkLedgerPool("name"), mock_wallet)
+        self.session.context.injector.bind_provider(BaseWallet, mock_wallet)
+        ledger = IndySdkLedger(IndySdkLedgerPool("name"), self.profile)
 
         assert ledger.pool_name == "name"
         assert ledger.backend
-        assert ledger.wallet is mock_wallet
+        assert ledger.profile is self.profile
 
         with self.assertRaises(LedgerError):
             await ledger.__aenter__()
@@ -190,14 +182,18 @@ class TestIndySdkLedger(AsyncTestCase):
         self, mock_close_pool, mock_open_ledger, mock_set_proto
     ):
         mock_wallet = async_mock.MagicMock()
-        ledger = IndySdkLedger(IndySdkLedgerPool("name", checked=True), mock_wallet)
-
-        async with ledger as led:
-            mock_set_proto.assert_called_once_with(2)
-            mock_open_ledger.assert_called_once_with("name", "{}")
-            assert led == ledger
-            mock_close_pool.assert_not_called()
-            assert led.pool_handle == mock_open_ledger.return_value
+        self.session.context.injector.bind_provider(BaseWallet, mock_wallet)
+        ledger = IndySdkLedger(IndySdkLedgerPool("name", checked=True), self.profile)
+        with async_mock.patch.object(
+            IndySdkWallet, "get_public_did"
+        ) as mock_wallet_get_public_did:
+            mock_wallet_get_public_did.return_value = self.test_did_info
+            async with ledger as led:
+                mock_set_proto.assert_called_once_with(2)
+                mock_open_ledger.assert_called_once_with("name", "{}")
+                assert led == ledger
+                mock_close_pool.assert_not_called()
+                assert led.pool_handle == mock_open_ledger.return_value
 
         mock_close_pool.assert_called_once()
         assert ledger.pool_handle is None
@@ -209,19 +205,23 @@ class TestIndySdkLedger(AsyncTestCase):
         self, mock_close_pool, mock_open_ledger, mock_set_proto
     ):
         mock_wallet = async_mock.MagicMock()
+        self.session.context.injector.bind_provider(BaseWallet, mock_wallet)
         ledger = IndySdkLedger(
-            IndySdkLedgerPool("name", checked=True, keepalive=1), mock_wallet
+            IndySdkLedgerPool("name", checked=True, keepalive=1), self.profile
         )
+        with async_mock.patch.object(
+            IndySdkWallet, "get_public_did"
+        ) as mock_wallet_get_public_did:
+            mock_wallet_get_public_did.return_value = self.test_did_info
+            async with ledger as led0:
+                mock_set_proto.assert_called_once_with(2)
+                mock_open_ledger.assert_called_once_with("name", "{}")
+                assert led0 == ledger
+                mock_close_pool.assert_not_called()
+                assert led0.pool_handle == mock_open_ledger.return_value
 
-        async with ledger as led0:
-            mock_set_proto.assert_called_once_with(2)
-            mock_open_ledger.assert_called_once_with("name", "{}")
-            assert led0 == ledger
-            mock_close_pool.assert_not_called()
-            assert led0.pool_handle == mock_open_ledger.return_value
-
-        async with ledger as led1:
-            assert ledger.pool.ref_count == 1
+            async with ledger as led1:
+                assert ledger.pool.ref_count == 1
 
         mock_close_pool.assert_not_called()  # it's a future
         assert ledger.pool_handle
@@ -237,12 +237,16 @@ class TestIndySdkLedger(AsyncTestCase):
         self, mock_close_pool, mock_open_ledger, mock_set_proto
     ):
         mock_wallet = async_mock.MagicMock()
+        self.session.context.injector.bind_provider(BaseWallet, mock_wallet)
         mock_close_pool.side_effect = IndyError(ErrorCode.PoolLedgerTimeout)
-        ledger = IndySdkLedger(IndySdkLedgerPool("name", checked=True), mock_wallet)
-
-        with self.assertRaises(LedgerError):
-            async with ledger as led:
-                assert led.pool_handle == mock_open_ledger.return_value
+        ledger = IndySdkLedger(IndySdkLedgerPool("name", checked=True), self.profile)
+        with async_mock.patch.object(
+            IndySdkWallet, "get_public_did"
+        ) as mock_wallet_get_public_did:
+            mock_wallet_get_public_did.return_value = self.test_did_info
+            with self.assertRaises(LedgerError):
+                async with ledger as led:
+                    assert led.pool_handle == mock_open_ledger.return_value
 
         assert ledger.pool_handle == mock_open_ledger.return_value
         assert ledger.pool.ref_count == 1
@@ -255,10 +259,14 @@ class TestIndySdkLedger(AsyncTestCase):
         self, mock_close_pool, mock_open_ledger, mock_create_config, mock_set_proto
     ):
         mock_wallet = async_mock.MagicMock()
-        ledger = IndySdkLedger(IndySdkLedgerPool("name", checked=True), mock_wallet)
-
-        with self.assertRaises(ClosedPoolError) as context:
-            await ledger._submit("{}")
+        self.session.context.injector.bind_provider(BaseWallet, mock_wallet)
+        ledger = IndySdkLedger(IndySdkLedgerPool("name", checked=True), self.profile)
+        with async_mock.patch.object(
+            IndySdkWallet, "get_public_did"
+        ) as mock_wallet_get_public_did:
+            mock_wallet_get_public_did.return_value = self.test_did_info
+            with self.assertRaises(ClosedPoolError) as context:
+                await ledger._submit("{}")
         assert "sign and submit request to closed pool" in str(context.exception)
 
     @async_mock.patch("indy.pool.set_protocol_version")
@@ -266,39 +274,54 @@ class TestIndySdkLedger(AsyncTestCase):
     @async_mock.patch("indy.pool.open_pool_ledger")
     @async_mock.patch("indy.pool.close_pool_ledger")
     @async_mock.patch("indy.ledger.sign_and_submit_request")
+    @async_mock.patch("indy.ledger.multi_sign_request")
     async def test_submit_signed(
         self,
+        mock_indy_multi_sign,
         mock_sign_submit,
         mock_close_pool,
         mock_open_ledger,
         mock_create_config,
         mock_set_proto,
     ):
-
+        mock_indy_multi_sign.return_value = json.dumps({"endorsed": "content"})
         mock_sign_submit.return_value = '{"op": "REPLY"}'
 
         mock_wallet = async_mock.MagicMock()
+        self.session.context.injector.bind_provider(BaseWallet, mock_wallet)
+        ledger = IndySdkLedger(IndySdkLedgerPool("name", checked=True), self.profile)
+        with async_mock.patch.object(
+            IndySdkWallet, "get_public_did"
+        ) as mock_wallet_get_public_did:
+            async with ledger:
+                mock_wallet_get_public_did.return_value = None
 
-        ledger = IndySdkLedger(IndySdkLedgerPool("name", checked=True), mock_wallet)
+                with self.assertRaises(BadLedgerRequestError):
+                    await ledger._submit("{}", True)
 
-        async with ledger:
-            mock_wallet.get_public_did = async_mock.CoroutineMock()
-            mock_wallet.get_public_did.return_value = None
+                mock_wallet_get_public_did.return_value = async_mock.CoroutineMock()
+                mock_did = mock_wallet_get_public_did.return_value
+                mock_did.did = self.test_did
 
-            with self.assertRaises(BadLedgerRequestError):
-                await ledger._submit("{}", True)
+                await ledger._submit(
+                    request_json="{}",
+                    sign=True,
+                    taa_accept=False,
+                )
 
-            mock_wallet.get_public_did = async_mock.CoroutineMock()
-            mock_did = mock_wallet.get_public_did.return_value
-            mock_did.did = self.test_did
+                result_json = await ledger._submit(  # multi-sign for later endorsement
+                    request_json="{}",
+                    sign=True,
+                    taa_accept=False,
+                    write_ledger=False,
+                )
+                assert json.loads(result_json) == {"endorsed": "content"}
 
-            await ledger._submit("{}", True, False)
-
-            mock_wallet.get_public_did.assert_called_once_with()
-
-            mock_sign_submit.assert_called_once_with(
-                ledger.pool_handle, mock_wallet.opened.handle, mock_did.did, "{}"
-            )
+                await ledger.txn_submit(  # cover txn_submit()
+                    request_json="{}",
+                    sign=True,
+                    taa_accept=False,
+                )
 
     @async_mock.patch("indy.pool.set_protocol_version")
     @async_mock.patch("indy.pool.create_pool_ledger_config")
@@ -320,37 +343,37 @@ class TestIndySdkLedger(AsyncTestCase):
         mock_sign_submit.return_value = '{"op": "REPLY"}'
 
         mock_wallet = async_mock.MagicMock()
-
-        ledger = IndySdkLedger(IndySdkLedgerPool("name", checked=True), mock_wallet)
-        ledger.get_latest_txn_author_acceptance = async_mock.CoroutineMock(
-            return_value={
-                "text": "sample",
-                "version": "0.0",
-                "digest": "digest",
-                "mechanism": "dummy",
-                "time": "now",
-            }
-        )
-
-        async with ledger:
-            mock_wallet.get_public_did = async_mock.CoroutineMock()
-            mock_did = mock_wallet.get_public_did.return_value
-            mock_did.did = self.test_did
-
-            await ledger._submit(
-                request_json="{}",
-                sign=None,
-                taa_accept=True,
-                sign_did=self.test_did_info,
+        self.session.context.injector.bind_provider(BaseWallet, mock_wallet)
+        with async_mock.patch.object(
+            IndySdkWallet, "get_public_did"
+        ) as mock_wallet_get_public_did:
+            mock_wallet_get_public_did.return_value = async_mock.CoroutineMock()
+            ledger = IndySdkLedger(
+                IndySdkLedgerPool("name", checked=True), self.profile
+            )
+            ledger.get_latest_txn_author_acceptance = async_mock.CoroutineMock(
+                return_value={
+                    "text": "sample",
+                    "version": "0.0",
+                    "digest": "digest",
+                    "mechanism": "dummy",
+                    "time": "now",
+                }
             )
 
-            mock_wallet.get_public_did.assert_not_called()
-            mock_append_taa.assert_called_once_with(
-                "{}", "sample", "0.0", "digest", "dummy", "now"
-            )
-            mock_sign_submit.assert_called_once_with(
-                ledger.pool_handle, ledger.wallet.opened.handle, self.test_did, "{}"
-            )
+            async with ledger:
+                mock_did = mock_wallet_get_public_did.return_value
+                mock_did.did = self.test_did
+
+                await ledger._submit(
+                    request_json="{}",
+                    sign=None,
+                    taa_accept=True,
+                    sign_did=self.test_did_info,
+                )
+                mock_append_taa.assert_called_once_with(
+                    "{}", "sample", "0.0", "digest", "dummy", "now"
+                )
 
     @async_mock.patch("indy.pool.set_protocol_version")
     @async_mock.patch("indy.pool.create_pool_ledger_config")
@@ -374,16 +397,15 @@ class TestIndySdkLedger(AsyncTestCase):
         mock_submit.return_value = '{"op": "REPLY"}'
 
         mock_wallet = async_mock.MagicMock()
-        mock_wallet.get_public_did.return_value = future
-
-        ledger = IndySdkLedger(IndySdkLedgerPool("name", checked=True), mock_wallet)
-
-        async with ledger:
-            await ledger._submit("{}", False)
-
-            mock_wallet.get_public_did.assert_not_called()
-
-            mock_submit.assert_called_once_with(ledger.pool_handle, "{}")
+        self.session.context.injector.bind_provider(BaseWallet, mock_wallet)
+        ledger = IndySdkLedger(IndySdkLedgerPool("name", checked=True), self.profile)
+        with async_mock.patch.object(
+            IndySdkWallet, "get_public_did"
+        ) as mock_wallet_get_public_did:
+            mock_wallet_get_public_did.return_value = future
+            async with ledger:
+                await ledger._submit("{}", False)
+                mock_submit.assert_called_once_with(ledger.pool_handle, "{}")
 
     @async_mock.patch("indy.pool.set_protocol_version")
     @async_mock.patch("indy.pool.create_pool_ledger_config")
@@ -407,17 +429,18 @@ class TestIndySdkLedger(AsyncTestCase):
         mock_submit.return_value = '{"op": "NO-SUCH-OP"}'
 
         mock_wallet = async_mock.MagicMock()
-        mock_wallet.get_public_did.return_value = future
-
-        ledger = IndySdkLedger(IndySdkLedgerPool("name", checked=True), mock_wallet)
-
-        async with ledger:
-            with self.assertRaises(LedgerTransactionError):
-                await ledger._submit("{}", False)
-
-            mock_wallet.get_public_did.assert_not_called()
-
-            mock_submit.assert_called_once_with(ledger.pool_handle, "{}")
+        self.session.context.injector.bind_provider(BaseWallet, mock_wallet)
+        with async_mock.patch.object(
+            IndySdkWallet, "get_public_did"
+        ) as mock_wallet_get_public_did:
+            mock_wallet_get_public_did.return_value = future
+            ledger = IndySdkLedger(
+                IndySdkLedgerPool("name", checked=True), self.profile
+            )
+            async with ledger:
+                with self.assertRaises(LedgerTransactionError):
+                    await ledger._submit("{}", False)
+                mock_submit.assert_called_once_with(ledger.pool_handle, "{}")
 
     @async_mock.patch("indy.pool.set_protocol_version")
     @async_mock.patch("indy.pool.create_pool_ledger_config")
@@ -441,26 +464,67 @@ class TestIndySdkLedger(AsyncTestCase):
         mock_submit.return_value = '{"op": "REQNACK", "reason": "a reason"}'
 
         mock_wallet = async_mock.MagicMock()
-        mock_wallet.get_public_did.return_value = future
-
-        ledger = IndySdkLedger(IndySdkLedgerPool("name", checked=True), mock_wallet)
-
-        async with ledger:
-            with self.assertRaises(LedgerTransactionError) as context:
-                await ledger._submit("{}", False)
-            assert "Ledger rejected transaction request" in str(context.exception)
+        self.session.context.injector.bind_provider(BaseWallet, mock_wallet)
+        ledger = IndySdkLedger(IndySdkLedgerPool("name", checked=True), self.profile)
+        with async_mock.patch.object(
+            IndySdkWallet, "get_public_did"
+        ) as mock_wallet_get_public_did:
+            mock_wallet_get_public_did.return_value = future
+            async with ledger:
+                with self.assertRaises(LedgerTransactionError) as context:
+                    await ledger._submit("{}", False)
+                assert "Ledger rejected transaction request" in str(context.exception)
 
         mock_submit.return_value = '{"op": "REJECT", "reason": "another reason"}'
 
         mock_wallet = async_mock.MagicMock()
-        mock_wallet.get_public_did.return_value = future
+        self.session.context.injector.bind_provider(BaseWallet, mock_wallet)
+        ledger = IndySdkLedger(IndySdkLedgerPool("name", checked=True), self.profile)
+        with async_mock.patch.object(
+            IndySdkWallet, "get_public_did"
+        ) as mock_wallet_get_public_did:
+            mock_wallet_get_public_did.return_value = future
+            async with ledger:
+                with self.assertRaises(LedgerTransactionError) as context:
+                    await ledger._submit("{}", False)
+                assert "Ledger rejected transaction request" in str(context.exception)
 
-        ledger = IndySdkLedger(IndySdkLedgerPool("name", checked=True), mock_wallet)
+    @async_mock.patch("indy.pool.set_protocol_version")
+    @async_mock.patch("indy.pool.create_pool_ledger_config")
+    @async_mock.patch("indy.pool.open_pool_ledger")
+    @async_mock.patch("indy.pool.close_pool_ledger")
+    @async_mock.patch("indy.ledger.multi_sign_request")
+    async def test_txn_endorse(
+        self,
+        mock_indy_multi_sign,
+        mock_indy_close,
+        mock_indy_open,
+        mock_create_config,
+        mock_set_proto,
+    ):
+        mock_indy_multi_sign.return_value = json.dumps({"endorsed": "content"})
+        mock_indy_open.return_value = 1
 
-        async with ledger:
-            with self.assertRaises(LedgerTransactionError) as context:
-                await ledger._submit("{}", False)
-            assert "Ledger rejected transaction request" in str(context.exception)
+        mock_wallet = async_mock.MagicMock()
+        self.session.context.injector.bind_provider(BaseWallet, mock_wallet)
+        ledger = IndySdkLedger(IndySdkLedgerPool("name", checked=True), self.profile)
+        with async_mock.patch.object(
+            IndySdkWallet, "get_public_did"
+        ) as mock_wallet_get_public_did:
+            mock_wallet_get_public_did.return_value = None
+            with self.assertRaises(ClosedPoolError):
+                await ledger.txn_endorse(request_json=json.dumps({"...": "..."}))
+
+            async with ledger:
+                with self.assertRaises(BadLedgerRequestError):
+                    await ledger.txn_endorse(request_json=json.dumps({"...": "..."}))
+
+                mock_wallet_get_public_did.return_value = self.test_did_info
+
+                endorsed_json = await ledger.txn_endorse(
+                    request_json=json.dumps({"...": "..."})
+                )
+                assert json.loads(endorsed_json) == {"endorsed": "content"}
 
     @async_mock.patch("aries_cloudagent.ledger.indy.IndySdkLedgerPool.context_open")
     @async_mock.patch("aries_cloudagent.ledger.indy.IndySdkLedgerPool.context_close")
@@ -471,8 +535,10 @@ class TestIndySdkLedger(AsyncTestCase):
     )
     @async_mock.patch("aries_cloudagent.storage.indy.IndySdkStorage.add_record")
     @async_mock.patch("indy.ledger.build_schema_request")
+    @async_mock.patch("indy.ledger.append_request_endorser")
     async def test_send_schema(
         self,
+        mock_append_request_endorser,
         mock_build_schema_req,
         mock_add_record,
         mock_fetch_schema_by_seq_no,
@@ -482,10 +548,10 @@ class TestIndySdkLedger(AsyncTestCase):
         mock_open,
     ):
         mock_wallet = async_mock.MagicMock()
+        self.session.context.injector.bind_provider(BaseWallet, mock_wallet)
 
         issuer = async_mock.MagicMock(IndyIssuer)
-        ledger = IndySdkLedger(IndySdkLedgerPool("name", checked=True), mock_wallet)
-
+        ledger = IndySdkLedger(IndySdkLedgerPool("name", checked=True), self.profile)
         issuer.create_schema.return_value = ("schema_issuer_did:name:1.0", "{}")
         mock_fetch_schema_by_id.return_value = None
         mock_fetch_schema_by_seq_no.return_value = None
@@ -493,40 +559,56 @@ class TestIndySdkLedger(AsyncTestCase):
         mock_submit.return_value = (
             r'{"op":"REPLY","result":{"txnMetadata":{"seqNo": 1}}}'
         )
+        future = asyncio.Future()
+        future.set_result(async_mock.MagicMock(add_record=async_mock.CoroutineMock()))
+        with async_mock.patch.object(
+            IndySdkWallet, "get_public_did"
+        ) as mock_wallet_get_public_did, async_mock.patch.object(
+            ledger, "get_indy_storage", async_mock.MagicMock()
+        ) as mock_get_storage:
+            mock_get_storage.return_value = future
+            async with ledger:
+                mock_wallet_get_public_did.return_value = None
 
-        async with ledger:
-            mock_wallet.get_public_did = async_mock.CoroutineMock()
-            mock_wallet.get_public_did.return_value = None
+                with self.assertRaises(BadLedgerRequestError):
+                    schema_id, schema_def = await ledger.create_and_send_schema(
+                        issuer, "schema_name", "schema_version", [1, 2, 3]
+                    )
 
-            with self.assertRaises(BadLedgerRequestError):
+                mock_wallet_get_public_did.return_value = async_mock.CoroutineMock()
+                mock_did = mock_wallet_get_public_did.return_value
+                mock_did.did = self.test_did
+
                 schema_id, schema_def = await ledger.create_and_send_schema(
                     issuer, "schema_name", "schema_version", [1, 2, 3]
                 )
+                issuer.create_schema.assert_called_once_with(
+                    mock_did.did, "schema_name", "schema_version", [1, 2, 3]
+                )
 
-            mock_wallet.get_public_did = async_mock.CoroutineMock()
-            mock_did = mock_wallet.get_public_did.return_value
-            mock_did.did = self.test_did
+                mock_build_schema_req.assert_called_once_with(
+                    mock_did.did, issuer.create_schema.return_value[1]
+                )
 
-            schema_id, schema_def = await ledger.create_and_send_schema(
-                issuer, "schema_name", "schema_version", [1, 2, 3]
-            )
+                mock_submit.assert_called_once_with(
+                    mock_build_schema_req.return_value,
+                    True,
+                    sign_did=mock_wallet_get_public_did.return_value,
+                    write_ledger=True,
+                )
 
-            mock_wallet.get_public_did.assert_called_once_with()
-            issuer.create_schema.assert_called_once_with(
-                mock_did.did, "schema_name", "schema_version", [1, 2, 3]
-            )
+                assert schema_id == issuer.create_schema.return_value[0]
 
-            mock_build_schema_req.assert_called_once_with(
-                mock_did.did, issuer.create_schema.return_value[1]
-            )
-
-            mock_submit.assert_called_once_with(
-                mock_build_schema_req.return_value,
-                True,
-                sign_did=mock_wallet.get_public_did.return_value,
-            )
-
-            assert schema_id == issuer.create_schema.return_value[0]
+                schema_id, signed_txn = await ledger.create_and_send_schema(
+                    issuer=issuer,
+                    schema_name="schema_name",
+                    schema_version="schema_version",
+                    attribute_names=[1, 2, 3],
+                    write_ledger=False,
+                    endorser_did=self.test_did,
+                )
+                assert schema_id == issuer.create_schema.return_value[0]
+                assert "signed_txn" in signed_txn
 
     @async_mock.patch("indy.pool.set_protocol_version")
     @async_mock.patch("indy.pool.create_pool_ledger_config")
@@ -550,26 +632,30 @@ class TestIndySdkLedger(AsyncTestCase):
         # mock_did = async_mock.CoroutineMock()
 
         mock_wallet = async_mock.MagicMock()
-        mock_wallet.get_public_did = async_mock.CoroutineMock()
-        mock_wallet.get_public_did.return_value.did = "abc"
-
-        fetch_schema_id = (
-            f"{mock_wallet.get_public_did.return_value.did}:2:"
-            "schema_name:schema_version"
-        )
-        mock_check_existing.return_value = (fetch_schema_id, {})
+        self.session.context.injector.bind_provider(BaseWallet, mock_wallet)
 
         issuer = async_mock.MagicMock(IndyIssuer)
         issuer.create_schema.return_value = ("1", "{}")
-        ledger = IndySdkLedger(IndySdkLedgerPool("name", checked=True), mock_wallet)
-
+        ledger = IndySdkLedger(IndySdkLedgerPool("name", checked=True), self.profile)
+        mock_add_record = async_mock.CoroutineMock()
+        future = asyncio.Future()
+        future.set_result(
+            async_mock.MagicMock(
+                return_value=async_mock.MagicMock(add_record=mock_add_record)
+            )
+        )
         with async_mock.patch.object(
+            IndySdkWallet, "get_public_did"
+        ) as mock_wallet_get_public_did, async_mock.patch.object(
             ledger, "get_indy_storage", async_mock.MagicMock()
         ) as mock_get_storage:
-            mock_add_record = async_mock.CoroutineMock()
-            mock_get_storage.return_value = async_mock.MagicMock(
-                add_record=mock_add_record
+            mock_get_storage.return_value = future
+            mock_wallet_get_public_did.return_value = self.test_did_info
+            fetch_schema_id = (
+                f"{mock_wallet_get_public_did.return_value.did}:2:"
+                "schema_name:schema_version"
             )
+            mock_check_existing.return_value = (fetch_schema_id, {})
 
             async with ledger:
                 schema_id, schema_def = await ledger.create_and_send_schema(
@@ -601,27 +687,33 @@ class TestIndySdkLedger(AsyncTestCase):
     ):
 
         mock_wallet = async_mock.MagicMock()
-        mock_wallet.get_public_did = async_mock.CoroutineMock()
-        mock_wallet.get_public_did.return_value.did = "abc"
-
-        fetch_schema_id = (
-            f"{mock_wallet.get_public_did.return_value.did}:2:"
-            "schema_name:schema_version"
-        )
-        mock_check_existing.side_effect = [None, (fetch_schema_id, "{}")]
+        self.session.context.injector.bind_provider(BaseWallet, mock_wallet)
 
         issuer = async_mock.MagicMock(IndyIssuer)
         issuer.create_schema.return_value = ("1", "{}")
-        ledger = IndySdkLedger(IndySdkLedgerPool("name", checked=True), mock_wallet)
+        ledger = IndySdkLedger(IndySdkLedgerPool("name", checked=True), self.profile)
         ledger._submit = async_mock.CoroutineMock(
             side_effect=LedgerTransactionError("UnauthorizedClientRequest")
         )
-
-        async with ledger:
-            schema_id, schema_def = await ledger.create_and_send_schema(
-                issuer, "schema_name", "schema_version", [1, 2, 3]
+        future = asyncio.Future()
+        future.set_result(async_mock.MagicMock(add_record=async_mock.CoroutineMock()))
+        with async_mock.patch.object(
+            IndySdkWallet, "get_public_did"
+        ) as mock_wallet_get_public_did, async_mock.patch.object(
+            ledger, "get_indy_storage", async_mock.MagicMock()
+        ) as mock_get_storage:
+            mock_get_storage.return_value = future
+            mock_wallet_get_public_did.return_value = self.test_did_info
+            fetch_schema_id = (
+                f"{mock_wallet_get_public_did.return_value.did}:2:"
+                "schema_name:schema_version"
             )
-            assert schema_id == fetch_schema_id
+            mock_check_existing.side_effect = [None, (fetch_schema_id, "{}")]
+            async with ledger:
+                schema_id, schema_def = await ledger.create_and_send_schema(
+                    issuer, "schema_name", "schema_version", [1, 2, 3]
+                )
+                assert schema_id == fetch_schema_id
 
     @async_mock.patch("indy.pool.set_protocol_version")
     @async_mock.patch("indy.pool.create_pool_ledger_config")
@@ -640,27 +732,28 @@ class TestIndySdkLedger(AsyncTestCase):
     ):
 
         mock_wallet = async_mock.MagicMock()
-        mock_wallet.get_public_did = async_mock.CoroutineMock()
-        mock_wallet.get_public_did.return_value.did = "abc"
-
-        fetch_schema_id = (
-            f"{mock_wallet.get_public_did.return_value.did}:2:"
-            "schema_name:schema_version"
-        )
-        mock_check_existing.side_effect = [None, fetch_schema_id]
+        self.session.context.injector.bind_provider(BaseWallet, mock_wallet)
 
         issuer = async_mock.MagicMock(IndyIssuer)
         issuer.create_schema.return_value = ("1", "{}")
         ledger = IndySdkLedger(
-            IndySdkLedgerPool("name", checked=True, read_only=True), mock_wallet
+            IndySdkLedgerPool("name", checked=True, read_only=True), self.profile
         )
-
-        async with ledger:
-            with self.assertRaises(LedgerError) as context:
-                await ledger.create_and_send_schema(
-                    issuer, "schema_name", "schema_version", [1, 2, 3]
-                )
-            assert "read only" in str(context.exception)
+        with async_mock.patch.object(
+            IndySdkWallet, "get_public_did"
+        ) as mock_wallet_get_public_did:
+            mock_wallet_get_public_did.return_value = self.test_did_info
+            fetch_schema_id = (
+                f"{mock_wallet_get_public_did.return_value.did}:2:"
+                "schema_name:schema_version"
+            )
+            mock_check_existing.side_effect = [None, fetch_schema_id]
+            async with ledger:
+                with self.assertRaises(LedgerError) as context:
+                    await ledger.create_and_send_schema(
+                        issuer, "schema_name", "schema_version", [1, 2, 3]
+                    )
+                assert "read only" in str(context.exception)
 
     @async_mock.patch("indy.pool.set_protocol_version")
     @async_mock.patch("indy.pool.create_pool_ledger_config")
@@ -679,27 +772,28 @@ class TestIndySdkLedger(AsyncTestCase):
     ):
 
         mock_wallet = async_mock.MagicMock()
-        mock_wallet.get_public_did = async_mock.CoroutineMock()
-        mock_wallet.get_public_did.return_value.did = "abc"
-
-        fetch_schema_id = (
-            f"{mock_wallet.get_public_did.return_value.did}:2:"
-            "schema_name:schema_version"
-        )
-        mock_check_existing.side_effect = [None, fetch_schema_id]
+        self.session.context.injector.bind_provider(BaseWallet, mock_wallet)
 
         issuer = async_mock.MagicMock(IndyIssuer)
         issuer.create_schema = async_mock.CoroutineMock(
             side_effect=IndyIssuerError("dummy error")
         )
-        ledger = IndySdkLedger(IndySdkLedgerPool("name", checked=True), mock_wallet)
-
-        async with ledger:
-            with self.assertRaises(LedgerError) as context:
-                await ledger.create_and_send_schema(
-                    issuer, "schema_name", "schema_version", [1, 2, 3]
-                )
-            assert "dummy error" in str(context.exception)
+        ledger = IndySdkLedger(IndySdkLedgerPool("name", checked=True), self.profile)
+        with async_mock.patch.object(
+            IndySdkWallet, "get_public_did"
+        ) as mock_wallet_get_public_did:
+            mock_wallet_get_public_did.return_value = self.test_did_info
+            fetch_schema_id = (
+                f"{mock_wallet_get_public_did.return_value.did}:2:"
+                "schema_name:schema_version"
+            )
+            mock_check_existing.side_effect = [None, fetch_schema_id]
+            async with ledger:
+                with self.assertRaises(LedgerError) as context:
+                    await ledger.create_and_send_schema(
+                        issuer, "schema_name", "schema_version", [1, 2, 3]
+                    )
+                assert "dummy error" in str(context.exception)
 
     @async_mock.patch("indy.pool.set_protocol_version")
     @async_mock.patch("indy.pool.create_pool_ledger_config")
@@ -722,27 +816,28 @@ class TestIndySdkLedger(AsyncTestCase):
     ):
 
         mock_wallet = async_mock.MagicMock()
-        mock_wallet.get_public_did = async_mock.CoroutineMock()
-        mock_wallet.get_public_did.return_value.did = "abc"
-
-        fetch_schema_id = (
-            f"{mock_wallet.get_public_did.return_value.did}:2:"
-            "schema_name:schema_version"
-        )
-        mock_check_existing.side_effect = [None, fetch_schema_id]
+        self.session.context.injector.bind_provider(BaseWallet, mock_wallet)
 
         issuer = async_mock.MagicMock(IndyIssuer)
         issuer.create_schema.return_value = ("1", "{}")
-        ledger = IndySdkLedger(IndySdkLedgerPool("name", checked=True), mock_wallet)
+        ledger = IndySdkLedger(IndySdkLedgerPool("name", checked=True), self.profile)
         ledger._submit = async_mock.CoroutineMock(
             side_effect=LedgerTransactionError("Some other error message")
         )
-
-        async with ledger:
-            with self.assertRaises(LedgerTransactionError):
-                await ledger.create_and_send_schema(
-                    issuer, "schema_name", "schema_version", [1, 2, 3]
-                )
+        with async_mock.patch.object(
+            IndySdkWallet, "get_public_did"
+        ) as mock_wallet_get_public_did:
+            mock_wallet_get_public_did.return_value = self.test_did_info
+            fetch_schema_id = (
+                f"{mock_wallet_get_public_did.return_value.did}:2:"
+                "schema_name:schema_version"
+            )
+            mock_check_existing.side_effect = [None, fetch_schema_id]
+            async with ledger:
+                with self.assertRaises(LedgerTransactionError):
+                    await ledger.create_and_send_schema(
+                        issuer, "schema_name", "schema_version", [1, 2, 3]
+                    )
 
     @async_mock.patch("aries_cloudagent.ledger.indy.IndySdkLedgerPool.context_open")
     @async_mock.patch("aries_cloudagent.ledger.indy.IndySdkLedgerPool.context_close")
@@ -764,10 +859,9 @@ class TestIndySdkLedger(AsyncTestCase):
         mock_open,
     ):
         mock_wallet = async_mock.MagicMock()
-
+        self.session.context.injector.bind_provider(BaseWallet, mock_wallet)
         issuer = async_mock.MagicMock(IndyIssuer)
-        ledger = IndySdkLedger(IndySdkLedgerPool("name", checked=True), mock_wallet)
-
+        ledger = IndySdkLedger(IndySdkLedgerPool("name", checked=True), self.profile)
         issuer.create_schema.return_value = ("schema_issuer_did:name:1.0", "{}")
         mock_fetch_schema_by_id.return_value = None
         mock_fetch_schema_by_seq_no.return_value = None
@@ -775,17 +869,20 @@ class TestIndySdkLedger(AsyncTestCase):
         mock_submit.return_value = (
             r'{"op":"REPLY","result":{"txnMetadata":{"no": "seqNo"}}}'
         )
+        with async_mock.patch.object(
+            IndySdkWallet, "get_public_did"
+        ) as mock_wallet_get_public_did:
+            mock_wallet_get_public_did.return_value = async_mock.CoroutineMock()
+            async with ledger:
+                mock_wallet.get_public_did = async_mock.CoroutineMock()
+                mock_did = mock_wallet_get_public_did.return_value
+                mock_did.did = self.test_did
 
-        async with ledger:
-            mock_wallet.get_public_did = async_mock.CoroutineMock()
-            mock_did = mock_wallet.get_public_did.return_value
-            mock_did.did = self.test_did
-
-            with self.assertRaises(LedgerError) as context:
-                await ledger.create_and_send_schema(
-                    issuer, "schema_name", "schema_version", [1, 2, 3]
-                )
-            assert "schema sequence number" in str(context.exception)
+                with self.assertRaises(LedgerError) as context:
+                    await ledger.create_and_send_schema(
+                        issuer, "schema_name", "schema_version", [1, 2, 3]
+                    )
+                assert "schema sequence number" in str(context.exception)
 
     @async_mock.patch("aries_cloudagent.ledger.indy.IndySdkLedgerPool.context_open")
     @async_mock.patch("aries_cloudagent.ledger.indy.IndySdkLedgerPool.context_close")
@@ -797,29 +894,32 @@ class TestIndySdkLedger(AsyncTestCase):
         mock_open,
     ):
         mock_wallet = async_mock.MagicMock()
-        mock_wallet.get_public_did = async_mock.CoroutineMock()
-        mock_did = mock_wallet.get_public_did.return_value
-        mock_did.did = self.test_did
+        self.session.context.injector.bind_provider(BaseWallet, mock_wallet)
 
         mock_fetch_schema_by_id.return_value = {"attrNames": ["a", "b", "c"]}
-
-        ledger = IndySdkLedger(IndySdkLedgerPool("name", checked=True), mock_wallet)
-        async with ledger:
-            schema_id, schema_def = await ledger.check_existing_schema(
-                public_did=self.test_did,
-                schema_name="test",
-                schema_version="1.0",
-                attribute_names=["c", "b", "a"],
-            )
-            assert schema_id == f"{self.test_did}:2:test:1.0"
-
-            with self.assertRaises(LedgerTransactionError):
-                await ledger.check_existing_schema(
+        ledger = IndySdkLedger(IndySdkLedgerPool("name", checked=True), self.profile)
+        with async_mock.patch.object(
+            IndySdkWallet, "get_public_did"
+        ) as mock_wallet_get_public_did:
+            mock_wallet_get_public_did.return_value = async_mock.CoroutineMock()
+            mock_did = mock_wallet_get_public_did.return_value
+            mock_did.did = self.test_did
+            async with ledger:
+                schema_id, schema_def = await ledger.check_existing_schema(
                     public_did=self.test_did,
                     schema_name="test",
                     schema_version="1.0",
-                    attribute_names=["a", "b", "c", "d"],
+                    attribute_names=["c", "b", "a"],
                 )
+                assert schema_id == f"{self.test_did}:2:test:1.0"
+
+                with self.assertRaises(LedgerTransactionError):
+                    await ledger.check_existing_schema(
+                        public_did=self.test_did,
+                        schema_name="test",
+                        schema_version="1.0",
+                        attribute_names=["a", "b", "c", "d"],
+                    )
 
     @async_mock.patch("aries_cloudagent.ledger.indy.IndySdkLedgerPool.context_open")
     @async_mock.patch("aries_cloudagent.ledger.indy.IndySdkLedgerPool.context_close")
@@ -835,32 +935,43 @@ class TestIndySdkLedger(AsyncTestCase):
         mock_open,
     ):
         mock_wallet = async_mock.MagicMock()
-        mock_wallet.get_public_did = async_mock.CoroutineMock()
-        mock_did = mock_wallet.get_public_did.return_value
-        mock_did.did = self.test_did
+        self.session.context.injector.bind_provider(BaseWallet, mock_wallet)
 
         mock_parse_get_schema_resp.return_value = (None, '{"attrNames": ["a", "b"]}')
 
         mock_submit.return_value = '{"result":{"seqNo":1}}'
 
-        ledger = IndySdkLedger(
-            IndySdkLedgerPool("name", checked=True, cache=InMemoryCache()), mock_wallet
-        )
-
-        async with ledger:
-            response = await ledger.get_schema("schema_id")
-
-            mock_wallet.get_public_did.assert_called_once_with()
-            mock_build_get_schema_req.assert_called_once_with(mock_did.did, "schema_id")
-            mock_submit.assert_called_once_with(
-                mock_build_get_schema_req.return_value, sign_did=mock_did
+        with async_mock.patch.object(
+            IndySdkWallet, "get_public_did"
+        ) as mock_wallet_get_public_did:
+            mock_wallet_get_public_did.return_value = async_mock.CoroutineMock()
+            mock_did = mock_wallet_get_public_did.return_value
+            mock_did.did = self.test_did
+            ledger = IndySdkLedger(
+                IndySdkLedgerPool("name", checked=True, cache=InMemoryCache()),
+                self.profile,
             )
-            mock_parse_get_schema_resp.assert_called_once_with(mock_submit.return_value)
+            async with ledger:
+                response = await ledger.get_schema("schema_id")
+                mock_wallet_get_public_did.assert_called_once_with()
+                mock_build_get_schema_req.assert_called_once_with(
+                    mock_did.did, "schema_id"
+                )
+                mock_submit.assert_called_once_with(
+                    mock_build_get_schema_req.return_value, sign_did=mock_did
+                )
+                mock_parse_get_schema_resp.assert_called_once_with(
+                    mock_submit.return_value
+                )
 
-            assert response == json.loads(mock_parse_get_schema_resp.return_value[1])
+                assert response == json.loads(
+                    mock_parse_get_schema_resp.return_value[1]
+                )
 
-            response == await ledger.get_schema("schema_id")  # cover get-from-cache
-            assert response == json.loads(mock_parse_get_schema_resp.return_value[1])
+                response == await ledger.get_schema("schema_id")  # cover get-from-cache
+                assert response == json.loads(
+                    mock_parse_get_schema_resp.return_value[1]
+                )
 
     @async_mock.patch("aries_cloudagent.ledger.indy.IndySdkLedgerPool.context_open")
     @async_mock.patch("aries_cloudagent.ledger.indy.IndySdkLedgerPool.context_close")
@@ -874,26 +985,32 @@ class TestIndySdkLedger(AsyncTestCase):
         mock_open,
     ):
         mock_wallet = async_mock.MagicMock()
-        mock_wallet.get_public_did = async_mock.CoroutineMock()
-        mock_did = mock_wallet.get_public_did.return_value
-        mock_did.did = self.test_did
+        self.session.context.injector.bind_provider(BaseWallet, mock_wallet)
 
         mock_submit.return_value = json.dumps({"result": {"seqNo": None}})
 
-        ledger = IndySdkLedger(
-            IndySdkLedgerPool("name", checked=True, cache=InMemoryCache()), mock_wallet
-        )
-
-        async with ledger:
-            response = await ledger.get_schema("schema_id")
-
-            mock_wallet.get_public_did.assert_called_once_with()
-            mock_build_get_schema_req.assert_called_once_with(mock_did.did, "schema_id")
-            mock_submit.assert_called_once_with(
-                mock_build_get_schema_req.return_value, sign_did=mock_did
+        with async_mock.patch.object(
+            IndySdkWallet, "get_public_did"
+        ) as mock_wallet_get_public_did:
+            mock_wallet_get_public_did.return_value = async_mock.CoroutineMock()
+            mock_did = mock_wallet_get_public_did.return_value
+            mock_did.did = self.test_did
+            ledger = IndySdkLedger(
+                IndySdkLedgerPool("name", checked=True, cache=InMemoryCache()),
+                self.profile,
             )
 
-            assert response is None
+            async with ledger:
+                response = await ledger.get_schema("schema_id")
+                mock_wallet_get_public_did.assert_called_once_with()
+                mock_build_get_schema_req.assert_called_once_with(
+                    mock_did.did, "schema_id"
+                )
+                mock_submit.assert_called_once_with(
+                    mock_build_get_schema_req.return_value, sign_did=mock_did
+                )
+
+                assert response is None
 
     @async_mock.patch("aries_cloudagent.ledger.indy.IndySdkLedgerPool.context_open")
     @async_mock.patch("aries_cloudagent.ledger.indy.IndySdkLedgerPool.context_close")
@@ -911,9 +1028,7 @@ class TestIndySdkLedger(AsyncTestCase):
         mock_open,
     ):
         mock_wallet = async_mock.MagicMock()
-        mock_wallet.get_public_did = async_mock.CoroutineMock()
-        mock_did = mock_wallet.get_public_did.return_value
-        mock_did.did = self.test_did
+        self.session.context.injector.bind_provider(BaseWallet, mock_wallet)
 
         mock_parse_get_schema_resp.return_value = (None, '{"attrNames": ["a", "b"]}')
 
@@ -938,28 +1053,35 @@ class TestIndySdkLedger(AsyncTestCase):
         mock_submit.side_effect = [
             sub for sub in submissions
         ]  # becomes list iterator, unsubscriptable, in mock object
-
-        ledger = IndySdkLedger(IndySdkLedgerPool("name", checked=True), mock_wallet)
-
-        async with ledger:
-            response = await ledger.get_schema("999")
-
-            mock_wallet.get_public_did.assert_called_once_with()
-            mock_build_get_txn_req.assert_called_once_with(None, None, seq_no=999)
-            mock_build_get_schema_req.assert_called_once_with(
-                mock_did.did, f"{self.test_did}:2:preferences:1.0"
+        with async_mock.patch.object(
+            IndySdkWallet, "get_public_did"
+        ) as mock_wallet_get_public_did:
+            mock_wallet_get_public_did.return_value = async_mock.CoroutineMock()
+            mock_did = mock_wallet_get_public_did.return_value
+            mock_did.did = self.test_did
+            ledger = IndySdkLedger(
+                IndySdkLedgerPool("name", checked=True), self.profile
             )
-            mock_submit.assert_has_calls(
-                [
-                    async_mock.call(mock_build_get_txn_req.return_value),
-                    async_mock.call(
-                        mock_build_get_schema_req.return_value, sign_did=mock_did
-                    ),
-                ]
-            )
-            mock_parse_get_schema_resp.assert_called_once_with(submissions[1])
+            async with ledger:
+                response = await ledger.get_schema("999")
+                mock_wallet_get_public_did.assert_called_once_with()
+                mock_build_get_txn_req.assert_called_once_with(None, None, seq_no=999)
+                mock_build_get_schema_req.assert_called_once_with(
+                    mock_did.did, f"{self.test_did}:2:preferences:1.0"
+                )
+                mock_submit.assert_has_calls(
+                    [
+                        async_mock.call(mock_build_get_txn_req.return_value),
+                        async_mock.call(
+                            mock_build_get_schema_req.return_value, sign_did=mock_did
+                        ),
+                    ]
+                )
+                mock_parse_get_schema_resp.assert_called_once_with(submissions[1])
 
-            assert response == json.loads(mock_parse_get_schema_resp.return_value[1])
+                assert response == json.loads(
+                    mock_parse_get_schema_resp.return_value[1]
+                )
 
     @async_mock.patch("aries_cloudagent.ledger.indy.IndySdkLedgerPool.context_open")
     @async_mock.patch("aries_cloudagent.ledger.indy.IndySdkLedgerPool.context_close")
@@ -977,9 +1099,7 @@ class TestIndySdkLedger(AsyncTestCase):
         mock_open,
     ):
         mock_wallet = async_mock.MagicMock()
-        mock_wallet.get_public_did = async_mock.CoroutineMock()
-        mock_did = mock_wallet.get_public_did.return_value
-        mock_did.did = self.test_did
+        self.session.context.injector.bind_provider(BaseWallet, mock_wallet)
 
         mock_parse_get_schema_resp.return_value = (None, '{"attrNames": ["a", "b"]}')
 
@@ -1000,12 +1120,16 @@ class TestIndySdkLedger(AsyncTestCase):
         mock_submit.side_effect = [
             sub for sub in submissions
         ]  # becomes list iterator, unsubscriptable, in mock object
-
-        ledger = IndySdkLedger(IndySdkLedgerPool("name", checked=True), mock_wallet)
-
-        async with ledger:
-            with self.assertRaises(LedgerTransactionError):
-                await ledger.get_schema("999")
+        ledger = IndySdkLedger(IndySdkLedgerPool("name", checked=True), self.profile)
+        with async_mock.patch.object(
+            IndySdkWallet, "get_public_did"
+        ) as mock_wallet_get_public_did:
+            mock_wallet_get_public_did.return_value = async_mock.CoroutineMock()
+            mock_did = mock_wallet_get_public_did.return_value
+            mock_did.did = self.test_did
+            async with ledger:
+                with self.assertRaises(LedgerTransactionError):
+                    await ledger.get_schema("999")
 
     @async_mock.patch("aries_cloudagent.ledger.indy.IndySdkLedger.get_schema")
     @async_mock.patch("aries_cloudagent.ledger.indy.IndySdkLedgerPool.context_open")
@@ -1029,7 +1153,7 @@ class TestIndySdkLedger(AsyncTestCase):
         mock_get_schema,
     ):
         mock_wallet = async_mock.MagicMock()
-
+        self.session.context.injector.bind_provider(BaseWallet, mock_wallet)
         mock_find_all_records.return_value = []
 
         mock_get_schema.return_value = {"seqNo": 999}
@@ -1056,40 +1180,123 @@ class TestIndySdkLedger(AsyncTestCase):
             cred_def_json,
         )
         issuer.credential_definition_in_wallet.return_value = False
-        ledger = IndySdkLedger(IndySdkLedgerPool("name", checked=True), mock_wallet)
 
         schema_id = "schema_issuer_did:name:1.0"
         tag = "default"
-
-        async with ledger:
-            mock_wallet.get_public_did = async_mock.CoroutineMock()
-            mock_wallet.get_public_did.return_value = None
-
-            with self.assertRaises(BadLedgerRequestError):
-                await ledger.create_and_send_credential_definition(
+        ledger = IndySdkLedger(IndySdkLedgerPool("name", checked=True), self.profile)
+        future = asyncio.Future()
+        future.set_result(async_mock.MagicMock(add_record=async_mock.CoroutineMock()))
+        with async_mock.patch.object(
+            IndySdkWallet, "get_public_did"
+        ) as mock_wallet_get_public_did, async_mock.patch.object(
+            ledger, "get_indy_storage", async_mock.MagicMock()
+        ) as mock_get_storage:
+            mock_get_storage.return_value = future
+            async with ledger:
+                mock_wallet_get_public_did.return_value = None
+                with self.assertRaises(BadLedgerRequestError):
+                    await ledger.create_and_send_credential_definition(
+                        issuer, schema_id, None, tag
+                    )
+                mock_wallet_get_public_did.return_value = DIDInfo(
+                    did=self.test_did,
+                    verkey=self.test_verkey,
+                    metadata=None,
+                    method=DIDMethod.SOV,
+                    key_type=KeyType.ED25519,
+                )
+                mock_did = mock_wallet_get_public_did.return_value
+                (
+                    result_id,
+                    result_def,
+                    novel,
+                ) = await ledger.create_and_send_credential_definition(
                     issuer, schema_id, None, tag
                 )
+                assert result_id == cred_def_id
+                assert novel
+                mock_get_schema.assert_called_once_with(schema_id)
+                mock_build_cred_def.assert_called_once_with(mock_did.did, cred_def_json)
 
-            mock_wallet.get_public_did = async_mock.CoroutineMock()
-            mock_wallet.get_public_did.return_value = DIDInfo(
-                self.test_did, self.test_verkey, None
+    @async_mock.patch("aries_cloudagent.ledger.indy.IndySdkLedger.get_schema")
+    @async_mock.patch("aries_cloudagent.ledger.indy.IndySdkLedgerPool.context_open")
+    @async_mock.patch("aries_cloudagent.ledger.indy.IndySdkLedgerPool.context_close")
+    @async_mock.patch(
+        "aries_cloudagent.ledger.indy.IndySdkLedger.fetch_credential_definition"
+    )
+    @async_mock.patch("aries_cloudagent.ledger.indy.IndySdkLedger._submit")
+    @async_mock.patch("aries_cloudagent.storage.indy.IndySdkStorage.find_all_records")
+    @async_mock.patch("aries_cloudagent.storage.indy.IndySdkStorage.add_record")
+    @async_mock.patch("indy.ledger.build_cred_def_request")
+    @async_mock.patch("indy.ledger.append_request_endorser")
+    async def test_send_credential_definition_endorse_only(
+        self,
+        mock_append_request_endorser,
+        mock_build_cred_def,
+        mock_add_record,
+        mock_find_all_records,
+        mock_submit,
+        mock_fetch_cred_def,
+        mock_close,
+        mock_open,
+        mock_get_schema,
+    ):
+        mock_wallet = async_mock.MagicMock()
+        self.session.context.injector.bind_provider(BaseWallet, mock_wallet)
+        mock_find_all_records.return_value = []
+
+        mock_get_schema.return_value = {"seqNo": 999}
+        cred_def_id = f"{self.test_did}:3:CL:999:default"
+        cred_def_value = {
+            "primary": {"n": "...", "s": "...", "r": "...", "revocation": None}
+        }
+        cred_def = {
+            "ver": "1.0",
+            "id": cred_def_id,
+            "schemaId": "999",
+            "type": "CL",
+            "tag": "default",
+            "value": cred_def_value,
+        }
+        cred_def_json = json.dumps(cred_def)
+
+        mock_fetch_cred_def.side_effect = [None, cred_def]
+
+        issuer = async_mock.MagicMock(IndyIssuer)
+        issuer.make_credential_definition_id.return_value = cred_def_id
+        issuer.create_and_store_credential_definition.return_value = (
+            cred_def_id,
+            cred_def_json,
+        )
+        issuer.credential_definition_in_wallet.return_value = False
+        ledger = IndySdkLedger(IndySdkLedgerPool("name", checked=True), self.profile)
+        schema_id = "schema_issuer_did:name:1.0"
+        tag = "default"
+        with async_mock.patch.object(
+            IndySdkWallet, "get_public_did"
+        ) as mock_wallet_get_public_did:
+            mock_wallet_get_public_did.return_value = DIDInfo(
+                self.test_did,
+                self.test_verkey,
+                None,
+                DIDMethod.SOV,
+                KeyType.ED25519,
             )
-            mock_did = mock_wallet.get_public_did.return_value
-
-            (
-                result_id,
-                result_def,
-                novel,
-            ) = await ledger.create_and_send_credential_definition(
-                issuer, schema_id, None, tag
-            )
-            assert result_id == cred_def_id
-            assert novel
-
-            mock_wallet.get_public_did.assert_called_once_with()
-            mock_get_schema.assert_called_once_with(schema_id)
-
-            mock_build_cred_def.assert_called_once_with(mock_did.did, cred_def_json)
+            async with ledger:
+                (
+                    result_id,
+                    signed_txn,
+                    novel,
+                ) = await ledger.create_and_send_credential_definition(
+                    issuer=issuer,
+                    schema_id=schema_id,
+                    signature_type=None,
+                    tag=tag,
+                    support_revocation=False,
+                    write_ledger=False,
+                    endorser_did=self.test_did,
+                )
+                assert "signed_txn" in signed_txn
 
     @async_mock.patch("aries_cloudagent.ledger.indy.IndySdkLedger.get_schema")
     @async_mock.patch("aries_cloudagent.ledger.indy.IndySdkLedgerPool.context_open")
@@ -1113,7 +1320,7 @@ class TestIndySdkLedger(AsyncTestCase):
         mock_get_schema,
     ):
         mock_wallet = async_mock.MagicMock()
-
+        self.session.context.injector.bind_provider(BaseWallet, mock_wallet)
         mock_find_all_records.return_value = []
 
         mock_get_schema.return_value = {"seqNo": 999}
@@ -1140,24 +1347,27 @@ class TestIndySdkLedger(AsyncTestCase):
             cred_def_json,
         )
         issuer.credential_definition_in_wallet.return_value = True
-        ledger = IndySdkLedger(IndySdkLedgerPool("name", checked=True), mock_wallet)
-
+        ledger = IndySdkLedger(IndySdkLedgerPool("name", checked=True), self.profile)
         schema_id = "schema_issuer_did:name:1.0"
         tag = "default"
-
+        future = asyncio.Future()
+        future.set_result(async_mock.MagicMock(add_record=async_mock.CoroutineMock()))
         with async_mock.patch.object(
+            IndySdkWallet, "get_public_did"
+        ) as mock_wallet_get_public_did, async_mock.patch.object(
             ledger, "get_indy_storage", async_mock.MagicMock()
         ) as mock_get_storage:
-            mock_get_storage.return_value = async_mock.MagicMock(
-                add_record=async_mock.CoroutineMock()
+            mock_get_storage.return_value = future
+            mock_wallet_get_public_did.return_value = DIDInfo(
+                did=self.test_did,
+                verkey=self.test_verkey,
+                metadata=None,
+                method=DIDMethod.SOV,
+                key_type=KeyType.ED25519,
             )
 
             async with ledger:
-                mock_wallet.get_public_did = async_mock.CoroutineMock()
-                mock_wallet.get_public_did.return_value = DIDInfo(
-                    self.test_did, self.test_verkey, None
-                )
-                mock_did = mock_wallet.get_public_did.return_value
+                mock_did = mock_wallet_get_public_did.return_value
 
                 (
                     result_id,
@@ -1169,7 +1379,7 @@ class TestIndySdkLedger(AsyncTestCase):
                 assert result_id == cred_def_id
                 assert not novel
 
-                mock_wallet.get_public_did.assert_called_once_with()
+                mock_wallet_get_public_did.assert_called_once_with()
                 mock_get_schema.assert_called_once_with(schema_id)
 
                 mock_build_cred_def.assert_not_called()
@@ -1185,22 +1395,22 @@ class TestIndySdkLedger(AsyncTestCase):
         mock_get_schema,
     ):
         mock_wallet = async_mock.MagicMock()
-
+        self.session.context.injector.bind_provider(BaseWallet, mock_wallet)
         mock_get_schema.return_value = {}
 
         issuer = async_mock.MagicMock(IndyIssuer)
-        ledger = IndySdkLedger(IndySdkLedgerPool("name", checked=True), mock_wallet)
-
+        ledger = IndySdkLedger(IndySdkLedgerPool("name", checked=True), self.profile)
         schema_id = "schema_issuer_did:name:1.0"
         tag = "default"
-
-        async with ledger:
-            mock_wallet.get_public_did = async_mock.CoroutineMock()
-
-            with self.assertRaises(LedgerError):
-                await ledger.create_and_send_credential_definition(
-                    issuer, schema_id, None, tag
-                )
+        with async_mock.patch.object(
+            IndySdkWallet, "get_public_did"
+        ) as mock_wallet_get_public_did:
+            mock_wallet_get_public_did.return_value = async_mock.CoroutineMock()
+            async with ledger:
+                with self.assertRaises(LedgerError):
+                    await ledger.create_and_send_credential_definition(
+                        issuer, schema_id, None, tag
+                    )
 
     @async_mock.patch("aries_cloudagent.ledger.indy.IndySdkLedger.get_schema")
     @async_mock.patch("aries_cloudagent.ledger.indy.IndySdkLedgerPool.context_open")
@@ -1224,7 +1434,7 @@ class TestIndySdkLedger(AsyncTestCase):
         mock_get_schema,
     ):
         mock_wallet = async_mock.MagicMock()
-
+        self.session.context.injector.bind_provider(BaseWallet, mock_wallet)
         mock_find_all_records.return_value = []
 
         mock_get_schema.return_value = {"seqNo": 999}
@@ -1233,18 +1443,18 @@ class TestIndySdkLedger(AsyncTestCase):
         issuer.credential_definition_in_wallet.side_effect = IndyIssuerError(
             "common IO error"
         )
-        ledger = IndySdkLedger(IndySdkLedgerPool("name", checked=True), mock_wallet)
-
+        ledger = IndySdkLedger(IndySdkLedgerPool("name", checked=True), self.profile)
         schema_id = "schema_issuer_did:name:1.0"
         tag = "default"
-
-        async with ledger:
-            mock_wallet.get_public_did = async_mock.CoroutineMock()
-
-            with self.assertRaises(LedgerError):
-                await ledger.create_and_send_credential_definition(
-                    issuer, schema_id, None, tag
-                )
+        with async_mock.patch.object(
+            IndySdkWallet, "get_public_did"
+        ) as mock_wallet_get_public_did:
+            mock_wallet_get_public_did.return_value = async_mock.CoroutineMock()
+            async with ledger:
+                with self.assertRaises(LedgerError):
+                    await ledger.create_and_send_credential_definition(
+                        issuer, schema_id, None, tag
+                    )
 
     @async_mock.patch("aries_cloudagent.ledger.indy.IndySdkLedger.get_schema")
     @async_mock.patch("aries_cloudagent.ledger.indy.IndySdkLedgerPool.context_open")
@@ -1260,7 +1470,7 @@ class TestIndySdkLedger(AsyncTestCase):
         mock_get_schema,
     ):
         mock_wallet = async_mock.MagicMock()
-
+        self.session.context.injector.bind_provider(BaseWallet, mock_wallet)
         mock_get_schema.return_value = {"seqNo": 999}
         cred_def_id = f"{self.test_did}:3:CL:999:default"
         cred_def_value = {
@@ -1279,18 +1489,18 @@ class TestIndySdkLedger(AsyncTestCase):
         mock_fetch_cred_def.return_value = {}
 
         issuer = async_mock.MagicMock(IndyIssuer)
-        ledger = IndySdkLedger(IndySdkLedgerPool("name", checked=True), mock_wallet)
-
+        ledger = IndySdkLedger(IndySdkLedgerPool("name", checked=True), self.profile)
         schema_id = "schema_issuer_did:name:1.0"
         tag = "default"
-
-        async with ledger:
-            mock_wallet.get_public_did = async_mock.CoroutineMock()
-
-            with self.assertRaises(LedgerError):
-                await ledger.create_and_send_credential_definition(
-                    issuer, schema_id, None, tag
-                )
+        with async_mock.patch.object(
+            IndySdkWallet, "get_public_did"
+        ) as mock_wallet_get_public_did:
+            mock_wallet_get_public_did.return_value = async_mock.CoroutineMock()
+            async with ledger:
+                with self.assertRaises(LedgerError):
+                    await ledger.create_and_send_credential_definition(
+                        issuer, schema_id, None, tag
+                    )
 
     @async_mock.patch("aries_cloudagent.ledger.indy.IndySdkLedger.get_schema")
     @async_mock.patch("aries_cloudagent.ledger.indy.IndySdkLedgerPool.context_open")
@@ -1306,7 +1516,7 @@ class TestIndySdkLedger(AsyncTestCase):
         mock_get_schema,
     ):
         mock_wallet = async_mock.MagicMock()
-
+        self.session.context.injector.bind_provider(BaseWallet, mock_wallet)
         mock_get_schema.return_value = {"seqNo": 999}
         cred_def_id = f"{self.test_did}:3:CL:999:default"
         cred_def_value = {
@@ -1328,19 +1538,19 @@ class TestIndySdkLedger(AsyncTestCase):
         issuer.credential_definition_in_wallet = async_mock.CoroutineMock(
             side_effect=IndyIssuerError("dummy error")
         )
-        ledger = IndySdkLedger(IndySdkLedgerPool("name", checked=True), mock_wallet)
-
+        ledger = IndySdkLedger(IndySdkLedgerPool("name", checked=True), self.profile)
         schema_id = "schema_issuer_did:name:1.0"
         tag = "default"
-
-        async with ledger:
-            mock_wallet.get_public_did = async_mock.CoroutineMock()
-
-            with self.assertRaises(LedgerError) as context:
-                await ledger.create_and_send_credential_definition(
-                    issuer, schema_id, None, tag
-                )
-            assert "dummy error" in str(context.exception)
+        with async_mock.patch.object(
+            IndySdkWallet, "get_public_did"
+        ) as mock_wallet_get_public_did:
+            mock_wallet_get_public_did.return_value = async_mock.CoroutineMock()
+            async with ledger:
+                with self.assertRaises(LedgerError) as context:
+                    await ledger.create_and_send_credential_definition(
+                        issuer, schema_id, None, tag
+                    )
+                assert "dummy error" in str(context.exception)
 
     @async_mock.patch("aries_cloudagent.ledger.indy.IndySdkLedger.get_schema")
     @async_mock.patch("aries_cloudagent.ledger.indy.IndySdkLedgerPool.context_open")
@@ -1356,7 +1566,7 @@ class TestIndySdkLedger(AsyncTestCase):
         mock_get_schema,
     ):
         mock_wallet = async_mock.MagicMock()
-
+        self.session.context.injector.bind_provider(BaseWallet, mock_wallet)
         mock_get_schema.return_value = {"seqNo": 999}
         cred_def_id = f"{self.test_did}:3:CL:999:default"
         cred_def_value = {
@@ -1381,19 +1591,19 @@ class TestIndySdkLedger(AsyncTestCase):
         issuer.create_and_store_credential_definition = async_mock.CoroutineMock(
             side_effect=IndyIssuerError("dummy error")
         )
-        ledger = IndySdkLedger(IndySdkLedgerPool("name", checked=True), mock_wallet)
-
+        ledger = IndySdkLedger(IndySdkLedgerPool("name", checked=True), self.profile)
         schema_id = "schema_issuer_did:name:1.0"
         tag = "default"
-
-        async with ledger:
-            mock_wallet.get_public_did = async_mock.CoroutineMock()
-
-            with self.assertRaises(LedgerError) as context:
-                await ledger.create_and_send_credential_definition(
-                    issuer, schema_id, None, tag
-                )
-            assert "dummy error" in str(context.exception)
+        with async_mock.patch.object(
+            IndySdkWallet, "get_public_did"
+        ) as mock_wallet_get_public_did:
+            mock_wallet_get_public_did.return_value = async_mock.CoroutineMock()
+            async with ledger:
+                with self.assertRaises(LedgerError) as context:
+                    await ledger.create_and_send_credential_definition(
+                        issuer, schema_id, None, tag
+                    )
+                assert "dummy error" in str(context.exception)
 
     @async_mock.patch("aries_cloudagent.ledger.indy.IndySdkLedger.get_schema")
     @async_mock.patch("aries_cloudagent.ledger.indy.IndySdkLedgerPool.context_open")
@@ -1409,7 +1619,7 @@ class TestIndySdkLedger(AsyncTestCase):
         mock_get_schema,
     ):
         mock_wallet = async_mock.MagicMock()
-
+        self.session.context.injector.bind_provider(BaseWallet, mock_wallet)
         mock_get_schema.return_value = {"seqNo": 999}
         cred_def_id = f"{self.test_did}:3:CL:999:default"
         cred_def_value = {
@@ -1435,20 +1645,20 @@ class TestIndySdkLedger(AsyncTestCase):
             return_value=("cred-def-id", "cred-def-json")
         )
         ledger = IndySdkLedger(
-            IndySdkLedgerPool("name", checked=True, read_only=True), mock_wallet
+            IndySdkLedgerPool("name", checked=True, read_only=True), self.profile
         )
-
         schema_id = "schema_issuer_did:name:1.0"
         tag = "default"
-
-        async with ledger:
-            mock_wallet.get_public_did = async_mock.CoroutineMock()
-
-            with self.assertRaises(LedgerError) as context:
-                await ledger.create_and_send_credential_definition(
-                    issuer, schema_id, None, tag
-                )
-            assert "read only" in str(context.exception)
+        with async_mock.patch.object(
+            IndySdkWallet, "get_public_did"
+        ) as mock_wallet_get_public_did:
+            mock_wallet_get_public_did.return_value = async_mock.CoroutineMock()
+            async with ledger:
+                with self.assertRaises(LedgerError) as context:
+                    await ledger.create_and_send_credential_definition(
+                        issuer, schema_id, None, tag
+                    )
+                assert "read only" in str(context.exception)
 
     @async_mock.patch("aries_cloudagent.ledger.indy.IndySdkLedger.get_schema")
     @async_mock.patch("aries_cloudagent.ledger.indy.IndySdkLedgerPool.context_open")
@@ -1464,7 +1674,7 @@ class TestIndySdkLedger(AsyncTestCase):
         mock_get_schema,
     ):
         mock_wallet = async_mock.MagicMock()
-
+        self.session.context.injector.bind_provider(BaseWallet, mock_wallet)
         mock_get_schema.return_value = {"seqNo": 999}
         cred_def_id = f"{self.test_did}:3:CL:999:default"
         cred_def_value = {
@@ -1486,18 +1696,18 @@ class TestIndySdkLedger(AsyncTestCase):
         issuer.credential_definition_in_wallet = async_mock.CoroutineMock(
             return_value=False
         )
-        ledger = IndySdkLedger(IndySdkLedgerPool("name", checked=True), mock_wallet)
-
+        ledger = IndySdkLedger(IndySdkLedgerPool("name", checked=True), self.profile)
         schema_id = "schema_issuer_did:name:1.0"
         tag = "default"
-
-        async with ledger:
-            mock_wallet.get_public_did = async_mock.CoroutineMock()
-
-            with self.assertRaises(LedgerError):
-                await ledger.create_and_send_credential_definition(
-                    issuer, schema_id, None, tag
-                )
+        with async_mock.patch.object(
+            IndySdkWallet, "get_public_did"
+        ) as mock_wallet_get_public_did:
+            mock_wallet_get_public_did.return_value = async_mock.CoroutineMock()
+            async with ledger:
+                with self.assertRaises(LedgerError):
+                    await ledger.create_and_send_credential_definition(
+                        issuer, schema_id, None, tag
+                    )
 
     @async_mock.patch("aries_cloudagent.ledger.indy.IndySdkLedger.get_schema")
     @async_mock.patch("aries_cloudagent.ledger.indy.IndySdkLedgerPool.context_open")
@@ -1521,7 +1731,7 @@ class TestIndySdkLedger(AsyncTestCase):
         mock_get_schema,
     ):
         mock_wallet = async_mock.MagicMock()
-
+        self.session.context.injector.bind_provider(BaseWallet, mock_wallet)
         mock_find_all_records.return_value = []
 
         mock_get_schema.return_value = {"seqNo": 999}
@@ -1547,36 +1757,37 @@ class TestIndySdkLedger(AsyncTestCase):
             cred_def_id,
             cred_def_json,
         )
-        ledger = IndySdkLedger(IndySdkLedgerPool("name", checked=True), mock_wallet)
-
+        ledger = IndySdkLedger(IndySdkLedgerPool("name", checked=True), self.profile)
         schema_id = "schema_issuer_did:name:1.0"
         tag = "default"
+        with async_mock.patch.object(
+            IndySdkWallet, "get_public_did"
+        ) as mock_wallet_get_public_did:
+            async with ledger:
+                mock_wallet_get_public_did.return_value = None
+                with self.assertRaises(BadLedgerRequestError):
+                    await ledger.create_and_send_credential_definition(
+                        issuer, schema_id, None, tag
+                    )
 
-        async with ledger:
-            mock_wallet.get_public_did = async_mock.CoroutineMock()
-            mock_wallet.get_public_did.return_value = None
+                mock_wallet_get_public_did.return_value = DIDInfo(
+                    did=self.test_did,
+                    verkey=self.test_verkey,
+                    metadata=None,
+                    method=DIDMethod.SOV,
+                    key_type=KeyType.ED25519,
+                )
+                mock_did = mock_wallet_get_public_did.return_value
 
-            with self.assertRaises(BadLedgerRequestError):
-                await ledger.create_and_send_credential_definition(
+                (
+                    result_id,
+                    result_def,
+                    novel,
+                ) = await ledger.create_and_send_credential_definition(
                     issuer, schema_id, None, tag
                 )
-
-            mock_wallet.get_public_did = async_mock.CoroutineMock()
-            mock_wallet.get_public_did.return_value = DIDInfo(
-                self.test_did, self.test_verkey, None
-            )
-            mock_did = mock_wallet.get_public_did.return_value
-
-            (
-                result_id,
-                result_def,
-                novel,
-            ) = await ledger.create_and_send_credential_definition(
-                issuer, schema_id, None, tag
-            )
             assert result_id == cred_def_id
 
-            mock_wallet.get_public_did.assert_called_once_with()
             mock_get_schema.assert_called_once_with(schema_id)
 
             mock_build_cred_def.assert_not_called()
@@ -1603,7 +1814,7 @@ class TestIndySdkLedger(AsyncTestCase):
         mock_get_schema,
     ):
         mock_wallet = async_mock.MagicMock()
-
+        self.session.context.injector.bind_provider(BaseWallet, mock_wallet)
         mock_find_all_records.return_value = []
 
         mock_get_schema.return_value = {"seqNo": 999}
@@ -1627,21 +1838,24 @@ class TestIndySdkLedger(AsyncTestCase):
         issuer.create_and_store_credential_definition.side_effect = IndyIssuerError(
             "invalid structure"
         )
-        ledger = IndySdkLedger(IndySdkLedgerPool("name", checked=True), mock_wallet)
-
+        ledger = IndySdkLedger(IndySdkLedgerPool("name", checked=True), self.profile)
         schema_id = "schema_issuer_did:name:1.0"
         tag = "default"
-
-        async with ledger:
-            mock_wallet.get_public_did = async_mock.CoroutineMock()
-            mock_wallet.get_public_did.return_value = DIDInfo(
-                self.test_did, self.test_verkey, None
+        with async_mock.patch.object(
+            IndySdkWallet, "get_public_did"
+        ) as mock_wallet_get_public_did:
+            mock_wallet_get_public_did.return_value = DIDInfo(
+                did=self.test_did,
+                verkey=self.test_verkey,
+                metadata=None,
+                method=DIDMethod.SOV,
+                key_type=KeyType.ED25519,
             )
-
-            with self.assertRaises(LedgerError):
-                await ledger.create_and_send_credential_definition(
-                    issuer, schema_id, None, tag
-                )
+            async with ledger:
+                with self.assertRaises(LedgerError):
+                    await ledger.create_and_send_credential_definition(
+                        issuer, schema_id, None, tag
+                    )
 
     @async_mock.patch("aries_cloudagent.ledger.indy.IndySdkLedgerPool.context_open")
     @async_mock.patch("aries_cloudagent.ledger.indy.IndySdkLedgerPool.context_close")
@@ -1657,38 +1871,42 @@ class TestIndySdkLedger(AsyncTestCase):
         mock_open,
     ):
         mock_wallet = async_mock.MagicMock()
-        mock_wallet.get_public_did = async_mock.CoroutineMock()
-        mock_did = mock_wallet.get_public_did.return_value
-
+        self.session.context.injector.bind_provider(BaseWallet, mock_wallet)
         mock_parse_get_cred_def_resp.return_value = (
             None,
             json.dumps({"result": {"seqNo": 1}}),
         )
-
-        ledger = IndySdkLedger(
-            IndySdkLedgerPool("name", checked=True, cache=InMemoryCache()), mock_wallet
-        )
-
-        async with ledger:
-            response = await ledger.get_credential_definition("cred_def_id")
-
-            mock_wallet.get_public_did.assert_called_once_with()
-            mock_build_get_cred_def_req.assert_called_once_with(
-                mock_did.did, "cred_def_id"
-            )
-            mock_submit.assert_called_once_with(
-                mock_build_get_cred_def_req.return_value, sign_did=mock_did
-            )
-            mock_parse_get_cred_def_resp.assert_called_once_with(
-                mock_submit.return_value
+        with async_mock.patch.object(
+            IndySdkWallet, "get_public_did"
+        ) as mock_wallet_get_public_did:
+            mock_wallet_get_public_did.return_value = async_mock.CoroutineMock()
+            mock_did = mock_wallet_get_public_did.return_value
+            ledger = IndySdkLedger(
+                IndySdkLedgerPool("name", checked=True, cache=InMemoryCache()),
+                self.profile,
             )
 
-            assert response == json.loads(mock_parse_get_cred_def_resp.return_value[1])
-
-            response == await ledger.get_credential_definition(  # cover get-from-cache
-                "cred_def_id"
-            )
-            assert response == json.loads(mock_parse_get_cred_def_resp.return_value[1])
+            async with ledger:
+                response = await ledger.get_credential_definition("cred_def_id")
+                mock_wallet_get_public_did.assert_called_once_with()
+                mock_build_get_cred_def_req.assert_called_once_with(
+                    mock_did.did, "cred_def_id"
+                )
+                mock_submit.assert_called_once_with(
+                    mock_build_get_cred_def_req.return_value, sign_did=mock_did
+                )
+                mock_parse_get_cred_def_resp.assert_called_once_with(
+                    mock_submit.return_value
+                )
+                assert response == json.loads(
+                    mock_parse_get_cred_def_resp.return_value[1]
+                )
+                response == await ledger.get_credential_definition(  # cover get-from-cache
+                    "cred_def_id"
+                )
+                assert response == json.loads(
+                    mock_parse_get_cred_def_resp.return_value[1]
+                )
 
     @async_mock.patch("aries_cloudagent.ledger.indy.IndySdkLedgerPool.context_open")
     @async_mock.patch("aries_cloudagent.ledger.indy.IndySdkLedgerPool.context_close")
@@ -1704,30 +1922,33 @@ class TestIndySdkLedger(AsyncTestCase):
         mock_open,
     ):
         mock_wallet = async_mock.MagicMock()
-        mock_wallet.get_public_did = async_mock.CoroutineMock()
-        mock_did = mock_wallet.get_public_did.return_value
+        self.session.context.injector.bind_provider(BaseWallet, mock_wallet)
 
         mock_parse_get_cred_def_resp.side_effect = IndyError(
             error_code=ErrorCode.LedgerNotFound, error_details={"message": "not today"}
         )
-
-        ledger = IndySdkLedger(IndySdkLedgerPool("name", checked=True), mock_wallet)
-
-        async with ledger:
-            response = await ledger.get_credential_definition("cred_def_id")
-
-            mock_wallet.get_public_did.assert_called_once_with()
-            mock_build_get_cred_def_req.assert_called_once_with(
-                mock_did.did, "cred_def_id"
+        with async_mock.patch.object(
+            IndySdkWallet, "get_public_did"
+        ) as mock_wallet_get_public_did:
+            mock_wallet_get_public_did.return_value = self.test_did_info
+            ledger = IndySdkLedger(
+                IndySdkLedgerPool("name", checked=True), self.profile
             )
-            mock_submit.assert_called_once_with(
-                mock_build_get_cred_def_req.return_value, sign_did=mock_did
-            )
-            mock_parse_get_cred_def_resp.assert_called_once_with(
-                mock_submit.return_value
-            )
+            async with ledger:
+                response = await ledger.get_credential_definition("cred_def_id")
+                mock_did = mock_wallet_get_public_did.return_value
+                mock_wallet_get_public_did.assert_called_once_with()
+                mock_build_get_cred_def_req.assert_called_once_with(
+                    mock_did.did, "cred_def_id"
+                )
+                mock_submit.assert_called_once_with(
+                    mock_build_get_cred_def_req.return_value, sign_did=mock_did
+                )
+                mock_parse_get_cred_def_resp.assert_called_once_with(
+                    mock_submit.return_value
+                )
 
-            assert response is None
+                assert response is None
 
     @async_mock.patch("aries_cloudagent.ledger.indy.IndySdkLedgerPool.context_open")
     @async_mock.patch("aries_cloudagent.ledger.indy.IndySdkLedgerPool.context_close")
@@ -1743,20 +1964,22 @@ class TestIndySdkLedger(AsyncTestCase):
         mock_open,
     ):
         mock_wallet = async_mock.MagicMock()
-        mock_wallet.get_public_did = async_mock.CoroutineMock()
-        mock_did = mock_wallet.get_public_did.return_value
 
         mock_parse_get_cred_def_resp.side_effect = IndyError(
             error_code=ErrorCode.CommonInvalidParam1,
             error_details={"message": "not today"},
         )
 
-        ledger = IndySdkLedger(IndySdkLedgerPool("name", checked=True), mock_wallet)
-
-        async with ledger:
-            with self.assertRaises(LedgerError) as context:
-                await ledger.fetch_credential_definition("cred_def_id")
-            assert "not today" in str(context.exception)
+        self.session.context.injector.bind_provider(BaseWallet, mock_wallet)
+        ledger = IndySdkLedger(IndySdkLedgerPool("name", checked=True), self.profile)
+        with async_mock.patch.object(
+            IndySdkWallet, "get_public_did"
+        ) as mock_wallet_get_public_did:
+            mock_wallet_get_public_did.return_value = self.test_did_info
+            async with ledger:
+                with self.assertRaises(LedgerError) as context:
+                    await ledger.fetch_credential_definition("cred_def_id")
+                assert "not today" in str(context.exception)
 
     @async_mock.patch("aries_cloudagent.ledger.indy.IndySdkLedgerPool.context_open")
     @async_mock.patch("aries_cloudagent.ledger.indy.IndySdkLedgerPool.context_close")
@@ -1766,26 +1989,27 @@ class TestIndySdkLedger(AsyncTestCase):
         self, mock_submit, mock_build_get_nym_req, mock_close, mock_open
     ):
         mock_wallet = async_mock.MagicMock()
-
+        self.session.context.injector.bind_provider(BaseWallet, mock_wallet)
         mock_submit.return_value = json.dumps(
             {"result": {"data": json.dumps({"verkey": self.test_verkey})}}
         )
-        ledger = IndySdkLedger(IndySdkLedgerPool("name", checked=True), mock_wallet)
+        ledger = IndySdkLedger(IndySdkLedgerPool("name", checked=True), self.profile)
+        with async_mock.patch.object(
+            IndySdkWallet, "get_public_did"
+        ) as mock_wallet_get_public_did:
+            mock_wallet_get_public_did.return_value = self.test_did_info
+            async with ledger:
+                response = await ledger.get_key_for_did(self.test_did)
 
-        async with ledger:
-            mock_wallet.get_public_did = async_mock.CoroutineMock(
-                return_value=self.test_did_info
-            )
-            response = await ledger.get_key_for_did(self.test_did)
-
-            assert mock_build_get_nym_req.called_once_with(
-                self.test_did, ledger.did_to_nym(self.test_did)
-            )
-            assert mock_submit.called_once_with(
-                mock_build_get_nym_req.return_value,
-                sign_did=mock_wallet.get_public_did.return_value,
-            )
-            assert response == self.test_verkey
+                assert mock_build_get_nym_req.called_once_with(
+                    self.test_did,
+                    ledger.did_to_nym(self.test_did),
+                )
+                assert mock_submit.called_once_with(
+                    mock_build_get_nym_req.return_value,
+                    sign_did=mock_wallet_get_public_did.return_value,
+                )
+                assert response == self.test_verkey
 
     @async_mock.patch("aries_cloudagent.ledger.indy.IndySdkLedgerPool.context_open")
     @async_mock.patch("aries_cloudagent.ledger.indy.IndySdkLedgerPool.context_close")
@@ -1795,27 +2019,31 @@ class TestIndySdkLedger(AsyncTestCase):
         self, mock_submit, mock_build_get_attrib_req, mock_close, mock_open
     ):
         mock_wallet = async_mock.MagicMock()
-
+        self.session.context.injector.bind_provider(BaseWallet, mock_wallet)
         endpoint = "http://aries.ca"
         mock_submit.return_value = json.dumps(
             {"result": {"data": json.dumps({"endpoint": {"endpoint": endpoint}})}}
         )
-        ledger = IndySdkLedger(IndySdkLedgerPool("name", checked=True), mock_wallet)
+        ledger = IndySdkLedger(IndySdkLedgerPool("name", checked=True), self.profile)
+        with async_mock.patch.object(
+            IndySdkWallet, "get_public_did"
+        ) as mock_wallet_get_public_did:
+            mock_wallet_get_public_did.return_value = self.test_did_info
+            async with ledger:
+                response = await ledger.get_endpoint_for_did(self.test_did)
 
-        async with ledger:
-            mock_wallet.get_public_did = async_mock.CoroutineMock(
-                return_value=self.test_did_info
-            )
-            response = await ledger.get_endpoint_for_did(self.test_did)
-
-            assert mock_build_get_attrib_req.called_once_with(
-                self.test_did, ledger.did_to_nym(self.test_did), "endpoint", None, None
-            )
-            assert mock_submit.called_once_with(
-                mock_build_get_attrib_req.return_value,
-                sign_did=mock_wallet.get_public_did.return_value,
-            )
-            assert response == endpoint
+                assert mock_build_get_attrib_req.called_once_with(
+                    self.test_did,
+                    ledger.did_to_nym(self.test_did),
+                    "endpoint",
+                    None,
+                    None,
+                )
+                assert mock_submit.called_once_with(
+                    mock_build_get_attrib_req.return_value,
+                    sign_did=mock_wallet_get_public_did.return_value,
+                )
+                assert response == endpoint
 
     @async_mock.patch("aries_cloudagent.ledger.indy.IndySdkLedgerPool.context_open")
     @async_mock.patch("aries_cloudagent.ledger.indy.IndySdkLedgerPool.context_close")
@@ -1825,7 +2053,7 @@ class TestIndySdkLedger(AsyncTestCase):
         self, mock_submit, mock_build_get_attrib_req, mock_close, mock_open
     ):
         mock_wallet = async_mock.MagicMock()
-
+        self.session.context.injector.bind_provider(BaseWallet, mock_wallet)
         endpoint = "http://company.com/masterdata"
         endpoint_type = EndpointType.PROFILE
         mock_submit.return_value = json.dumps(
@@ -1837,22 +2065,29 @@ class TestIndySdkLedger(AsyncTestCase):
                 }
             }
         )
-        ledger = IndySdkLedger(IndySdkLedgerPool("name", checked=True), mock_wallet)
+        ledger = IndySdkLedger(IndySdkLedgerPool("name", checked=True), self.profile)
+        with async_mock.patch.object(
+            IndySdkWallet, "get_public_did"
+        ) as mock_wallet_get_public_did:
+            mock_wallet_get_public_did.return_value = self.test_did_info
+            async with ledger:
+                response = await ledger.get_endpoint_for_did(
+                    self.test_did,
+                    endpoint_type,
+                )
 
-        async with ledger:
-            mock_wallet.get_public_did = async_mock.CoroutineMock(
-                return_value=self.test_did_info
-            )
-            response = await ledger.get_endpoint_for_did(self.test_did, endpoint_type)
-
-            assert mock_build_get_attrib_req.called_once_with(
-                self.test_did, ledger.did_to_nym(self.test_did), "endpoint", None, None
-            )
-            assert mock_submit.called_once_with(
-                mock_build_get_attrib_req.return_value,
-                sign_did=mock_wallet.get_public_did.return_value,
-            )
-            assert response == endpoint
+                assert mock_build_get_attrib_req.called_once_with(
+                    self.test_did,
+                    ledger.did_to_nym(self.test_did),
+                    "endpoint",
+                    None,
+                    None,
+                )
+                assert mock_submit.called_once_with(
+                    mock_build_get_attrib_req.return_value,
+                    sign_did=mock_wallet_get_public_did.return_value,
+                )
+                assert response == endpoint
 
     @async_mock.patch("aries_cloudagent.ledger.indy.IndySdkLedgerPool.context_open")
     @async_mock.patch("aries_cloudagent.ledger.indy.IndySdkLedgerPool.context_close")
@@ -1862,29 +2097,33 @@ class TestIndySdkLedger(AsyncTestCase):
         self, mock_submit, mock_build_get_attrib_req, mock_close, mock_open
     ):
         mock_wallet = async_mock.MagicMock()
-
+        self.session.context.injector.bind_provider(BaseWallet, mock_wallet)
         profile_endpoint = "http://company.com/masterdata"
         default_endpoint = "http://agent.company.com"
         data_json = json.dumps(
             {"endpoint": {"endpoint": default_endpoint, "profile": profile_endpoint}}
         )
         mock_submit.return_value = json.dumps({"result": {"data": data_json}})
-        ledger = IndySdkLedger(IndySdkLedgerPool("name", checked=True), mock_wallet)
+        ledger = IndySdkLedger(IndySdkLedgerPool("name", checked=True), self.profile)
+        with async_mock.patch.object(
+            IndySdkWallet, "get_public_did"
+        ) as mock_wallet_get_public_did:
+            mock_wallet_get_public_did.return_value = self.test_did_info
+            async with ledger:
+                response = await ledger.get_all_endpoints_for_did(self.test_did)
 
-        async with ledger:
-            mock_wallet.get_public_did = async_mock.CoroutineMock(
-                return_value=self.test_did_info
-            )
-            response = await ledger.get_all_endpoints_for_did(self.test_did)
-
-            assert mock_build_get_attrib_req.called_once_with(
-                self.test_did, ledger.did_to_nym(self.test_did), "endpoint", None, None
-            )
-            assert mock_submit.called_once_with(
-                mock_build_get_attrib_req.return_value,
-                sign_did=mock_wallet.get_public_did.return_value,
-            )
-            assert response == json.loads(data_json).get("endpoint")
+                assert mock_build_get_attrib_req.called_once_with(
+                    self.test_did,
+                    ledger.did_to_nym(self.test_did),
+                    "endpoint",
+                    None,
+                    None,
+                )
+                assert mock_submit.called_once_with(
+                    mock_build_get_attrib_req.return_value,
+                    sign_did=mock_wallet_get_public_did.return_value,
+                )
+                assert response == json.loads(data_json).get("endpoint")
 
     @async_mock.patch("aries_cloudagent.ledger.indy.IndySdkLedgerPool.context_open")
     @async_mock.patch("aries_cloudagent.ledger.indy.IndySdkLedgerPool.context_close")
@@ -1894,26 +2133,30 @@ class TestIndySdkLedger(AsyncTestCase):
         self, mock_submit, mock_build_get_attrib_req, mock_close, mock_open
     ):
         mock_wallet = async_mock.MagicMock()
-
+        self.session.context.injector.bind_provider(BaseWallet, mock_wallet)
         profile_endpoint = "http://company.com/masterdata"
         default_endpoint = "http://agent.company.com"
         mock_submit.return_value = json.dumps({"result": {"data": None}})
-        ledger = IndySdkLedger(IndySdkLedgerPool("name", checked=True), mock_wallet)
+        ledger = IndySdkLedger(IndySdkLedgerPool("name", checked=True), self.profile)
+        with async_mock.patch.object(
+            IndySdkWallet, "get_public_did"
+        ) as mock_wallet_get_public_did:
+            mock_wallet_get_public_did.return_value = self.test_did_info
+            async with ledger:
+                response = await ledger.get_all_endpoints_for_did(self.test_did)
 
-        async with ledger:
-            mock_wallet.get_public_did = async_mock.CoroutineMock(
-                return_value=self.test_did_info
-            )
-            response = await ledger.get_all_endpoints_for_did(self.test_did)
-
-            assert mock_build_get_attrib_req.called_once_with(
-                self.test_did, ledger.did_to_nym(self.test_did), "endpoint", None, None
-            )
-            assert mock_submit.called_once_with(
-                mock_build_get_attrib_req.return_value,
-                sign_did=mock_wallet.get_public_did.return_value,
-            )
-            assert response is None
+                assert mock_build_get_attrib_req.called_once_with(
+                    self.test_did,
+                    ledger.did_to_nym(self.test_did),
+                    "endpoint",
+                    None,
+                    None,
+                )
+                assert mock_submit.called_once_with(
+                    mock_build_get_attrib_req.return_value,
+                    sign_did=mock_wallet_get_public_did.return_value,
+                )
+                assert response is None
 
     @async_mock.patch("aries_cloudagent.ledger.indy.IndySdkLedgerPool.context_open")
     @async_mock.patch("aries_cloudagent.ledger.indy.IndySdkLedgerPool.context_close")
@@ -1923,26 +2166,30 @@ class TestIndySdkLedger(AsyncTestCase):
         self, mock_submit, mock_build_get_attrib_req, mock_close, mock_open
     ):
         mock_wallet = async_mock.MagicMock()
-
+        self.session.context.injector.bind_provider(BaseWallet, mock_wallet)
         mock_submit.return_value = json.dumps(
             {"result": {"data": json.dumps({"endpoint": None})}}
         )
-        ledger = IndySdkLedger(IndySdkLedgerPool("name", checked=True), mock_wallet)
+        ledger = IndySdkLedger(IndySdkLedgerPool("name", checked=True), self.profile)
+        with async_mock.patch.object(
+            IndySdkWallet, "get_public_did"
+        ) as mock_wallet_get_public_did:
+            mock_wallet_get_public_did.return_value = self.test_did_info
+            async with ledger:
+                response = await ledger.get_endpoint_for_did(self.test_did)
 
-        async with ledger:
-            mock_wallet.get_public_did = async_mock.CoroutineMock(
-                return_value=self.test_did_info
-            )
-            response = await ledger.get_endpoint_for_did(self.test_did)
-
-            assert mock_build_get_attrib_req.called_once_with(
-                self.test_did, ledger.did_to_nym(self.test_did), "endpoint", None, None
-            )
-            assert mock_submit.called_once_with(
-                mock_build_get_attrib_req.return_value,
-                sign_did=mock_wallet.get_public_did.return_value,
-            )
-            assert response is None
+                assert mock_build_get_attrib_req.called_once_with(
+                    self.test_did,
+                    ledger.did_to_nym(self.test_did),
+                    "endpoint",
+                    None,
+                    None,
+                )
+                assert mock_submit.called_once_with(
+                    mock_build_get_attrib_req.return_value,
+                    sign_did=mock_wallet_get_public_did.return_value,
+                )
+                assert response is None
 
     @async_mock.patch("aries_cloudagent.ledger.indy.IndySdkLedgerPool.context_open")
     @async_mock.patch("aries_cloudagent.ledger.indy.IndySdkLedgerPool.context_close")
@@ -1952,24 +2199,28 @@ class TestIndySdkLedger(AsyncTestCase):
         self, mock_submit, mock_build_get_attrib_req, mock_close, mock_open
     ):
         mock_wallet = async_mock.MagicMock()
-
+        self.session.context.injector.bind_provider(BaseWallet, mock_wallet)
         mock_submit.return_value = json.dumps({"result": {"data": None}})
-        ledger = IndySdkLedger(IndySdkLedgerPool("name", checked=True), mock_wallet)
+        ledger = IndySdkLedger(IndySdkLedgerPool("name", checked=True), self.profile)
+        with async_mock.patch.object(
+            IndySdkWallet, "get_public_did"
+        ) as mock_wallet_get_public_did:
+            mock_wallet_get_public_did.return_value = self.test_did_info
+            async with ledger:
+                response = await ledger.get_endpoint_for_did(self.test_did)
 
-        async with ledger:
-            mock_wallet.get_public_did = async_mock.CoroutineMock(
-                return_value=self.test_did_info
-            )
-            response = await ledger.get_endpoint_for_did(self.test_did)
-
-            assert mock_build_get_attrib_req.called_once_with(
-                self.test_did, ledger.did_to_nym(self.test_did), "endpoint", None, None
-            )
-            assert mock_submit.called_once_with(
-                mock_build_get_attrib_req.return_value,
-                sign_did=mock_wallet.get_public_did.return_value,
-            )
-            assert response is None
+                assert mock_build_get_attrib_req.called_once_with(
+                    self.test_did,
+                    ledger.did_to_nym(self.test_did),
+                    "endpoint",
+                    None,
+                    None,
+                )
+                assert mock_submit.called_once_with(
+                    mock_build_get_attrib_req.return_value,
+                    sign_did=mock_wallet_get_public_did.return_value,
+                )
+                assert response is None
 
     @async_mock.patch("aries_cloudagent.ledger.indy.IndySdkLedgerPool.context_open")
     @async_mock.patch("aries_cloudagent.ledger.indy.IndySdkLedgerPool.context_close")
@@ -1985,7 +2236,7 @@ class TestIndySdkLedger(AsyncTestCase):
         mock_open,
     ):
         mock_wallet = async_mock.MagicMock()
-
+        self.session.context.injector.bind_provider(BaseWallet, mock_wallet)
         endpoint = ["http://old.aries.ca", "http://new.aries.ca"]
         mock_submit.side_effect = [
             json.dumps(
@@ -1997,27 +2248,33 @@ class TestIndySdkLedger(AsyncTestCase):
             )
             for i in range(len(endpoint))
         ]
-        ledger = IndySdkLedger(IndySdkLedgerPool("name", checked=True), mock_wallet)
+        ledger = IndySdkLedger(IndySdkLedgerPool("name", checked=True), self.profile)
+        with async_mock.patch.object(
+            IndySdkWallet, "get_public_did"
+        ) as mock_wallet_get_public_did:
+            mock_wallet_get_public_did.return_value = self.test_did_info
+            async with ledger:
+                response = await ledger.update_endpoint_for_did(
+                    self.test_did, endpoint[1]
+                )
 
-        async with ledger:
-            mock_wallet.get_public_did = async_mock.CoroutineMock(
-                return_value=self.test_did_info
-            )
-            response = await ledger.update_endpoint_for_did(self.test_did, endpoint[1])
-
-            assert mock_build_get_attrib_req.called_once_with(
-                self.test_did, ledger.did_to_nym(self.test_did), "endpoint", None, None
-            )
-            mock_submit.assert_has_calls(
-                [
-                    async_mock.call(
-                        mock_build_get_attrib_req.return_value,
-                        sign_did=mock_wallet.get_public_did.return_value,
-                    ),
-                    async_mock.call(mock_build_attrib_req.return_value, True, True),
-                ]
-            )
-            assert response
+                assert mock_build_get_attrib_req.called_once_with(
+                    self.test_did,
+                    ledger.did_to_nym(self.test_did),
+                    "endpoint",
+                    None,
+                    None,
+                )
+                mock_submit.assert_has_calls(
+                    [
+                        async_mock.call(
+                            mock_build_get_attrib_req.return_value,
+                            sign_did=mock_wallet_get_public_did.return_value,
+                        ),
+                        async_mock.call(mock_build_attrib_req.return_value, True, True),
+                    ]
+                )
+                assert response
 
     @async_mock.patch("aries_cloudagent.ledger.indy.IndySdkLedgerPool.context_open")
     @async_mock.patch("aries_cloudagent.ledger.indy.IndySdkLedgerPool.context_close")
@@ -2033,33 +2290,37 @@ class TestIndySdkLedger(AsyncTestCase):
         mock_open,
     ):
         mock_wallet = async_mock.MagicMock()
-
+        self.session.context.injector.bind_provider(BaseWallet, mock_wallet)
         endpoint = "http://new.aries.ca"
-        ledger = IndySdkLedger(IndySdkLedgerPool("name", checked=True), mock_wallet)
+        ledger = IndySdkLedger(IndySdkLedgerPool("name", checked=True), self.profile)
+        with async_mock.patch.object(
+            IndySdkWallet, "get_public_did"
+        ) as mock_wallet_get_public_did:
+            mock_wallet_get_public_did.return_value = self.test_did_info
+            async with ledger:
+                with async_mock.patch.object(
+                    ledger, "get_all_endpoints_for_did", async_mock.CoroutineMock()
+                ) as mock_get_all:
+                    mock_get_all.return_value = None
+                    response = await ledger.update_endpoint_for_did(
+                        self.test_did, endpoint
+                    )
 
-        async with ledger:
-            with async_mock.patch.object(
-                ledger, "get_all_endpoints_for_did", async_mock.CoroutineMock()
-            ) as mock_get_all:
-                mock_get_all.return_value = None
-                mock_wallet.get_public_did = async_mock.CoroutineMock(
-                    return_value=self.test_did_info
-                )
-                response = await ledger.update_endpoint_for_did(self.test_did, endpoint)
-
-                assert mock_build_get_attrib_req.called_once_with(
-                    self.test_did,
-                    ledger.did_to_nym(self.test_did),
-                    "endpoint",
-                    None,
-                    None,
-                )
-                mock_submit.assert_has_calls(
-                    [
-                        async_mock.call(mock_build_attrib_req.return_value, True, True),
-                    ]
-                )
-                assert response
+                    assert mock_build_get_attrib_req.called_once_with(
+                        self.test_did,
+                        ledger.did_to_nym(self.test_did),
+                        "endpoint",
+                        None,
+                        None,
+                    )
+                    mock_submit.assert_has_calls(
+                        [
+                            async_mock.call(
+                                mock_build_attrib_req.return_value, True, True
+                            ),
+                        ]
+                    )
+                    assert response
 
     @async_mock.patch("aries_cloudagent.ledger.indy.IndySdkLedgerPool.context_open")
     @async_mock.patch("aries_cloudagent.ledger.indy.IndySdkLedgerPool.context_close")
@@ -2075,7 +2336,7 @@ class TestIndySdkLedger(AsyncTestCase):
         mock_open,
     ):
         mock_wallet = async_mock.MagicMock()
-
+        self.session.context.injector.bind_provider(BaseWallet, mock_wallet)
         endpoint = ["http://company.com/oldProfile", "http://company.com/newProfile"]
         endpoint_type = EndpointType.PROFILE
         mock_submit.side_effect = [
@@ -2090,29 +2351,33 @@ class TestIndySdkLedger(AsyncTestCase):
             )
             for i in range(len(endpoint))
         ]
-        ledger = IndySdkLedger(IndySdkLedgerPool("name", checked=True), mock_wallet)
+        ledger = IndySdkLedger(IndySdkLedgerPool("name", checked=True), self.profile)
+        with async_mock.patch.object(
+            IndySdkWallet, "get_public_did"
+        ) as mock_wallet_get_public_did:
+            mock_wallet_get_public_did.return_value = self.test_did_info
+            async with ledger:
+                response = await ledger.update_endpoint_for_did(
+                    self.test_did, endpoint[1], endpoint_type
+                )
 
-        async with ledger:
-            mock_wallet.get_public_did = async_mock.CoroutineMock(
-                return_value=self.test_did_info
-            )
-            response = await ledger.update_endpoint_for_did(
-                self.test_did, endpoint[1], endpoint_type
-            )
-
-            assert mock_build_get_attrib_req.called_once_with(
-                self.test_did, ledger.did_to_nym(self.test_did), "endpoint", None, None
-            )
-            mock_submit.assert_has_calls(
-                [
-                    async_mock.call(
-                        mock_build_get_attrib_req.return_value,
-                        sign_did=mock_wallet.get_public_did.return_value,
-                    ),
-                    async_mock.call(mock_build_attrib_req.return_value, True, True),
-                ]
-            )
-            assert response
+                assert mock_build_get_attrib_req.called_once_with(
+                    self.test_did,
+                    ledger.did_to_nym(self.test_did),
+                    "endpoint",
+                    None,
+                    None,
+                )
+                mock_submit.assert_has_calls(
+                    [
+                        async_mock.call(
+                            mock_build_get_attrib_req.return_value,
+                            sign_did=mock_wallet_get_public_did.return_value,
+                        ),
+                        async_mock.call(mock_build_attrib_req.return_value, True, True),
+                    ]
+                )
+                assert response
 
     @async_mock.patch("aries_cloudagent.ledger.indy.IndySdkLedgerPool.context_open")
     @async_mock.patch("aries_cloudagent.ledger.indy.IndySdkLedgerPool.context_close")
@@ -2122,27 +2387,31 @@ class TestIndySdkLedger(AsyncTestCase):
         self, mock_submit, mock_build_get_attrib_req, mock_close, mock_open
     ):
         mock_wallet = async_mock.MagicMock()
-
+        self.session.context.injector.bind_provider(BaseWallet, mock_wallet)
         endpoint = "http://aries.ca"
         mock_submit.return_value = json.dumps(
             {"result": {"data": json.dumps({"endpoint": {"endpoint": endpoint}})}}
         )
-        ledger = IndySdkLedger(IndySdkLedgerPool("name", checked=True), mock_wallet)
+        ledger = IndySdkLedger(IndySdkLedgerPool("name", checked=True), self.profile)
+        with async_mock.patch.object(
+            IndySdkWallet, "get_public_did"
+        ) as mock_wallet_get_public_did:
+            mock_wallet_get_public_did.return_value = self.test_did_info
+            async with ledger:
+                response = await ledger.update_endpoint_for_did(self.test_did, endpoint)
 
-        async with ledger:
-            mock_wallet.get_public_did = async_mock.CoroutineMock(
-                return_value=self.test_did_info
-            )
-            response = await ledger.update_endpoint_for_did(self.test_did, endpoint)
-
-            assert mock_build_get_attrib_req.called_once_with(
-                self.test_did, ledger.did_to_nym(self.test_did), "endpoint", None, None
-            )
-            assert mock_submit.called_once_with(
-                mock_build_get_attrib_req.return_value,
-                sign_did=mock_wallet.get_public_did.return_value,
-            )
-            assert not response
+                assert mock_build_get_attrib_req.called_once_with(
+                    self.test_did,
+                    ledger.did_to_nym(self.test_did),
+                    "endpoint",
+                    None,
+                    None,
+                )
+                assert mock_submit.called_once_with(
+                    mock_build_get_attrib_req.return_value,
+                    sign_did=mock_wallet_get_public_did.return_value,
+                )
+                assert not response
 
     @async_mock.patch("aries_cloudagent.ledger.indy.IndySdkLedgerPool.context_open")
     @async_mock.patch("aries_cloudagent.ledger.indy.IndySdkLedgerPool.context_close")
@@ -2152,22 +2421,24 @@ class TestIndySdkLedger(AsyncTestCase):
         self, mock_submit, mock_build_get_attrib_req, mock_close, mock_open
     ):
         mock_wallet = async_mock.MagicMock()
-
+        self.session.context.injector.bind_provider(BaseWallet, mock_wallet)
         endpoint = "http://aries.ca"
         mock_submit.return_value = json.dumps(
             {"result": {"data": json.dumps({"endpoint": {"endpoint": endpoint}})}}
         )
         ledger = IndySdkLedger(
-            IndySdkLedgerPool("name", checked=True, read_only=True), mock_wallet
+            IndySdkLedgerPool("name", checked=True, read_only=True), self.profile
         )
-
-        async with ledger:
-            mock_wallet.get_public_did = async_mock.CoroutineMock(
-                return_value=self.test_did_info
-            )
-            with self.assertRaises(LedgerError) as context:
-                await ledger.update_endpoint_for_did(self.test_did, "distinct endpoint")
-            assert "read only" in str(context.exception)
+        with async_mock.patch.object(
+            IndySdkWallet, "get_public_did"
+        ) as mock_wallet_get_public_did:
+            mock_wallet_get_public_did.return_value = self.test_did_info
+            async with ledger:
+                with self.assertRaises(LedgerError) as context:
+                    await ledger.update_endpoint_for_did(
+                        self.test_did, "distinct endpoint"
+                    )
+                assert "read only" in str(context.exception)
 
     @async_mock.patch("aries_cloudagent.ledger.indy.IndySdkLedgerPool.context_open")
     @async_mock.patch("aries_cloudagent.ledger.indy.IndySdkLedgerPool.context_close")
@@ -2176,55 +2447,72 @@ class TestIndySdkLedger(AsyncTestCase):
     async def test_register_nym(
         self, mock_submit, mock_build_nym_req, mock_close, mock_open
     ):
-        mock_wallet = async_mock.MagicMock(
-            type="indy",
-            get_local_did=async_mock.CoroutineMock(
-                return_value=async_mock.MagicMock(metadata={"...": "..."})
-            ),
-            replace_local_did_metadata=async_mock.CoroutineMock(),
-        )
-        ledger = IndySdkLedger(IndySdkLedgerPool("name", checked=True), mock_wallet)
-
-        async with ledger:
-            mock_wallet.get_public_did = async_mock.CoroutineMock(
-                return_value=self.test_did_info
+        mock_wallet = async_mock.MagicMock()
+        self.session.context.injector.bind_provider(BaseWallet, mock_wallet)
+        with async_mock.patch.object(
+            IndySdkWallet, "get_public_did"
+        ) as mock_wallet_get_public_did, async_mock.patch.object(
+            IndySdkWallet, "get_local_did"
+        ) as mock_wallet_get_local_did, async_mock.patch.object(
+            IndySdkWallet, "replace_local_did_metadata"
+        ) as mock_wallet_replace_local_did_metadata:
+            ledger = IndySdkLedger(
+                IndySdkLedgerPool("name", checked=True), self.profile
             )
-            await ledger.register_nym(self.test_did, self.test_verkey, "alias", None)
-
-            assert mock_build_nym_req.called_once_with(
-                self.test_did, self.test_did, self.test_verkey, "alias", None
+            mock_wallet_get_public_did.return_value = self.test_did_info
+            mock_wallet_get_local_did.return_value = self.test_did_info
+            mock_wallet_replace_local_did_metadata.return_value = (
+                async_mock.CoroutineMock()
             )
-            assert mock_submit.called_once_with(
-                mock_build_nym_req.return_value,
-                True,
-                True,
-                sign_did=mock_wallet.get_public_did.return_value,
-            )
-            mock_wallet.replace_local_did_metadata.assert_called_once_with(
-                self.test_did_info.did,
-                {
-                    "...": "...",
-                    **DIDPosture.POSTED.metadata,
-                },
-            )
+            async with ledger:
+                await ledger.register_nym(
+                    self.test_did,
+                    self.test_verkey,
+                    "alias",
+                    None,
+                )
+                assert mock_build_nym_req.called_once_with(
+                    self.test_did,
+                    self.test_did,
+                    self.test_verkey,
+                    "alias",
+                    None,
+                )
+                assert mock_submit.called_once_with(
+                    mock_build_nym_req.return_value,
+                    True,
+                    True,
+                    sign_did=mock_wallet_get_public_did.return_value,
+                )
+                mock_wallet_replace_local_did_metadata.assert_called_once_with(
+                    self.test_did_info.did,
+                    {
+                        "test": "test",
+                        **DIDPosture.POSTED.metadata,
+                    },
+                )
 
     @async_mock.patch("aries_cloudagent.ledger.indy.IndySdkLedgerPool.context_open")
     @async_mock.patch("aries_cloudagent.ledger.indy.IndySdkLedgerPool.context_close")
     async def test_register_nym_read_only(self, mock_close, mock_open):
         mock_wallet = async_mock.MagicMock()
+        self.session.context.injector.bind_provider(BaseWallet, mock_wallet)
         ledger = IndySdkLedger(
-            IndySdkLedgerPool("name", checked=True, read_only=True), mock_wallet
+            IndySdkLedgerPool("name", checked=True, read_only=True), self.profile
         )
-
-        async with ledger:
-            mock_wallet.get_public_did = async_mock.CoroutineMock(
-                return_value=self.test_did_info
-            )
-            with self.assertRaises(LedgerError) as context:
-                await ledger.register_nym(
-                    self.test_did, self.test_verkey, "alias", None
-                )
-            assert "read only" in str(context.exception)
+        with async_mock.patch.object(
+            IndySdkWallet, "get_public_did"
+        ) as mock_wallet_get_public_did:
+            mock_wallet_get_public_did.return_value = self.test_did_info
+            async with ledger:
+                with self.assertRaises(LedgerError) as context:
+                    await ledger.register_nym(
+                        self.test_did,
+                        self.test_verkey,
+                        "alias",
+                        None,
+                    )
+                assert "read only" in str(context.exception)
 
     @async_mock.patch("aries_cloudagent.ledger.indy.IndySdkLedgerPool.context_open")
     @async_mock.patch("aries_cloudagent.ledger.indy.IndySdkLedgerPool.context_close")
@@ -2234,17 +2522,20 @@ class TestIndySdkLedger(AsyncTestCase):
             get_local_did=async_mock.CoroutineMock(),
             replace_local_did_metadata=async_mock.CoroutineMock(),
         )
-        ledger = IndySdkLedger(IndySdkLedgerPool("name", checked=True), mock_wallet)
-
-        async with ledger:
-            mock_wallet.get_public_did = async_mock.CoroutineMock(return_value=None)
-            with self.assertRaises(WalletNotFoundError):
-                await ledger.register_nym(
-                    self.test_did,
-                    self.test_verkey,
-                    "alias",
-                    None,
-                )
+        self.session.context.injector.bind_provider(BaseWallet, mock_wallet)
+        ledger = IndySdkLedger(IndySdkLedgerPool("name", checked=True), self.profile)
+        with async_mock.patch.object(
+            IndySdkWallet, "get_public_did"
+        ) as mock_wallet_get_public_did:
+            mock_wallet_get_public_did.return_value = None
+            async with ledger:
+                with self.assertRaises(WalletNotFoundError):
+                    await ledger.register_nym(
+                        self.test_did,
+                        self.test_verkey,
+                        "alias",
+                        None,
+                    )
 
     @async_mock.patch("aries_cloudagent.ledger.indy.IndySdkLedgerPool.context_open")
     @async_mock.patch("aries_cloudagent.ledger.indy.IndySdkLedgerPool.context_close")
@@ -2258,16 +2549,20 @@ class TestIndySdkLedger(AsyncTestCase):
             error_code=ErrorCode.CommonInvalidParam1,
             error_details={"message": "not today"},
         )
-        ledger = IndySdkLedger(IndySdkLedgerPool("name", checked=True), mock_wallet)
-
-        async with ledger:
-            mock_wallet.get_public_did = async_mock.CoroutineMock(
-                return_value=self.test_did_info
-            )
-            with self.assertRaises(LedgerError):
-                await ledger.register_nym(
-                    self.test_did, self.test_verkey, "alias", None
-                )
+        self.session.context.injector.bind_provider(BaseWallet, mock_wallet)
+        ledger = IndySdkLedger(IndySdkLedgerPool("name", checked=True), self.profile)
+        with async_mock.patch.object(
+            IndySdkWallet, "get_public_did"
+        ) as mock_wallet_get_public_did:
+            mock_wallet_get_public_did.return_value = self.test_did_info
+            async with ledger:
+                with self.assertRaises(LedgerError):
+                    await ledger.register_nym(
+                        self.test_did,
+                        self.test_verkey,
+                        "alias",
+                        None,
+                    )
 
     @async_mock.patch("aries_cloudagent.ledger.indy.IndySdkLedgerPool.context_open")
     @async_mock.patch("aries_cloudagent.ledger.indy.IndySdkLedgerPool.context_close")
@@ -2276,29 +2571,42 @@ class TestIndySdkLedger(AsyncTestCase):
     async def test_register_nym_steward_register_others_did(
         self, mock_submit, mock_build_nym_req, mock_close, mock_open
     ):
-        mock_wallet = async_mock.MagicMock(
-            type="indy",
-            get_local_did=async_mock.CoroutineMock(side_effect=WalletNotFoundError()),
-            replace_local_did_metadata=async_mock.CoroutineMock(),
-        )
-        ledger = IndySdkLedger(IndySdkLedgerPool("name", checked=True), mock_wallet)
-
-        async with ledger:
-            mock_wallet.get_public_did = async_mock.CoroutineMock(
-                return_value=self.test_did_info
+        mock_wallet = async_mock.MagicMock()
+        self.session.context.injector.bind_provider(BaseWallet, mock_wallet)
+        ledger = IndySdkLedger(IndySdkLedgerPool("name", checked=True), self.profile)
+        with async_mock.patch.object(
+            IndySdkWallet, "get_public_did"
+        ) as mock_wallet_get_public_did, async_mock.patch.object(
+            IndySdkWallet, "get_local_did"
+        ) as mock_wallet_get_local_did, async_mock.patch.object(
+            IndySdkWallet, "replace_local_did_metadata"
+        ) as mock_wallet_replace_local_did_metadata:
+            mock_wallet_get_public_did.return_value = self.test_did_info
+            mock_wallet_get_local_did.side_effect = WalletNotFoundError()
+            mock_wallet_replace_local_did_metadata.return_value = (
+                async_mock.CoroutineMock()
             )
-            await ledger.register_nym(self.test_did, self.test_verkey, "alias", None)
-
-            assert mock_build_nym_req.called_once_with(
-                self.test_did, self.test_did, self.test_verkey, "alias", None
-            )
-            assert mock_submit.called_once_with(
-                mock_build_nym_req.return_value,
-                True,
-                True,
-                sign_did=mock_wallet.get_public_did.return_value,
-            )
-            mock_wallet.replace_local_did_metadata.assert_not_called()
+            async with ledger:
+                await ledger.register_nym(
+                    self.test_did,
+                    self.test_verkey,
+                    "alias",
+                    None,
+                )
+                assert mock_build_nym_req.called_once_with(
+                    self.test_did,
+                    self.test_did,
+                    self.test_verkey,
+                    "alias",
+                    None,
+                )
+                assert mock_submit.called_once_with(
+                    mock_build_nym_req.return_value,
+                    True,
+                    True,
+                    sign_did=mock_wallet_get_public_did.return_value,
+                )
+                mock_wallet_replace_local_did_metadata.assert_not_called()
 
     @async_mock.patch("aries_cloudagent.ledger.indy.IndySdkLedgerPool.context_open")
     @async_mock.patch("aries_cloudagent.ledger.indy.IndySdkLedgerPool.context_close")
@@ -2308,7 +2616,7 @@ class TestIndySdkLedger(AsyncTestCase):
         self, mock_submit, mock_build_get_nym_req, mock_close, mock_open
     ):
         mock_wallet = async_mock.MagicMock()
-
+        self.session.context.injector.bind_provider(BaseWallet, mock_wallet)
         mock_submit.return_value = json.dumps(
             {
                 "result": {
@@ -2347,17 +2655,18 @@ class TestIndySdkLedger(AsyncTestCase):
                 "op": "REPLY",
             }
         )
-
-        ledger = IndySdkLedger(IndySdkLedgerPool("name", checked=True), mock_wallet)
-
-        async with ledger:
-            mock_wallet.get_public_did = async_mock.CoroutineMock(
-                return_value=self.test_did_info
-            )
-            assert await ledger.get_nym_role(self.test_did) == Role.ENDORSER
-
-            assert mock_build_get_nym_req.called_once_with(self.test_did, self.test_did)
-            assert mock_submit.called_once_with(mock_build_get_nym_req.return_value)
+        ledger = IndySdkLedger(IndySdkLedgerPool("name", checked=True), self.profile)
+        with async_mock.patch.object(
+            IndySdkWallet, "get_public_did"
+        ) as mock_wallet_get_public_did:
+            mock_wallet_get_public_did.return_value = self.test_did_info
+            async with ledger:
+                assert await ledger.get_nym_role(self.test_did) == Role.ENDORSER
+                assert mock_build_get_nym_req.called_once_with(
+                    self.test_did,
+                    self.test_did,
+                )
+                assert mock_submit.called_once_with(mock_build_get_nym_req.return_value)
 
     @async_mock.patch("aries_cloudagent.ledger.indy.IndySdkLedgerPool.context_open")
     @async_mock.patch("aries_cloudagent.ledger.indy.IndySdkLedgerPool.context_close")
@@ -2366,21 +2675,20 @@ class TestIndySdkLedger(AsyncTestCase):
         self, mock_build_get_nym_req, mock_close, mock_open
     ):
         mock_wallet = async_mock.MagicMock()
-
+        self.session.context.injector.bind_provider(BaseWallet, mock_wallet)
         mock_build_get_nym_req.side_effect = IndyError(
             error_code=ErrorCode.CommonInvalidParam1,
             error_details={"message": "not today"},
         )
-        ledger = IndySdkLedger(IndySdkLedgerPool("name", checked=True), mock_wallet)
-
-        async with ledger:
-            mock_wallet.get_public_did = async_mock.CoroutineMock(
-                return_value=self.test_did_info
-            )
-
-            with self.assertRaises(LedgerError) as context:
-                await ledger.get_nym_role(self.test_did)
-            assert "not today" in context.exception.message
+        ledger = IndySdkLedger(IndySdkLedgerPool("name", checked=True), self.profile)
+        with async_mock.patch.object(
+            IndySdkWallet, "get_public_did"
+        ) as mock_wallet_get_public_did:
+            mock_wallet_get_public_did.return_value = self.test_did_info
+            async with ledger:
+                with self.assertRaises(LedgerError) as context:
+                    await ledger.get_nym_role(self.test_did)
+                assert "not today" in context.exception.message
 
     @async_mock.patch("aries_cloudagent.ledger.indy.IndySdkLedgerPool.context_open")
     @async_mock.patch("aries_cloudagent.ledger.indy.IndySdkLedgerPool.context_close")
@@ -2390,7 +2698,7 @@ class TestIndySdkLedger(AsyncTestCase):
         self, mock_submit, mock_build_get_nym_req, mock_close, mock_open
     ):
         mock_wallet = async_mock.MagicMock()
-
+        self.session.context.injector.bind_provider(BaseWallet, mock_wallet)
         mock_submit.return_value = json.dumps(
             {
                 "result": {
@@ -2420,15 +2728,14 @@ class TestIndySdkLedger(AsyncTestCase):
                 "op": "REPLY",
             }
         )
-
-        ledger = IndySdkLedger(IndySdkLedgerPool("name", checked=True), mock_wallet)
-
-        async with ledger:
-            mock_wallet.get_public_did = async_mock.CoroutineMock(
-                return_value=self.test_did_info
-            )
-            with self.assertRaises(BadLedgerRequestError):
-                await ledger.get_nym_role(self.test_did)
+        ledger = IndySdkLedger(IndySdkLedgerPool("name", checked=True), self.profile)
+        with async_mock.patch.object(
+            IndySdkWallet, "get_public_did"
+        ) as mock_wallet_get_public_did:
+            mock_wallet_get_public_did.return_value = self.test_did_info
+            async with ledger:
+                with self.assertRaises(BadLedgerRequestError):
+                    await ledger.get_nym_role(self.test_did)
 
     @async_mock.patch("aries_cloudagent.ledger.indy.IndySdkLedgerPool.context_open")
     @async_mock.patch("aries_cloudagent.ledger.indy.IndySdkLedgerPool.context_close")
@@ -2445,13 +2752,8 @@ class TestIndySdkLedger(AsyncTestCase):
         mock_close,
         mock_open,
     ):
-        mock_wallet = async_mock.MagicMock(
-            get_public_did=async_mock.CoroutineMock(return_value=self.test_did_info),
-            rotate_did_keypair_start=async_mock.CoroutineMock(
-                return_value=self.test_verkey
-            ),
-            rotate_did_keypair_apply=async_mock.CoroutineMock(return_value=None),
-        )
+        mock_wallet = async_mock.MagicMock()
+        self.session.context.injector.bind_provider(BaseWallet, mock_wallet)
         mock_submit.side_effect = [
             json.dumps({"result": {"data": json.dumps({"seqNo": 1234})}}),
             json.dumps(
@@ -2462,10 +2764,19 @@ class TestIndySdkLedger(AsyncTestCase):
                 }
             ),
         ]
-
-        ledger = IndySdkLedger(IndySdkLedgerPool("name", checked=True), mock_wallet)
-        async with ledger:
-            await ledger.rotate_public_did_keypair()
+        ledger = IndySdkLedger(IndySdkLedgerPool("name", checked=True), self.profile)
+        with async_mock.patch.object(
+            IndySdkWallet, "get_public_did"
+        ) as mock_wallet_get_public_did, async_mock.patch.object(
+            IndySdkWallet, "rotate_did_keypair_start", autospec=True
+        ) as mock_wallet_rotate_did_keypair_start, async_mock.patch.object(
+            IndySdkWallet, "rotate_did_keypair_apply", autospec=True
+        ) as mock_wallet_rotate_did_keypair_apply:
+            mock_wallet_get_public_did.return_value = self.test_did_info
+            mock_wallet_rotate_did_keypair_start.return_value = self.test_verkey
+            mock_wallet_rotate_did_keypair_apply.return_value = None
+            async with ledger:
+                await ledger.rotate_public_did_keypair()
 
     @async_mock.patch("aries_cloudagent.ledger.indy.IndySdkLedgerPool.context_open")
     @async_mock.patch("aries_cloudagent.ledger.indy.IndySdkLedgerPool.context_close")
@@ -2474,19 +2785,24 @@ class TestIndySdkLedger(AsyncTestCase):
     async def test_rotate_public_did_keypair_no_nym(
         self, mock_submit, mock_build_get_nym_request, mock_close, mock_open
     ):
-        mock_wallet = async_mock.MagicMock(
-            get_public_did=async_mock.CoroutineMock(return_value=self.test_did_info),
-            rotate_did_keypair_start=async_mock.CoroutineMock(
-                return_value=self.test_verkey
-            ),
-            rotate_did_keypair_apply=async_mock.CoroutineMock(return_value=None),
-        )
+        mock_wallet = async_mock.MagicMock()
+        self.session.context.injector.bind_provider(BaseWallet, mock_wallet)
         mock_submit.return_value = json.dumps({"result": {"data": json.dumps(None)}})
+        ledger = IndySdkLedger(IndySdkLedgerPool("name", checked=True), self.profile)
 
-        ledger = IndySdkLedger(IndySdkLedgerPool("name", checked=True), mock_wallet)
-        async with ledger:
-            with self.assertRaises(BadLedgerRequestError):
-                await ledger.rotate_public_did_keypair()
+        with async_mock.patch.object(
+            IndySdkWallet, "get_public_did"
+        ) as mock_wallet_get_public_did, async_mock.patch.object(
+            IndySdkWallet, "rotate_did_keypair_start", autospec=True
+        ) as mock_wallet_rotate_did_keypair_start, async_mock.patch.object(
+            IndySdkWallet, "rotate_did_keypair_apply", autospec=True
+        ) as mock_wallet_rotate_did_keypair_apply:
+            mock_wallet_get_public_did.return_value = self.test_did_info
+            mock_wallet_rotate_did_keypair_start.return_value = self.test_verkey
+            mock_wallet_rotate_did_keypair_apply.return_value = None
+            async with ledger:
+                with self.assertRaises(BadLedgerRequestError):
+                    await ledger.rotate_public_did_keypair()
 
     @async_mock.patch("aries_cloudagent.ledger.indy.IndySdkLedgerPool.context_open")
     @async_mock.patch("aries_cloudagent.ledger.indy.IndySdkLedgerPool.context_close")
@@ -2503,22 +2819,26 @@ class TestIndySdkLedger(AsyncTestCase):
         mock_close,
         mock_open,
     ):
-        mock_wallet = async_mock.MagicMock(
-            get_public_did=async_mock.CoroutineMock(return_value=self.test_did_info),
-            rotate_did_keypair_start=async_mock.CoroutineMock(
-                return_value=self.test_verkey
-            ),
-            rotate_did_keypair_apply=async_mock.CoroutineMock(return_value=None),
-        )
+        mock_wallet = async_mock.MagicMock()
+        self.session.context.injector.bind_provider(BaseWallet, mock_wallet)
         mock_submit.side_effect = [
             json.dumps({"result": {"data": json.dumps({"seqNo": 1234})}}),
             json.dumps({"result": {"data": None}}),
         ]
-
-        ledger = IndySdkLedger(IndySdkLedgerPool("name", checked=True), mock_wallet)
-        async with ledger:
-            with self.assertRaises(BadLedgerRequestError):
-                await ledger.rotate_public_did_keypair()
+        ledger = IndySdkLedger(IndySdkLedgerPool("name", checked=True), self.profile)
+        with async_mock.patch.object(
+            IndySdkWallet, "get_public_did"
+        ) as mock_wallet_get_public_did, async_mock.patch.object(
+            IndySdkWallet, "rotate_did_keypair_start", autospec=True
+        ) as mock_wallet_rotate_did_keypair_start, async_mock.patch.object(
+            IndySdkWallet, "rotate_did_keypair_apply", autospec=True
+        ) as mock_wallet_rotate_did_keypair_apply:
+            mock_wallet_get_public_did.return_value = self.test_did_info
+            mock_wallet_rotate_did_keypair_start.return_value = self.test_verkey
+            mock_wallet_rotate_did_keypair_apply.return_value = None
+            async with ledger:
+                with self.assertRaises(BadLedgerRequestError):
+                    await ledger.rotate_public_did_keypair()
 
     @async_mock.patch("aries_cloudagent.ledger.indy.IndySdkLedgerPool.context_open")
     @async_mock.patch("aries_cloudagent.ledger.indy.IndySdkLedgerPool.context_close")
@@ -2534,6 +2854,7 @@ class TestIndySdkLedger(AsyncTestCase):
         mock_open,
     ):
         mock_wallet = async_mock.MagicMock()
+        self.session.context.injector.bind_provider(BaseWallet, mock_wallet)
         mock_indy_parse_get_rrdef_resp.return_value = (
             "rr-id",
             json.dumps({"...": "..."}),
@@ -2541,16 +2862,15 @@ class TestIndySdkLedger(AsyncTestCase):
         mock_submit.return_value = json.dumps({"result": {"txnTime": 1234567890}})
 
         ledger = IndySdkLedger(
-            IndySdkLedgerPool("name", checked=True, read_only=True), mock_wallet
+            IndySdkLedgerPool("name", checked=True, read_only=True), self.profile
         )
-
-        async with ledger:
-            mock_wallet.get_public_did = async_mock.CoroutineMock(
-                return_value=self.test_did_info
-            )
-
-            result = await ledger.get_revoc_reg_def("rr-id")
-            assert result == {"...": "...", "txnTime": 1234567890}
+        with async_mock.patch.object(
+            IndySdkWallet, "get_public_did"
+        ) as mock_wallet_get_public_did:
+            mock_wallet_get_public_did.return_value = self.test_did_info
+            async with ledger:
+                result = await ledger.get_revoc_reg_def("rr-id")
+                assert result == {"...": "...", "txnTime": 1234567890}
 
     @async_mock.patch("aries_cloudagent.ledger.indy.IndySdkLedgerPool.context_open")
     @async_mock.patch("aries_cloudagent.ledger.indy.IndySdkLedgerPool.context_close")
@@ -2564,19 +2884,18 @@ class TestIndySdkLedger(AsyncTestCase):
             error_code=ErrorCode.CommonInvalidParam1,
             error_details={"message": "not today"},
         )
-
+        self.session.context.injector.bind_provider(BaseWallet, mock_wallet)
         ledger = IndySdkLedger(
-            IndySdkLedgerPool("name", checked=True, read_only=True), mock_wallet
+            IndySdkLedgerPool("name", checked=True, read_only=True), self.profile
         )
-
-        async with ledger:
-            mock_wallet.get_public_did = async_mock.CoroutineMock(
-                return_value=self.test_did_info
-            )
-
-            with self.assertRaises(IndyError) as context:
-                await ledger.get_revoc_reg_def("rr-id")
-            assert "not today" in context.exception.message
+        with async_mock.patch.object(
+            IndySdkWallet, "get_public_did"
+        ) as mock_wallet_get_public_did:
+            mock_wallet_get_public_did.return_value = self.test_did_info
+            async with ledger:
+                with self.assertRaises(IndyError) as context:
+                    await ledger.get_revoc_reg_def("rr-id")
+                assert "not today" in context.exception.message
 
     @async_mock.patch("aries_cloudagent.ledger.indy.IndySdkLedgerPool.context_open")
     @async_mock.patch("aries_cloudagent.ledger.indy.IndySdkLedgerPool.context_close")
@@ -2592,9 +2911,7 @@ class TestIndySdkLedger(AsyncTestCase):
         mock_open,
     ):
         mock_wallet = async_mock.MagicMock()
-        mock_wallet.get_public_did = async_mock.CoroutineMock(
-            return_value=self.test_did_info
-        )
+        self.session.context.injector.bind_provider(BaseWallet, mock_wallet)
         mock_indy_parse_get_rr_resp.return_value = (
             "rr-id",
             '{"hello": "world"}',
@@ -2602,12 +2919,15 @@ class TestIndySdkLedger(AsyncTestCase):
         )
 
         ledger = IndySdkLedger(
-            IndySdkLedgerPool("name", checked=True, read_only=True), mock_wallet
+            IndySdkLedgerPool("name", checked=True, read_only=True), self.profile
         )
-
-        async with ledger:
-            (result, _) = await ledger.get_revoc_reg_entry("rr-id", 1234567890)
-            assert result == {"hello": "world"}
+        with async_mock.patch.object(
+            IndySdkWallet, "get_public_did"
+        ) as mock_wallet_get_public_did:
+            mock_wallet_get_public_did.return_value = self.test_did_info
+            async with ledger:
+                (result, _) = await ledger.get_revoc_reg_entry("rr-id", 1234567890)
+                assert result == {"hello": "world"}
 
     @async_mock.patch("aries_cloudagent.ledger.indy.IndySdkLedgerPool.context_open")
     @async_mock.patch("aries_cloudagent.ledger.indy.IndySdkLedgerPool.context_close")
@@ -2623,20 +2943,21 @@ class TestIndySdkLedger(AsyncTestCase):
         mock_open,
     ):
         mock_wallet = async_mock.MagicMock()
-        mock_wallet.get_public_did = async_mock.CoroutineMock(
-            return_value=self.test_did_info
-        )
+        self.session.context.injector.bind_provider(BaseWallet, mock_wallet)
         mock_indy_parse_get_rr_resp.side_effect = IndyError(
             error_code=ErrorCode.PoolLedgerTimeout,
             error_details={"message": "bye"},
         )
         ledger = IndySdkLedger(
-            IndySdkLedgerPool("name", checked=True, read_only=True), mock_wallet
+            IndySdkLedgerPool("name", checked=True, read_only=True), self.profile
         )
-
-        with self.assertRaises(LedgerError):
-            async with ledger:
-                await ledger.get_revoc_reg_entry("rr-id", 1234567890)
+        with async_mock.patch.object(
+            IndySdkWallet, "get_public_did"
+        ) as mock_wallet_get_public_did:
+            mock_wallet_get_public_did.return_value = self.test_did_info
+            with self.assertRaises(LedgerError):
+                async with ledger:
+                    await ledger.get_revoc_reg_entry("rr-id", 1234567890)
 
     @async_mock.patch("aries_cloudagent.ledger.indy.IndySdkLedgerPool.context_open")
     @async_mock.patch("aries_cloudagent.ledger.indy.IndySdkLedgerPool.context_close")
@@ -2652,6 +2973,7 @@ class TestIndySdkLedger(AsyncTestCase):
         mock_open,
     ):
         mock_wallet = async_mock.MagicMock()
+        self.session.context.injector.bind_provider(BaseWallet, mock_wallet)
         mock_indy_parse_get_rrd_resp.return_value = (
             "rr-id",
             '{"hello": "world"}',
@@ -2659,16 +2981,15 @@ class TestIndySdkLedger(AsyncTestCase):
         )
 
         ledger = IndySdkLedger(
-            IndySdkLedgerPool("name", checked=True, read_only=True), mock_wallet
+            IndySdkLedgerPool("name", checked=True, read_only=True), self.profile
         )
-
-        async with ledger:
-            mock_wallet.get_public_did = async_mock.CoroutineMock(
-                return_value=self.test_did_info
-            )
-
-            (result, _) = await ledger.get_revoc_reg_delta("rr-id")
-            assert result == {"hello": "world"}
+        with async_mock.patch.object(
+            IndySdkWallet, "get_public_did"
+        ) as mock_wallet_get_public_did:
+            mock_wallet_get_public_did.return_value = self.test_did_info
+            async with ledger:
+                (result, _) = await ledger.get_revoc_reg_delta("rr-id")
+                assert result == {"hello": "world"}
 
     @async_mock.patch("aries_cloudagent.ledger.indy.IndySdkLedgerPool.context_open")
     @async_mock.patch("aries_cloudagent.ledger.indy.IndySdkLedgerPool.context_close")
@@ -2678,22 +2999,28 @@ class TestIndySdkLedger(AsyncTestCase):
         self, mock_indy_build_rrdef_req, mock_submit, mock_close, mock_open
     ):
         mock_wallet = async_mock.MagicMock()
+        self.session.context.injector.bind_provider(BaseWallet, mock_wallet)
         mock_indy_build_rrdef_req.return_value = '{"hello": "world"}'
 
         ledger = IndySdkLedger(
-            IndySdkLedgerPool("name", checked=True, read_only=True), mock_wallet
+            IndySdkLedgerPool("name", checked=True, read_only=True), self.profile
         )
-
-        async with ledger:
-            mock_wallet.get_public_did = async_mock.CoroutineMock(
-                return_value=self.test_did_info
-            )
-            await ledger.send_revoc_reg_def({"rr": "def"}, issuer_did=None)
-            mock_wallet.get_public_did.assert_called_once()
-            assert not mock_wallet.get_local_did.called
-            mock_submit.assert_called_once_with(
-                mock_indy_build_rrdef_req.return_value, True, True, self.test_did_info
-            )
+        with async_mock.patch.object(
+            IndySdkWallet, "get_public_did"
+        ) as mock_wallet_get_public_did, async_mock.patch.object(
+            IndySdkWallet, "get_local_did"
+        ) as mock_wallet_get_local_did:
+            mock_wallet_get_public_did.return_value = self.test_did_info
+            async with ledger:
+                await ledger.send_revoc_reg_def({"rr": "def"}, issuer_did=None)
+                mock_wallet_get_public_did.assert_called_once()
+                assert not mock_wallet_get_local_did.called
+                mock_submit.assert_called_once_with(
+                    mock_indy_build_rrdef_req.return_value,
+                    True,
+                    sign_did=self.test_did_info,
+                    write_ledger=True,
+                )
 
     @async_mock.patch("aries_cloudagent.ledger.indy.IndySdkLedgerPool.context_open")
     @async_mock.patch("aries_cloudagent.ledger.indy.IndySdkLedgerPool.context_close")
@@ -2703,22 +3030,28 @@ class TestIndySdkLedger(AsyncTestCase):
         self, mock_indy_build_rrdef_req, mock_submit, mock_close, mock_open
     ):
         mock_wallet = async_mock.MagicMock()
+        self.session.context.injector.bind_provider(BaseWallet, mock_wallet)
         mock_indy_build_rrdef_req.return_value = '{"hello": "world"}'
 
         ledger = IndySdkLedger(
-            IndySdkLedgerPool("name", checked=True, read_only=True), mock_wallet
+            IndySdkLedgerPool("name", checked=True, read_only=True), self.profile
         )
-
-        async with ledger:
-            mock_wallet.get_local_did = async_mock.CoroutineMock(
-                return_value=self.test_did_info
-            )
-            await ledger.send_revoc_reg_def({"rr": "def"}, issuer_did=self.test_did)
-            mock_wallet.get_local_did.assert_called_once_with(self.test_did)
-            assert not mock_wallet.get_public_did.called
-            mock_submit.assert_called_once_with(
-                mock_indy_build_rrdef_req.return_value, True, True, self.test_did_info
-            )
+        with async_mock.patch.object(
+            IndySdkWallet, "get_local_did"
+        ) as mock_wallet_get_local_did:
+            mock_wallet_get_local_did.return_value = self.test_did_info
+            async with ledger:
+                await ledger.send_revoc_reg_def(
+                    {"rr": "def"},
+                    issuer_did=self.test_did,
+                )
+                mock_wallet_get_local_did.assert_called_once_with(self.test_did)
+                mock_submit.assert_called_once_with(
+                    mock_indy_build_rrdef_req.return_value,
+                    True,
+                    sign_did=self.test_did_info,
+                    write_ledger=True,
+                )
 
     @async_mock.patch("aries_cloudagent.ledger.indy.IndySdkLedgerPool.context_open")
     @async_mock.patch("aries_cloudagent.ledger.indy.IndySdkLedgerPool.context_close")
@@ -2728,19 +3061,25 @@ class TestIndySdkLedger(AsyncTestCase):
         self, mock_indy_build_rrdef_req, mock_submit, mock_close, mock_open
     ):
         mock_wallet = async_mock.MagicMock()
+        self.session.context.injector.bind_provider(BaseWallet, mock_wallet)
         mock_indy_build_rrdef_req.return_value = '{"hello": "world"}'
 
         ledger = IndySdkLedger(
-            IndySdkLedgerPool("name", checked=True, read_only=True), mock_wallet
+            IndySdkLedgerPool("name", checked=True, read_only=True), self.profile
         )
-
-        async with ledger:
-            mock_wallet.get_local_did = async_mock.CoroutineMock(return_value=None)
-            with self.assertRaises(LedgerTransactionError) as context:
-                await ledger.send_revoc_reg_def({"rr": "def"}, issuer_did=self.test_did)
-            assert "No issuer DID found for revocation registry definition" in str(
-                context.exception
-            )
+        with async_mock.patch.object(
+            IndySdkWallet, "get_local_did"
+        ) as mock_wallet_get_local_did:
+            mock_wallet_get_local_did.return_value = None
+            async with ledger:
+                with self.assertRaises(LedgerTransactionError) as context:
+                    await ledger.send_revoc_reg_def(
+                        {"rr": "def"},
+                        issuer_did=self.test_did,
+                    )
+                assert "No issuer DID found for revocation registry definition" in str(
+                    context.exception
+                )
 
     @async_mock.patch("aries_cloudagent.ledger.indy.IndySdkLedgerPool.context_open")
     @async_mock.patch("aries_cloudagent.ledger.indy.IndySdkLedgerPool.context_close")
@@ -2750,24 +3089,30 @@ class TestIndySdkLedger(AsyncTestCase):
         self, mock_indy_build_rre_req, mock_submit, mock_close, mock_open
     ):
         mock_wallet = async_mock.MagicMock()
+        self.session.context.injector.bind_provider(BaseWallet, mock_wallet)
         mock_indy_build_rre_req.return_value = '{"hello": "world"}'
 
         ledger = IndySdkLedger(
-            IndySdkLedgerPool("name", checked=True, read_only=True), mock_wallet
+            IndySdkLedgerPool("name", checked=True, read_only=True), self.profile
         )
-
-        async with ledger:
-            mock_wallet.get_public_did = async_mock.CoroutineMock(
-                return_value=self.test_did_info
-            )
-            await ledger.send_revoc_reg_entry(
-                "rr-id", "CL_ACCUM", {"rev-reg": "entry"}, issuer_did=None
-            )
-            mock_wallet.get_public_did.assert_called_once()
-            assert not mock_wallet.get_local_did.called
-            mock_submit.assert_called_once_with(
-                mock_indy_build_rre_req.return_value, True, True, self.test_did_info
-            )
+        with async_mock.patch.object(
+            IndySdkWallet, "get_public_did"
+        ) as mock_wallet_get_public_did, async_mock.patch.object(
+            IndySdkWallet, "get_local_did"
+        ) as mock_wallet_get_local_did:
+            mock_wallet_get_public_did.return_value = self.test_did_info
+            async with ledger:
+                await ledger.send_revoc_reg_entry(
+                    "rr-id", "CL_ACCUM", {"rev-reg": "entry"}, issuer_did=None
+                )
+                mock_wallet_get_public_did.assert_called_once()
+                assert not mock_wallet_get_local_did.called
+                mock_submit.assert_called_once_with(
+                    mock_indy_build_rre_req.return_value,
+                    True,
+                    sign_did=self.test_did_info,
+                    write_ledger=True,
+                )
 
     @async_mock.patch("aries_cloudagent.ledger.indy.IndySdkLedgerPool.context_open")
     @async_mock.patch("aries_cloudagent.ledger.indy.IndySdkLedgerPool.context_close")
@@ -2777,24 +3122,30 @@ class TestIndySdkLedger(AsyncTestCase):
         self, mock_indy_build_rre_req, mock_submit, mock_close, mock_open
     ):
         mock_wallet = async_mock.MagicMock()
+        self.session.context.injector.bind_provider(BaseWallet, mock_wallet)
         mock_indy_build_rre_req.return_value = '{"hello": "world"}'
 
         ledger = IndySdkLedger(
-            IndySdkLedgerPool("name", checked=True, read_only=True), mock_wallet
+            IndySdkLedgerPool("name", checked=True, read_only=True), self.profile
         )
-
-        async with ledger:
-            mock_wallet.get_local_did = async_mock.CoroutineMock(
-                return_value=self.test_did_info
-            )
-            result = await ledger.send_revoc_reg_entry(
-                "rr-id", "CL_ACCUM", {"rev-reg": "entry"}, issuer_did=self.test_did
-            )
-            mock_wallet.get_local_did.assert_called_once_with(self.test_did)
-            assert not mock_wallet.get_public_did.called
-            mock_submit.assert_called_once_with(
-                mock_indy_build_rre_req.return_value, True, True, self.test_did_info
-            )
+        with async_mock.patch.object(
+            IndySdkWallet, "get_local_did"
+        ) as mock_wallet_get_local_did:
+            mock_wallet_get_local_did.return_value = self.test_did_info
+            async with ledger:
+                result = await ledger.send_revoc_reg_entry(
+                    "rr-id",
+                    "CL_ACCUM",
+                    {"rev-reg": "entry"},
+                    issuer_did=self.test_did,
+                )
+                mock_wallet_get_local_did.assert_called_once_with(self.test_did)
+                mock_submit.assert_called_once_with(
+                    mock_indy_build_rre_req.return_value,
+                    True,
+                    sign_did=self.test_did_info,
+                    write_ledger=True,
+                )
 
     @async_mock.patch("aries_cloudagent.ledger.indy.IndySdkLedgerPool.context_open")
     @async_mock.patch("aries_cloudagent.ledger.indy.IndySdkLedgerPool.context_close")
@@ -2804,21 +3155,27 @@ class TestIndySdkLedger(AsyncTestCase):
         self, mock_indy_build_rre_req, mock_submit, mock_close, mock_open
     ):
         mock_wallet = async_mock.MagicMock()
+        self.session.context.injector.bind_provider(BaseWallet, mock_wallet)
         mock_indy_build_rre_req.return_value = '{"hello": "world"}'
 
         ledger = IndySdkLedger(
-            IndySdkLedgerPool("name", checked=True, read_only=True), mock_wallet
+            IndySdkLedgerPool("name", checked=True, read_only=True), self.profile
         )
-
-        async with ledger:
-            mock_wallet.get_local_did = async_mock.CoroutineMock(return_value=None)
-            with self.assertRaises(LedgerTransactionError) as context:
-                await ledger.send_revoc_reg_entry(
-                    "rr-id", "CL_ACCUM", {"rev-reg": "entry"}, issuer_did=self.test_did
+        with async_mock.patch.object(
+            IndySdkWallet, "get_local_did"
+        ) as mock_wallet_get_local_did:
+            mock_wallet_get_local_did.return_value = None
+            async with ledger:
+                with self.assertRaises(LedgerTransactionError) as context:
+                    await ledger.send_revoc_reg_entry(
+                        "rr-id",
+                        "CL_ACCUM",
+                        {"rev-reg": "entry"},
+                        issuer_did=self.test_did,
+                    )
+                assert "No issuer DID found for revocation registry entry" in str(
+                    context.exception
                 )
-            assert "No issuer DID found for revocation registry entry" in str(
-                context.exception
-            )
 
     @async_mock.patch("indy.pool.open_pool_ledger")
     @async_mock.patch("indy.pool.close_pool_ledger")
@@ -2828,16 +3185,15 @@ class TestIndySdkLedger(AsyncTestCase):
         mock_open_ledger,
     ):
         mock_wallet = async_mock.MagicMock()
-
-        ledger = IndySdkLedger(IndySdkLedgerPool("name", checked=True), mock_wallet)
-
-        async with ledger:
-            mock_wallet.get_public_did = async_mock.CoroutineMock(
-                return_value=self.test_did_info
-            )
-
-            with self.assertRaises(ValueError):
-                await ledger.taa_digest(None, None)
+        self.session.context.injector.bind_provider(BaseWallet, mock_wallet)
+        ledger = IndySdkLedger(IndySdkLedgerPool("name", checked=True), self.profile)
+        with async_mock.patch.object(
+            IndySdkWallet, "get_public_did"
+        ) as mock_wallet_get_public_did:
+            mock_wallet_get_public_did.return_value = self.test_did_info
+            async with ledger:
+                with self.assertRaises(ValueError):
+                    await ledger.taa_digest(None, None)
 
     @async_mock.patch("aries_cloudagent.ledger.indy.IndySdkLedgerPool.context_open")
     @async_mock.patch("aries_cloudagent.ledger.indy.IndySdkLedgerPool.context_close")
@@ -2853,46 +3209,48 @@ class TestIndySdkLedger(AsyncTestCase):
         mock_open,
     ):
         mock_wallet = async_mock.MagicMock()
-
+        self.session.context.injector.bind_provider(BaseWallet, mock_wallet)
         txn_result_data = {"text": "text", "version": "1.0"}
         mock_submit.side_effect = [
             json.dumps({"result": {"data": txn_result_data}}) for i in range(2)
         ]
+        ledger = IndySdkLedger(IndySdkLedgerPool("name", checked=True), self.profile)
+        with async_mock.patch.object(
+            IndySdkWallet, "get_public_did"
+        ) as mock_wallet_get_public_did:
+            mock_wallet_get_public_did.return_value = self.test_did_info
+            async with ledger:
+                response = await ledger.get_txn_author_agreement(reload=True)
 
-        ledger = IndySdkLedger(IndySdkLedgerPool("name", checked=True), mock_wallet)
-
-        async with ledger:
-            mock_wallet.get_public_did = async_mock.CoroutineMock(
-                return_value=self.test_did_info
-            )
-            response = await ledger.get_txn_author_agreement(reload=True)
-
-            assert mock_build_get_acc_mech_req.called_once_with(
-                self.test_did, None, None
-            )
-            assert mock_build_get_taa_req.called_once_with(self.test_did, None)
-            mock_submit.assert_has_calls(
-                [
-                    async_mock.call(
-                        mock_build_get_acc_mech_req.return_value,
-                        sign_did=mock_wallet.get_public_did.return_value,
-                    ),
-                    async_mock.call(
-                        mock_build_get_taa_req.return_value,
-                        sign_did=mock_wallet.get_public_did.return_value,
-                    ),
-                ]
-            )
-            assert response == {
-                "aml_record": txn_result_data,
-                "taa_record": {
-                    **txn_result_data,
-                    "digest": ledger.taa_digest(
-                        txn_result_data["version"], txn_result_data["text"]
-                    ),
-                },
-                "taa_required": True,
-            }
+                assert mock_build_get_acc_mech_req.called_once_with(
+                    self.test_did, None, None
+                )
+                assert mock_build_get_taa_req.called_once_with(
+                    self.test_did,
+                    None,
+                )
+                mock_submit.assert_has_calls(
+                    [
+                        async_mock.call(
+                            mock_build_get_acc_mech_req.return_value,
+                            sign_did=mock_wallet_get_public_did.return_value,
+                        ),
+                        async_mock.call(
+                            mock_build_get_taa_req.return_value,
+                            sign_did=mock_wallet_get_public_did.return_value,
+                        ),
+                    ]
+                )
+                assert response == {
+                    "aml_record": txn_result_data,
+                    "taa_record": {
+                        **txn_result_data,
+                        "digest": ledger.taa_digest(
+                            txn_result_data["version"], txn_result_data["text"]
+                        ),
+                    },
+                    "taa_required": True,
+                }
 
     @async_mock.patch("aries_cloudagent.ledger.indy.IndySdkLedgerPool.context_open")
     @async_mock.patch("aries_cloudagent.ledger.indy.IndySdkLedgerPool.context_close")
@@ -2902,10 +3260,9 @@ class TestIndySdkLedger(AsyncTestCase):
         self, mock_find_all_records, mock_add_record, mock_close, mock_open
     ):
         mock_wallet = async_mock.MagicMock()
-        mock_wallet.opened.name = "test_wallet"
-
+        self.session.context.injector.bind_provider(BaseWallet, mock_wallet)
         ledger = IndySdkLedger(
-            IndySdkLedgerPool("name", checked=True, cache=InMemoryCache()), mock_wallet
+            IndySdkLedgerPool("name", checked=True, cache=InMemoryCache()), self.profile
         )
 
         accept_time = ledger.taa_rough_timestamp()
@@ -2929,74 +3286,21 @@ class TestIndySdkLedger(AsyncTestCase):
                 {"pool_name": ledger.pool_name},
             )
         ]
+        with async_mock.patch.object(
+            IndySdkWallet, "get_public_did"
+        ) as mock_wallet_get_public_did:
+            mock_wallet_get_public_did.return_value = self.test_did_info
+            async with ledger:
+                await ledger.accept_txn_author_agreement(
+                    taa_record=taa_record, mechanism="dummy", accept_time=None
+                )
 
-        async with ledger:
-            await ledger.accept_txn_author_agreement(
-                taa_record=taa_record, mechanism="dummy", accept_time=None
-            )
-
-            await ledger.pool.cache.clear(
-                f"{TAA_ACCEPTED_RECORD_TYPE}::{mock_wallet.opened.name}::{ledger.pool_name}"
-            )
-            for i in range(2):  # populate, then get from, cache
-                response = await ledger.get_latest_txn_author_acceptance()
-                assert response == acceptance
-
-    @async_mock.patch("aries_cloudagent.ledger.indy.IndySdkLedgerPool.context_open")
-    @async_mock.patch("aries_cloudagent.ledger.indy.IndySdkLedgerPool.context_close")
-    @async_mock.patch("aries_cloudagent.storage.indy.IndySdkStorage.add_record")
-    @async_mock.patch("aries_cloudagent.storage.indy.IndySdkStorage.find_all_records")
-    async def test_accept_and_get_latest_txn_author_agreement_multiple_wallets_same_pool(
-        self, mock_find_all_records, mock_add_record, mock_close, mock_open
-    ):
-        mock_wallet1 = async_mock.MagicMock()
-        mock_wallet1.opened.name = "test_wallet1"
-
-        mock_wallet2 = async_mock.MagicMock()
-        mock_wallet2.opened.name = "test_wallet2"
-
-        shared_pool = IndySdkLedgerPool("name", checked=True, cache=InMemoryCache())
-
-        ledger1 = IndySdkLedger(shared_pool, mock_wallet1)
-        ledger2 = IndySdkLedger(shared_pool, mock_wallet2)
-
-        accept_time = ledger1.taa_rough_timestamp()
-        taa_record = {
-            "text": "text",
-            "version": "1.0",
-            "digest": "abcd1234",
-        }
-        acceptance = {
-            "text": taa_record["text"],
-            "version": taa_record["version"],
-            "digest": taa_record["digest"],
-            "mechanism": "dummy",
-            "time": accept_time,
-        }
-
-        mock_find_all_records.return_value = [
-            StorageRecord(
-                TAA_ACCEPTED_RECORD_TYPE,
-                json.dumps(acceptance),
-                {"pool_name": shared_pool.name},
-            )
-        ]
-
-        async with ledger1, ledger2:
-            # Set cache for wallet1
-            await shared_pool.cache.set(
-                f"{TAA_ACCEPTED_RECORD_TYPE}::{mock_wallet1.opened.name}::{ledger1.pool_name}",
-                acceptance,
-            )
-
-            # Expect cache value returned
-            response = await ledger1.get_latest_txn_author_acceptance()
-            assert response == acceptance
-            mock_find_all_records.assert_not_called()
-
-            # Expect wallet2 value retrieved from stoage
-            response = await ledger2.get_latest_txn_author_acceptance()
-            mock_find_all_records.assert_called_once()
+                await ledger.pool.cache.clear(
+                    f"{TAA_ACCEPTED_RECORD_TYPE}::{ledger.pool_name}"
+                )
+                for i in range(2):  # populate, then get from, cache
+                    response = await ledger.get_latest_txn_author_acceptance()
+                    assert response == acceptance
 
     @async_mock.patch("aries_cloudagent.ledger.indy.IndySdkLedgerPool.context_open")
     @async_mock.patch("aries_cloudagent.ledger.indy.IndySdkLedgerPool.context_close")
@@ -3005,20 +3309,22 @@ class TestIndySdkLedger(AsyncTestCase):
         self, mock_find_all_records, mock_close, mock_open
     ):
         mock_wallet = async_mock.MagicMock()
-        mock_wallet.opened.name = "test_wallet"
-
+        self.session.context.injector.bind_provider(BaseWallet, mock_wallet)
         ledger = IndySdkLedger(
-            IndySdkLedgerPool("name", checked=True, cache=InMemoryCache()), mock_wallet
+            IndySdkLedgerPool("name", checked=True, cache=InMemoryCache()), self.profile
         )
 
         mock_find_all_records.return_value = []
-
-        async with ledger:
-            await ledger.pool.cache.clear(
-                f"{TAA_ACCEPTED_RECORD_TYPE}::{mock_wallet.opened.name} :: {ledger.pool_name}"
-            )
-            response = await ledger.get_latest_txn_author_acceptance()
-            assert response == {}
+        with async_mock.patch.object(
+            IndySdkWallet, "get_public_did"
+        ) as mock_wallet_get_public_did:
+            mock_wallet_get_public_did.return_value = self.test_did_info
+            async with ledger:
+                await ledger.pool.cache.clear(
+                    f"{TAA_ACCEPTED_RECORD_TYPE}::{ledger.pool_name}"
+                )
+                response = await ledger.get_latest_txn_author_acceptance()
+                assert response == {}
 
     @async_mock.patch("aries_cloudagent.ledger.indy.IndySdkLedgerPool.context_open")
     @async_mock.patch("aries_cloudagent.ledger.indy.IndySdkLedgerPool.context_close")
@@ -3027,27 +3333,30 @@ class TestIndySdkLedger(AsyncTestCase):
         self, mock_get_schema, mock_close, mock_open
     ):
         mock_wallet = async_mock.MagicMock()
-
-        S_ID = f"{TestIndySdkLedger.test_did}:2:favourite_drink:1.0"
+        self.session.context.injector.bind_provider(BaseWallet, mock_wallet)
+        S_ID = f"{self.test_did}:2:favourite_drink:1.0"
         SEQ_NO = "9999"
         mock_get_schema.return_value = {"id": S_ID}
 
         ledger = IndySdkLedger(
-            IndySdkLedgerPool("name", checked=True, cache=InMemoryCache()), mock_wallet
+            IndySdkLedgerPool("name", checked=True, cache=InMemoryCache()), self.profile
         )
+        with async_mock.patch.object(
+            IndySdkWallet, "get_public_did"
+        ) as mock_wallet_get_public_did:
+            mock_wallet_get_public_did.return_value = self.test_did_info
+            async with ledger:
+                s_id_short = await ledger.credential_definition_id2schema_id(
+                    f"{self.test_did}:3:CL:{SEQ_NO}:tag"
+                )
 
-        async with ledger:
-            s_id_short = await ledger.credential_definition_id2schema_id(
-                f"{TestIndySdkLedger.test_did}:3:CL:{SEQ_NO}:tag"
-            )
+                mock_get_schema.assert_called_once_with(SEQ_NO)
 
-            mock_get_schema.assert_called_once_with(SEQ_NO)
-
-            assert s_id_short == S_ID
-            s_id_long = await ledger.credential_definition_id2schema_id(
-                f"{TestIndySdkLedger.test_did}:3:CL:{s_id_short}:tag"
-            )
-            assert s_id_long == s_id_short
+                assert s_id_short == S_ID
+                s_id_long = await ledger.credential_definition_id2schema_id(
+                    f"{self.test_did}:3:CL:{s_id_short}:tag"
+                )
+                assert s_id_long == s_id_short
 
     def test_error_handler(self):
         try:  # with self.assertRaises() makes a copy of exception, loses traceback!

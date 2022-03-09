@@ -1,45 +1,31 @@
 """Manager for multitenancy."""
 
-import logging
-import jwt
-from typing import List, Optional, cast
+from typing import Optional, cast
 
-from .cache import ProfileCache
-from ..core.profile import (
-    Profile,
-    ProfileSession,
-)
-from ..messaging.responder import BaseResponder
-from ..config.wallet import wallet_config
+from aries_cloudagent.core import profile
+from aries_cloudagent.multitenant.error import WalletKeyMissingError
+from aries_cloudagent.protocols.coordinate_mediation.v1_0.manager import \
+    MediationManager
+from aries_cloudagent.protocols.coordinate_mediation.v1_0.models.mediation_record import \
+    MediationRecord
+from aries_cloudagent.protocols.routing.v1_0.models.route_record import \
+    RouteRecord
+from aries_cloudagent.storage.base import BaseStorage
+from aries_cloudagent.wallet.base import BaseWallet
+
 from ..config.injection_context import InjectionContext
+from ..config.wallet import wallet_config
+from ..core.profile import Profile, ProfileSession
+from ..multitenant.base import BaseMultitenantManager, MultitenantManagerError
 from ..wallet.models.wallet_record import WalletRecord
-from ..wallet.base import BaseWallet
-from ..core.error import BaseError
-from ..protocols.routing.v1_0.manager import RouteNotFoundError, RoutingManager
-from ..protocols.routing.v1_0.models.route_record import RouteRecord
-from ..transport.wire_format import BaseWireFormat
-from ..storage.base import BaseStorage
-from ..storage.error import StorageNotFoundError
-from ..protocols.coordinate_mediation.v1_0.manager import (
-    MediationManager,
-    MediationRecord,
-)
-
-from .error import WalletKeyMissingError
+from .cache import ProfileCache
 
 
-LOGGER = logging.getLogger(__name__)
-
-
-class MultitenantManagerError(BaseError):
-    """Generic multitenant error."""
-
-
-class MultitenantManager:
+class MultitenantManager(BaseMultitenantManager):
     """Class for handling multitenancy."""
 
     def __init__(self, profile: Profile):
-        """Initialize multitenant Manager.
+        """Initialize default multitenant Manager.
 
         Args:
             profile: The profile for this manager
@@ -98,14 +84,7 @@ class MultitenantManager:
 
         return False
 
-    async def get_wallet_profile(
-        self,
-        base_context: InjectionContext,
-        wallet_record: WalletRecord,
-        extra_settings: dict = {},
-        *,
-        provision=False,
-    ) -> Profile:
+    async def get_wallet_profile(self, base_context: InjectionContext, wallet_record: WalletRecord, extra_settings: dict = None, *, provision=False) -> Profile:
         """Get profile for a wallet record.
 
         Args:
@@ -117,6 +96,8 @@ class MultitenantManager:
             Profile: Profile for the wallet record
 
         """
+        if extra_settings is None:
+            extra_settings = {}
         wallet_id = wallet_record.wallet_id
 
         if not self._profiles.has(wallet_id):
@@ -135,15 +116,9 @@ class MultitenantManager:
                 "mediation.default_id": None,
                 "mediation.clear": None,
             }
-
-            dispatch_type = wallet_record.wallet_dispatch_type
-            webhook_urls = wallet_record.wallet_webhook_urls
-            base_webhook_urls = context.settings.get("admin.webhook_urls")
-            if dispatch_type == "both":
-                target_urls = list(set(base_webhook_urls) | set(webhook_urls))
-                extra_settings["admin.webhook_urls"] = target_urls
-            elif dispatch_type == "default":
-                extra_settings["admin.webhook_urls"] = webhook_urls
+            extra_settings["admin.webhook_urls"] = self.get_webhook_urls(
+                base_context, wallet_record
+            )
 
             context.settings = (
                 context.settings.extend(reset_settings)
@@ -151,11 +126,7 @@ class MultitenantManager:
                 .extend(extra_settings)
             )
 
-            context.settings = context.settings.extend(wallet_record.settings).extend(
-                extra_settings
-            )
-
-            # MTODO: add ledger config
+            # TODO: add ledger config
             profile, _ = await wallet_config(context, provision=provision)
             await self._profiles.put(wallet_id, profile)
 
@@ -270,158 +241,9 @@ class MultitenantManager:
         Add a wallet key to map incoming messages to specific subwallets.
 
         Args:
-            wallet_id: The wallet id the key corresponds to
-            recipient_key: The recipient key belonging to the wallet
-            skip_if_exists: Whether to skip the action if the key is already registered
-                            for relaying / mediation
-        """
-
-        async with self.profile.session() as session:
-            LOGGER.info(
-                f"Add route record for recipient {recipient_key} to wallet {wallet_id}"
-            )
-            routing_mgr = RoutingManager(session)
-            mediation_mgr = MediationManager(session)
-            mediation_record = await mediation_mgr.get_default_mediator()
-
-            if skip_if_exists:
-                try:
-                    await RouteRecord.retrieve_by_recipient_key(session, recipient_key)
-
-                    # If no error is thrown, it means there is already a record
-                    return
-                except (StorageNotFoundError):
-                    pass
-
-            await routing_mgr.create_route_record(
-                recipient_key=recipient_key, internal_wallet_id=wallet_id
-            )
-
-            # External mediation
-            if mediation_record:
-                keylist_updates = await mediation_mgr.add_key(recipient_key)
-
-                responder = session.inject(BaseResponder)
-                await responder.send(
-                    keylist_updates, connection_id=mediation_record.connection_id
-                )
-
-    def create_auth_token(
-        self, wallet_record: WalletRecord, wallet_key: str = None
-    ) -> str:
-        """Create JWT auth token for specified wallet record.
-
-        Args:
-            wallet_record: The wallet record to create the token for
-            wallet_key: The wallet key to include in the token.
-                Only required for "unmanaged" wallets
-
-        Raises:
-            WalletKeyMissingError: If the wallet key is missing.
-                Only thrown for "unmanaged" wallets
-
-        Returns:
-            str: JWT auth token
+            profile: The wallet profile instance
 
         """
-
-        jwt_payload = {"wallet_id": wallet_record.wallet_id}
-        jwt_secret = self.profile.settings.get("multitenant.jwt_secret")
-
-        if wallet_record.requires_external_key:
-            if not wallet_key:
-                raise WalletKeyMissingError()
-
-            jwt_payload["wallet_key"] = wallet_key
-
-        token = jwt.encode(jwt_payload, jwt_secret, algorithm="HS256").decode()
-
-        return token
-
-    async def get_profile_for_token(
-        self, context: InjectionContext, token: str
-    ) -> Profile:
-        """Get the profile associated with a JWT header token.
-
-        Args:
-            context: The context to use for profile creation
-            token: The token
-
-        Raises:
-            WalletKeyMissingError: If the wallet_key is missing for an unmanaged wallet
-            InvalidTokenError: If there is an exception while decoding the token
-
-        Returns:
-            Profile associated with the token
-
-        """
-        jwt_secret = self.profile.context.settings.get("multitenant.jwt_secret")
-        extra_settings = {}
-
-        token_body = jwt.decode(token, jwt_secret, algorithms=["HS256"])
-
-        wallet_id = token_body.get("wallet_id")
-        wallet_key = token_body.get("wallet_key")
-
-        async with self.profile.session() as session:
-            wallet = await WalletRecord.retrieve_by_id(session, wallet_id)
-
-            if wallet.requires_external_key:
-                if not wallet_key:
-                    raise WalletKeyMissingError()
-
-                extra_settings["wallet.key"] = wallet_key
-
-            profile = await self.get_wallet_profile(context, wallet, extra_settings)
-
-            return profile
-
-    async def _get_wallet_by_key(
-        self, session: ProfileSession, recipient_key: str
-    ) -> Optional[WalletRecord]:
-        """Get the wallet record associated with the recipient key.
-
-        Args:
-            session: The profile session to use
-            recipient_key: The recipient key
-        Returns:
-            Wallet record associated with the recipient key
-        """
-        routing_mgr = RoutingManager(session)
-
-        try:
-            routing_record = await routing_mgr.get_recipient(recipient_key)
-            wallet = await WalletRecord.retrieve_by_id(
-                session, routing_record.wallet_id
-            )
-
-            return wallet
-        except (RouteNotFoundError):
-            pass
-
-    async def get_wallets_by_message(
-        self, message_body, wire_format: BaseWireFormat = None
-    ) -> List[WalletRecord]:
-        """Get the wallet records associated with the message boy.
-
-        Args:
-            message_body: The body of the message
-            wire_format: Wire format to use for recipient detection
-
-        Returns:
-            Wallet records associated with the message body
-
-        """
-        async with self.profile.session() as session:
-            wire_format = wire_format or session.inject(BaseWireFormat)
-
-            recipient_keys = wire_format.get_recipient_keys(message_body)
-            wallets = []
-
-            for key in recipient_keys:
-                wallet = await self._get_wallet_by_key(session, key)
-
-                if wallet:
-                    wallets.append(wallet)
-
-            return wallets
+        wallet_id = profile.settings.get("wallet.id")
+        del self._instances[wallet_id] # TODO: FixME...
+        await profile.remove()

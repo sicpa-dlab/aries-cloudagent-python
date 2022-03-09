@@ -11,18 +11,33 @@ wallet.
 import hashlib
 import json
 import logging
+from qrcode import QRCode
 
 from ..admin.base_server import BaseAdminServer
 from ..admin.server import AdminResponder, AdminServer
 from ..config.default_context import ContextBuilder
 from ..config.injection_context import InjectionContext
-from ..config.ledger import get_genesis_transactions, ledger_config
+from ..config.provider import ClassProvider
+from ..config.ledger import (
+    get_genesis_transactions,
+    ledger_config,
+    load_multiple_genesis_transactions_from_config,
+)
 from ..config.logging import LoggingConfigurator
 from ..config.wallet import wallet_config
 from ..core.profile import Profile
+from ..indy.verifier import IndyVerifier
+from ..ledger.base import BaseLedger
 from ..ledger.error import LedgerConfigError, LedgerTransactionError
+from ..ledger.multiple_ledger.base_manager import (
+    BaseMultipleLedgerManager,
+    MultipleLedgerManagerError,
+)
+from ..ledger.multiple_ledger.manager_provider import MultiIndyLedgerManagerProvider
+from ..ledger.multiple_ledger.ledger_requests_executor import IndyLedgerRequestsExecutor
 from ..messaging.responder import BaseResponder
-from ..multitenant.manager import MultitenantManager
+from ..multitenant.base import BaseMultitenantManager
+from ..multitenant.manager_provider import MultitenantManagerProvider
 from ..protocols.connections.v1_0.manager import (
     ConnectionManager,
     ConnectionManagerError,
@@ -31,21 +46,28 @@ from ..protocols.connections.v1_0.messages.connection_invitation import (
     ConnectionInvitation,
 )
 from ..protocols.coordinate_mediation.v1_0.manager import MediationManager
-from ..protocols.coordinate_mediation.v1_0.models.mediation_record import (
-    MediationRecord,
-)
+from ..protocols.coordinate_mediation.mediation_invite_store import MediationInviteStore
 from ..protocols.out_of_band.v1_0.manager import OutOfBandManager
-from ..protocols.out_of_band.v1_0.messages.invitation import InvitationMessage
+from ..protocols.out_of_band.v1_0.messages.invitation import HSProto, InvitationMessage
+from ..storage.base import BaseStorage
+from ..storage.error import StorageNotFoundError
 from ..transport.inbound.manager import InboundTransportManager
 from ..transport.inbound.message import InboundMessage
 from ..transport.outbound.base import OutboundDeliveryError
 from ..transport.outbound.manager import OutboundTransportManager, QueuedOutboundMessage
 from ..transport.outbound.message import OutboundMessage
+from ..transport.outbound.queue.base import BaseOutboundQueue
+from ..transport.outbound.queue.loader import get_outbound_queue
+from ..transport.outbound.status import OutboundSendStatus
 from ..transport.wire_format import BaseWireFormat
 from ..utils.stats import Collector
 from ..utils.task_queue import CompletedTask, TaskQueue
-from ..wallet.base import DIDInfo
+from ..vc.ld_proofs.document_loader import DocumentLoader
+from ..version import __version__, RECORD_TYPE_ACAPY_VERSION
+from ..wallet.did_info import DIDInfo
+
 from .dispatcher import Dispatcher
+from .util import STARTUP_EVENT_TOPIC, SHUTDOWN_EVENT_TOPIC
 
 LOGGER = logging.getLogger(__name__)
 
@@ -75,6 +97,7 @@ class Conductor:
         self.outbound_transport_manager: OutboundTransportManager = None
         self.root_profile: Profile = None
         self.setup_public_did: DIDInfo = None
+        self.outbound_queue: BaseOutboundQueue = None
 
     @property
     def context(self) -> InjectionContext:
@@ -87,11 +110,66 @@ class Conductor:
         context = await self.context_builder.build_context()
 
         # Fetch genesis transactions if necessary
-        await get_genesis_transactions(context.settings)
+        if context.settings.get("ledger.ledger_config_list"):
+            await load_multiple_genesis_transactions_from_config(context.settings)
+        if (
+            context.settings.get("ledger.genesis_transactions")
+            or context.settings.get("ledger.genesis_file")
+            or context.settings.get("ledger.genesis_url")
+        ):
+            await get_genesis_transactions(context.settings)
 
         # Configure the root profile
         self.root_profile, self.setup_public_did = await wallet_config(context)
         context = self.root_profile.context
+
+        # Multiledger Setup
+        if (
+            context.settings.get("ledger.ledger_config_list")
+            and len(context.settings.get("ledger.ledger_config_list")) > 0
+        ):
+            context.injector.bind_provider(
+                BaseMultipleLedgerManager,
+                MultiIndyLedgerManagerProvider(self.root_profile),
+            )
+            if not (context.settings.get("ledger.genesis_transactions")):
+                ledger = (
+                    await context.injector.inject(
+                        BaseMultipleLedgerManager
+                    ).get_write_ledger()
+                )[1]
+                if (
+                    self.root_profile.BACKEND_NAME == "askar"
+                    and ledger.BACKEND_NAME == "indy-vdr"
+                ):
+                    context.injector.bind_instance(BaseLedger, ledger)
+                    context.injector.bind_provider(
+                        IndyVerifier,
+                        ClassProvider(
+                            "aries_cloudagent.indy.credx.verifier.IndyCredxVerifier",
+                            self.root_profile,
+                        ),
+                    )
+                elif (
+                    self.root_profile.BACKEND_NAME == "indy"
+                    and ledger.BACKEND_NAME == "indy"
+                ):
+                    context.injector.bind_instance(BaseLedger, ledger)
+                    context.injector.bind_provider(
+                        IndyVerifier,
+                        ClassProvider(
+                            "aries_cloudagent.indy.sdk.verifier.IndySdkVerifier",
+                            self.root_profile,
+                        ),
+                    )
+                else:
+                    raise MultipleLedgerManagerError(
+                        "Multiledger is supported only for Indy SDK or Askar "
+                        "[Indy VDR] profile"
+                    )
+        context.injector.bind_instance(
+            IndyLedgerRequestsExecutor, IndyLedgerRequestsExecutor(self.root_profile)
+        )
 
         # Configure the ledger
         if not await ledger_config(
@@ -104,10 +182,13 @@ class Conductor:
             self.root_profile, self.inbound_message_router, self.handle_not_returned
         )
         await self.inbound_transport_manager.setup()
+        context.injector.bind_instance(
+            InboundTransportManager, self.inbound_transport_manager
+        )
 
         # Register all outbound transports
         self.outbound_transport_manager = OutboundTransportManager(
-            context, self.handle_not_delivered
+            self.root_profile, self.handle_not_delivered
         )
         await self.outbound_transport_manager.setup()
 
@@ -115,14 +196,22 @@ class Conductor:
         self.dispatcher = Dispatcher(self.root_profile)
         await self.dispatcher.setup()
 
-        wire_format = context.inject(BaseWireFormat, required=False)
+        wire_format = context.inject_or(BaseWireFormat)
         if wire_format and hasattr(wire_format, "task_queue"):
             wire_format.task_queue = self.dispatcher.task_queue
 
         # Bind manager for multitenancy related tasks
         if context.settings.get("multitenant.enabled"):
-            multitenant_mgr = MultitenantManager(self.root_profile)
-            context.injector.bind_instance(MultitenantManager, multitenant_mgr)
+            context.injector.bind_provider(
+                BaseMultitenantManager, MultitenantManagerProvider(self.root_profile)
+            )
+
+        # Bind default PyLD document loader
+        context.injector.bind_instance(
+            DocumentLoader, DocumentLoader(self.root_profile)
+        )
+
+        self.outbound_queue = get_outbound_queue(self.root_profile)
 
         # Admin API
         if context.settings.get("admin.enabled"):
@@ -140,19 +229,13 @@ class Conductor:
                     self.dispatcher.task_queue,
                     self.get_stats,
                 )
-                webhook_urls = context.settings.get("admin.webhook_urls")
-                if webhook_urls:
-                    for url in webhook_urls:
-                        self.admin_server.add_webhook_target(url)
                 context.injector.bind_instance(BaseAdminServer, self.admin_server)
-                if "http" not in self.outbound_transport_manager.registered_schemes:
-                    self.outbound_transport_manager.register("http")
             except Exception:
                 LOGGER.exception("Unable to register admin server")
                 raise
 
         # Fetch stats collector, if any
-        collector = context.inject(Collector, required=False)
+        collector = context.inject_or(Collector)
         if collector:
             # add stats to our own methods
             collector.wrap(
@@ -190,6 +273,13 @@ class Conductor:
             LOGGER.exception("Unable to start outbound transports")
             raise
 
+        if self.outbound_queue:
+            try:
+                await self.outbound_queue.start()
+            except Exception:
+                LOGGER.exception("Unable to start outbound queue")
+                raise
+
         # Start up Admin server
         if self.admin_server:
             try:
@@ -202,7 +292,6 @@ class Conductor:
             responder = AdminResponder(
                 self.root_profile,
                 self.admin_server.outbound_message_router,
-                self.admin_server.send_webhook,
             )
             context.injector.bind_instance(BaseResponder, responder)
 
@@ -214,116 +303,183 @@ class Conductor:
             default_label,
             self.inbound_transport_manager.registered_transports,
             self.outbound_transport_manager.registered_transports,
+            self.outbound_queue,
             self.setup_public_did and self.setup_public_did.did,
             self.admin_server,
         )
 
+        # record ACA-Py version in Wallet, if needed
+        async with self.root_profile.session() as session:
+            storage: BaseStorage = session.context.inject(BaseStorage)
+            agent_version = f"v{__version__}"
+            try:
+                record = await storage.find_record(
+                    type_filter=RECORD_TYPE_ACAPY_VERSION,
+                    tag_query={},
+                )
+                if record.value != agent_version:
+                    LOGGER.exception(
+                        (
+                            f"Wallet storage version {record.value} "
+                            "does not match this ACA-Py agent "
+                            f"version {agent_version}. Run aca-py "
+                            "upgrade command to fix this."
+                        )
+                    )
+                    raise
+            except StorageNotFoundError:
+                pass
+
         # Create a static connection for use by the test-suite
         if context.settings.get("debug.test_suite_endpoint"):
-            async with self.root_profile.session() as session:
-                mgr = ConnectionManager(session)
-                their_endpoint = context.settings["debug.test_suite_endpoint"]
-                test_conn = await mgr.create_static_connection(
-                    my_seed=hashlib.sha256(b"aries-protocol-test-subject").digest(),
-                    their_seed=hashlib.sha256(b"aries-protocol-test-suite").digest(),
-                    their_endpoint=their_endpoint,
-                    alias="test-suite",
-                )
-                print("Created static connection for test suite")
-                print(" - My DID:", test_conn.my_did)
-                print(" - Their DID:", test_conn.their_did)
-                print(" - Their endpoint:", their_endpoint)
-                print()
-                del mgr
+            mgr = ConnectionManager(self.root_profile)
+            their_endpoint = context.settings["debug.test_suite_endpoint"]
+            test_conn = await mgr.create_static_connection(
+                my_seed=hashlib.sha256(b"aries-protocol-test-subject").digest(),
+                their_seed=hashlib.sha256(b"aries-protocol-test-suite").digest(),
+                their_endpoint=their_endpoint,
+                alias="test-suite",
+            )
+            print("Created static connection for test suite")
+            print(" - My DID:", test_conn.my_did)
+            print(" - Their DID:", test_conn.their_did)
+            print(" - Their endpoint:", their_endpoint)
+            print()
+            del mgr
 
         # Clear default mediator
         if context.settings.get("mediation.clear"):
-            async with self.root_profile.session() as session:
-                mediation_mgr = MediationManager(session)
-                await mediation_mgr.clear_default_mediator()
-                print("Default mediator cleared.")
+            mediation_mgr = MediationManager(self.root_profile)
+            await mediation_mgr.clear_default_mediator()
+            print("Default mediator cleared.")
 
+        # Clear default mediator
         # Set default mediator by id
         default_mediator_id = context.settings.get("mediation.default_id")
         if default_mediator_id:
-            async with self.root_profile.session() as session:
-                mediation_mgr = MediationManager(session)
-                try:
-                    record = await MediationRecord.retrieve_by_id(
-                        session, default_mediator_id
-                    )
-                    await mediation_mgr.set_default_mediator(record)
-                    print(f"Default mediator set to {default_mediator_id}")
-                except Exception:
-                    LOGGER.exception("Error retrieving mediation record")
+            mediation_mgr = MediationManager(self.root_profile)
+            try:
+                await mediation_mgr.set_default_mediator_by_id(default_mediator_id)
+                print(f"Default mediator set to {default_mediator_id}")
+            except Exception:
+                LOGGER.exception("Error updating default mediator")
 
         # Print an invitation to the terminal
         if context.settings.get("debug.print_invitation"):
             try:
-                async with self.root_profile.session() as session:
-                    mgr = OutOfBandManager(session)
-                    invi_rec = await mgr.create_invitation(
-                        my_label=context.settings.get("debug.invite_label"),
-                        public=context.settings.get("debug.invite_public", False),
-                        multi_use=context.settings.get("debug.invite_multi_use", False),
-                        include_handshake=True,
-                        metadata=json.loads(
-                            context.settings.get("debug.invite_metadata_json", "{}")
-                        ),
-                    )
-                    base_url = context.settings.get("invite_base_url")
-                    invite_url = InvitationMessage.deserialize(
-                        invi_rec.invitation
-                    ).to_url(base_url)
-                    print("Invitation URL:")
-                    print(invite_url, flush=True)
-                    del mgr
+                mgr = OutOfBandManager(self.root_profile)
+                invi_rec = await mgr.create_invitation(
+                    my_label=context.settings.get("debug.invite_label"),
+                    public=context.settings.get("debug.invite_public", False),
+                    multi_use=context.settings.get("debug.invite_multi_use", False),
+                    hs_protos=[HSProto.RFC23],
+                    metadata=json.loads(
+                        context.settings.get("debug.invite_metadata_json", "{}")
+                    ),
+                )
+                base_url = context.settings.get("invite_base_url")
+                invite_url = invi_rec.invitation.to_url(base_url)
+                print("Invitation URL:")
+                print(invite_url, flush=True)
+                qr = QRCode(border=1)
+                qr.add_data(invite_url)
+                qr.print_ascii(invert=True)
+                del mgr
             except Exception:
                 LOGGER.exception("Error creating invitation")
 
         # Print connections protocol invitation to the terminal
         if context.settings.get("debug.print_connections_invitation"):
             try:
-                async with self.root_profile.session() as session:
-                    mgr = ConnectionManager(session)
-                    _record, invite = await mgr.create_invitation(
-                        my_label=context.settings.get("debug.invite_label"),
-                        public=context.settings.get("debug.invite_public", False),
-                        multi_use=context.settings.get("debug.invite_multi_use", False),
-                        metadata=json.loads(
-                            context.settings.get("debug.invite_metadata_json", "{}")
-                        ),
-                    )
-                    base_url = context.settings.get("invite_base_url")
-                    print("Invitation URL (Connections protocol):")
-                    print(invite.to_url(base_url), flush=True)
-                    del mgr
+                mgr = ConnectionManager(self.root_profile)
+                _record, invite = await mgr.create_invitation(
+                    my_label=context.settings.get("debug.invite_label"),
+                    public=context.settings.get("debug.invite_public", False),
+                    multi_use=context.settings.get("debug.invite_multi_use", False),
+                    metadata=json.loads(
+                        context.settings.get("debug.invite_metadata_json", "{}")
+                    ),
+                )
+                base_url = context.settings.get("invite_base_url")
+                invite_url = invite.to_url(base_url)
+                print("Invitation URL (Connections protocol):")
+                print(invite_url, flush=True)
+                qr = QRCode(border=1)
+                qr.add_data(invite_url)
+                qr.print_ascii(invert=True)
+                del mgr
             except Exception:
                 LOGGER.exception("Error creating invitation")
 
-        # Accept mediation invitation if specified
-        mediation_invitation = context.settings.get("mediation.invite")
-        if mediation_invitation:
+        # mediation connection establishment
+        provided_invite: str = context.settings.get("mediation.invite")
+
+        try:
+            async with self.root_profile.session() as session:
+                invite_store = MediationInviteStore(session.context.inject(BaseStorage))
+                mediation_invite_record = (
+                    await invite_store.get_mediation_invite_record(provided_invite)
+                )
+        except Exception:
+            LOGGER.exception("Error retrieving mediator invitation")
+            mediation_invite_record = None
+
+        # Accept mediation invitation if one was specified or stored
+        if mediation_invite_record is not None:
             try:
-                async with self.root_profile.session() as session:
-                    mgr = ConnectionManager(session)
+                mediation_connections_invite = context.settings.get(
+                    "mediation.connections_invite", False
+                )
+                invitation_handler = (
+                    ConnectionInvitation
+                    if mediation_connections_invite
+                    else InvitationMessage
+                )
+
+                if not mediation_invite_record.used:
+                    # clear previous mediator configuration before establishing a
+                    # new one
+                    await MediationManager(self.root_profile).clear_default_mediator()
+
+                    mgr = (
+                        ConnectionManager(self.root_profile)
+                        if mediation_connections_invite
+                        else OutOfBandManager(self.root_profile)
+                    )
+
                     conn_record = await mgr.receive_invitation(
-                        invitation=ConnectionInvitation.from_url(mediation_invitation),
+                        invitation=invitation_handler.from_url(
+                            mediation_invite_record.invite
+                        ),
                         auto_accept=True,
                     )
-                    await conn_record.metadata_set(
-                        session, MediationManager.SEND_REQ_AFTER_CONNECTION, True
-                    )
-                    await conn_record.metadata_set(
-                        session, MediationManager.SET_TO_DEFAULT_ON_GRANTED, True
-                    )
+                    async with self.root_profile.session() as session:
+                        await (
+                            MediationInviteStore(
+                                session.context.inject(BaseStorage)
+                            ).mark_default_invite_as_used()
+                        )
+
+                        await conn_record.metadata_set(
+                            session, MediationManager.SEND_REQ_AFTER_CONNECTION, True
+                        )
+                        await conn_record.metadata_set(
+                            session, MediationManager.SET_TO_DEFAULT_ON_GRANTED, True
+                        )
+
                     print("Attempting to connect to mediator...")
                     del mgr
             except Exception:
                 LOGGER.exception("Error accepting mediation invitation")
 
+        # notify protcols of startup status
+        await self.root_profile.notify(STARTUP_EVENT_TOPIC, {})
+
     async def stop(self, timeout=1.0):
         """Stop the agent."""
+        # notify protcols that we are shutting down
+        await self.root_profile.notify(SHUTDOWN_EVENT_TOPIC, {})
+
         shutdown = TaskQueue()
         if self.dispatcher:
             shutdown.run(self.dispatcher.complete())
@@ -333,9 +489,11 @@ class Conductor:
             shutdown.run(self.inbound_transport_manager.stop())
         if self.outbound_transport_manager:
             shutdown.run(self.outbound_transport_manager.stop())
+        if self.outbound_queue:
+            shutdown.run(self.outbound_queue.stop())
 
         # close multitenant profiles
-        multitenant_mgr = self.context.inject(MultitenantManager, required=False)
+        multitenant_mgr = self.context.inject_or(BaseMultitenantManager)
         if multitenant_mgr:
             for profile in multitenant_mgr._profiles.profiles.values():
                 shutdown.run(profile.close())
@@ -375,7 +533,6 @@ class Conductor:
                 profile,
                 message,
                 self.outbound_message_router,
-                self.admin_server and self.admin_server.send_webhook,
                 lambda completed: self.dispatch_complete(message, completed),
             )
         except (LedgerConfigError, LedgerTransactionError) as e:
@@ -431,7 +588,7 @@ class Conductor:
         profile: Profile,
         outbound: OutboundMessage,
         inbound: InboundMessage = None,
-    ) -> None:
+    ) -> OutboundSendStatus:
         """
         Route an outbound message.
 
@@ -445,10 +602,10 @@ class Conductor:
                 outbound.reply_from_verkey = inbound.receipt.recipient_verkey
             # return message to an inbound session
             if self.inbound_transport_manager.return_to_session(outbound):
-                return
+                return OutboundSendStatus.SENT_TO_SESSION
 
         if not outbound.to_session_only:
-            await self.queue_outbound(profile, outbound, inbound)
+            return await self.queue_outbound(profile, outbound, inbound)
 
     def handle_not_returned(self, profile: Profile, outbound: OutboundMessage):
         """Handle a message that failed delivery via an inbound session."""
@@ -465,9 +622,9 @@ class Conductor:
         profile: Profile,
         outbound: OutboundMessage,
         inbound: InboundMessage = None,
-    ):
+    ) -> OutboundSendStatus:
         """
-        Queue an outbound message.
+        Queue an outbound message for transport.
 
         Args:
             profile: The active profile
@@ -476,35 +633,76 @@ class Conductor:
         """
         # populate connection target(s)
         if not outbound.target and not outbound.target_list and outbound.connection_id:
-            async with profile.session() as session:
-                conn_mgr = ConnectionManager(session)
-                try:
-                    outbound.target_list = await self.dispatcher.run_task(
-                        conn_mgr.get_connection_targets(
-                            connection_id=outbound.connection_id
-                        )
+            conn_mgr = ConnectionManager(profile)
+            try:
+                outbound.target_list = await self.dispatcher.run_task(
+                    conn_mgr.get_connection_targets(
+                        connection_id=outbound.connection_id
                     )
-                except ConnectionManagerError:
-                    LOGGER.exception(
-                        "Error preparing outbound message for transmission"
-                    )
-                    return
-                except (LedgerConfigError, LedgerTransactionError) as e:
-                    LOGGER.error("Shutdown on ledger error %s", str(e))
-                    if self.admin_server:
-                        self.admin_server.notify_fatal_error()
-                    raise
-                del conn_mgr
+                )
+            except ConnectionManagerError:
+                LOGGER.exception("Error preparing outbound message for transmission")
+                return
+            except (LedgerConfigError, LedgerTransactionError) as e:
+                LOGGER.error("Shutdown on ledger error %s", str(e))
+                if self.admin_server:
+                    self.admin_server.notify_fatal_error()
+                raise
+            del conn_mgr
+        # If ``self.outbound_queue`` is specified (usually set via
+        # outbound queue `-oq` commandline option), use that external
+        # queue. Else save the message to an internal queue. This
+        # internal queue usually results in the message to be sent over
+        # ACA-py `-ot` transport.
+        if self.outbound_queue:
+            return await self._queue_external(profile, outbound)
+        else:
+            return self._queue_internal(profile, outbound)
 
+    async def _queue_external(
+        self,
+        profile: Profile,
+        outbound: OutboundMessage,
+    ) -> OutboundSendStatus:
+        """Save the message to an external outbound queue."""
+        async with self.outbound_queue:
+            targets = (
+                [outbound.target] if outbound.target else (outbound.target_list or [])
+            )
+            for target in targets:
+                encoded_outbound_message = (
+                    await self.outbound_transport_manager.encode_outbound_message(
+                        profile, outbound, target
+                    )
+                )
+                await self.outbound_queue.enqueue_message(
+                    encoded_outbound_message.payload, target.endpoint
+                )
+
+            return OutboundSendStatus.SENT_TO_EXTERNAL_QUEUE
+
+    def _queue_internal(
+        self, profile: Profile, outbound: OutboundMessage
+    ) -> OutboundSendStatus:
+        """Save the message to an internal outbound queue."""
         try:
             self.outbound_transport_manager.enqueue_message(profile, outbound)
+            return OutboundSendStatus.QUEUED_FOR_DELIVERY
         except OutboundDeliveryError:
             LOGGER.warning("Cannot queue message for delivery, no supported transport")
-            self.handle_not_delivered(profile, outbound)
+            return self.handle_not_delivered(profile, outbound)
 
-    def handle_not_delivered(self, profile: Profile, outbound: OutboundMessage):
+    def handle_not_delivered(
+        self, profile: Profile, outbound: OutboundMessage
+    ) -> OutboundSendStatus:
         """Handle a message that failed delivery via outbound transports."""
-        self.inbound_transport_manager.return_undelivered(outbound)
+        queued_for_inbound = self.inbound_transport_manager.return_undelivered(outbound)
+
+        return (
+            OutboundSendStatus.WAITING_FOR_PICKUP
+            if queued_for_inbound
+            else OutboundSendStatus.UNDELIVERABLE
+        )
 
     def webhook_router(
         self,

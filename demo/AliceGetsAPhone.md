@@ -19,6 +19,7 @@ This demo also introduces revocation of credentials.
 - [Present the Proof](#present-the-proof)
 - [Review the Proof](#review-the-proof)
 - [Revoke the Credential and Send Another Proof Request](#revoke-the-credential-and-send-another-proof-request)
+- [Send a Connectionless Proof Request](#send-a-connectionless-proof-request)
 - [Conclusion](#conclusion)
 
 ## Getting Started
@@ -133,8 +134,10 @@ Note that with _Play with Docker_ it can be challenging to capture the informati
 If you are running in a _local bash shell_, navigate to [The demo directory](/demo) and run:
 
 ```bash
-TAILS_NETWORK=docker_tails-server LEDGER_URL=http://test.bcovrin.vonx.io ./run_demo faber --revocation --events
+TAILS_NETWORK=docker_tails-server LEDGER_URL=http://test.bcovrin.vonx.io ./run_demo faber --aip 10 --revocation --events
 ```
+
+(Note that we have to start faber with `--aip 10` for compatibility with mobile clients.)
 
 The `TAILS_NETWORK` parameter lets the demo script know how to connect to the tails server (which should be running in a separate shell on the same machine).
 
@@ -143,7 +146,7 @@ The `TAILS_NETWORK` parameter lets the demo script know how to connect to the ta
 If you are running in _Play with Docker_, navigate to [The demo directory](/demo) and run:
 
 ```bash
-PUBLIC_TAILS_URL=https://c4f7fbb85911.ngrok.io LEDGER_URL=http://test.bcovrin.vonx.io ./run_demo faber --revocation --events
+PUBLIC_TAILS_URL=https://c4f7fbb85911.ngrok.io LEDGER_URL=http://test.bcovrin.vonx.io ./run_demo faber --aip 10 --revocation --events
 ```
 
 The `PUBLIC_TAILS_URL` parameter lets the demo script know how to connect to the tails server. This can be running in another PWD session, or even on your local machine - the ngrok endpoint is public and will map to the correct location.
@@ -222,10 +225,10 @@ In the Faber console, select option `1` to send a credential to the mobile agent
 The Faber agent outputs details to the console; e.g.,
 
 ```text
-Faber      | Credential: state = credential_issued, credential_exchange_id = bb9bf750-905f-444f-b8aa-42c3a51d9464
-Faber      | Revocation registry id: Jt7PhrEc2rYuS4iVcREfoA:4:Jt7PhrEc2rYuS4iVcREfoA:3:CL:44:default:CL_ACCUM:55a13dff-c104-45b5-b633-d3fd1ac43b9a
-Faber      | Credential revocation id: 1
-Faber      | Credential: state = credential_acked, credential_exchange_id = bb9bf750-905f-444f-b8aa-42c3a51d9464
+Faber      | Credential: state = credential-issued, cred_ex_id = ba3089d6-92da-4cb7-9062-7f24066b2a2a
+Faber      | Revocation registry ID: CMqNjZ8e59jDuBYcquce4D:4:CMqNjZ8e59jDuBYcquce4D:3:CL:50:faber.agent.degree_schema:CL_ACCUM:4f4fb2e4-3a59-45b1-8921-578d005a7ff6
+Faber      | Credential revocation ID: 1
+Faber      | Credential: state = done, cred_ex_id = ba3089d6-92da-4cb7-9062-7f24066b2a2a
 ```
 
 The revocation registry id and credential revocation id only appear if revocation is active. If you are doing revocation, you to need the `Revocation registry id` later, so we recommend that you copy it it now and paste it into a text file or someplace that you can access later. If you don't write it down, you can get the Id from the Admin API using the **`GET /revocation/active-registry/{cred_def_id}`** endpoint, and passing in the credential definition Id (which you can get from the **`GET /credential-definitions/created`** endpoint).
@@ -290,7 +293,7 @@ In the Faber console window, the proof should be received as validated.
 
 ## Revoke the Credential and Send Another Proof Request
 
-If you have enabled revocation, you can try revoking the credential pending publication (`faber` options `4` and `5`). For the revocation step, You will need the revocation registry identifier and the credential revocation identifier (which is 1 for the first credential you issued), as the Faber agent logged them to the console at credential issue.
+If you have enabled revocation, you can try revoking the credential and publishing its pending revoked status (`faber` options `5` and `6`). For the revocation step, You will need the revocation registry identifier and the credential revocation identifier (which is 1 for the first credential you issued), as the Faber agent logged them to the console at credential issue.
 
 Once that is done, try sending another proof request and see what happens! Experiment with immediate and pending publication. Note that immediate publication also publishes any pending revocations on its revocation registry.
 
@@ -298,6 +301,18 @@ Once that is done, try sending another proof request and see what happens! Exper
     <summary>Click here to view screenshot</summary>
     <img src="./collateral/revocation-3-console.png" alt="Revocation">
 </details>
+
+## Send a Connectionless Proof Request
+
+A connectionless proof request works the same way as a regular proof request, however it does not require a connection to be established between the Verifier and Holder/Prover.
+
+This is supported in the Faber demo, however note that it will only work when running Faber on the Docker playground service [Play with Docker](https://labs.play-with-docker.com/) (or on [Play with VON](http://play-with-von.vonx.io)).  (This is because both the Faber agent *and* controller both need to be exposed to the mobile agent.)
+
+If you have gone through the above steps, you can delete the Faber connection in your mobile agent (however *do not* delete the credential that Faber issued to you).
+
+Then in the faber demo, select option `2a` - Faber will display a QR code which you can scan with your mobile agent.  You will see the same proof request displayed in your mobile agent, which you can respond to.
+
+Behind the scenes, the Faber controller delivers the proof request information (linked from the url encoded in the QR code) directly to your mobile agent, without establishing and agent-to-agent connection first.  If you are interested in the underlying mechanics, you can review the `faber.py` code in the repository.
 
 ## Conclusion
 

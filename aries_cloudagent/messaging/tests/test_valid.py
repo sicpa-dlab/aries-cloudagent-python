@@ -2,7 +2,6 @@ import json
 import pytest
 
 from unittest import TestCase
-
 from marshmallow import ValidationError
 
 from ..valid import (
@@ -10,6 +9,8 @@ from ..valid import (
     BASE64,
     BASE64URL,
     BASE64URL_NO_PAD,
+    CREDENTIAL_CONTEXT,
+    CREDENTIAL_TYPE,
     DID_KEY,
     DID_POSTURE,
     ENDPOINT,
@@ -111,7 +112,7 @@ class TestValid(TestCase):
             with self.assertRaises(ValidationError):
                 INDY_DID["validate"](non_indy_did)
 
-        INDY_DID["validate"]("Q4zqM7aXqm7gDQkUVLng9h")  # TODO: accept non-indy dids
+        INDY_DID["validate"]("Q4zqM7aXqm7gDQkUVLng9h")
         INDY_DID["validate"]("did:sov:Q4zqM7aXqm7gDQkUVLng9h")
 
     def test_indy_raw_public_key(self):
@@ -462,7 +463,6 @@ class TestValid(TestCase):
             "",
             "/path/only",
             "https://1.2.3.4?query=true&url=false",
-            "http://no_tld/bad",
             "no-proto:8080/my/path",
             "smtp:8080/my/path#fragment",
         ]
@@ -495,3 +495,30 @@ class TestValid(TestCase):
         ENDPOINT_TYPE["validate"]("Endpoint")
         ENDPOINT_TYPE["validate"]("Profile")
         ENDPOINT_TYPE["validate"]("LinkedDomains")
+
+    def test_credential_type(self):
+        with self.assertRaises(ValidationError):
+            CREDENTIAL_TYPE["validate"]([])
+
+        with self.assertRaises(ValidationError):
+            CREDENTIAL_TYPE["validate"](["WrongType", "AnotherWrongType"])
+
+        with self.assertRaises(ValidationError):
+            CREDENTIAL_TYPE["validate"](["VerifiableCredential"])
+
+        CREDENTIAL_TYPE["validate"](["VerifiableCredential", "AnotherType"])
+        CREDENTIAL_TYPE["validate"](["SomeType", "AnotherType", "VerifiableCredential"])
+
+    def test_credential_context(self):
+        with self.assertRaises(ValidationError):
+            CREDENTIAL_CONTEXT["validate"]([])
+
+        with self.assertRaises(ValidationError):
+            CREDENTIAL_CONTEXT["validate"](
+                [{}, "https://www.w3.org/2018/credentials/v1"]
+            )
+
+        CREDENTIAL_CONTEXT["validate"](["https://www.w3.org/2018/credentials/v1"])
+        CREDENTIAL_CONTEXT["validate"](
+            ["https://www.w3.org/2018/credentials/v1", "https://some-other-context.com"]
+        )

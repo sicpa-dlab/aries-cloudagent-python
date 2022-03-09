@@ -2,25 +2,27 @@
 
 import json
 import logging
-import time
 
 from ....connections.models.conn_record import ConnRecord
 from ....core.error import BaseError
-from ....core.profile import ProfileSession
-from ....indy.holder import IndyHolder, IndyHolderError
+from ....core.profile import Profile
 from ....indy.verifier import IndyVerifier
-from ....ledger.base import BaseLedger
 from ....messaging.decorators.attach_decorator import AttachDecorator
 from ....messaging.responder import BaseResponder
-from ....revocation.models.revocation_registry import RevocationRegistry
+from ....storage.error import StorageNotFoundError
 
-from .models.presentation_exchange import V10PresentationExchange
+from ..indy.pres_exch_handler import IndyPresExchHandler
+
 from .messages.presentation_ack import PresentationAck
+from .messages.presentation_problem_report import (
+    PresentationProblemReport,
+    ProblemReportReason,
+)
 from .messages.presentation_proposal import PresentationProposal
 from .messages.presentation_request import PresentationRequest
 from .messages.presentation import Presentation
 from .message_types import ATTACH_DECO_IDS, PRESENTATION, PRESENTATION_REQUEST
-from .util.indy import indy_proof_req2non_revoc_intervals
+from .models.presentation_exchange import V10PresentationExchange
 
 LOGGER = logging.getLogger(__name__)
 
@@ -32,26 +34,15 @@ class PresentationManagerError(BaseError):
 class PresentationManager:
     """Class for managing presentations."""
 
-    def __init__(self, session: ProfileSession):
+    def __init__(self, profile: Profile):
         """
         Initialize a PresentationManager.
 
         Args:
-            session: The profile session for this presentation
+            profile: The profile instance for this presentation manager
         """
 
-        self._session = session
-
-    @property
-    def session(self) -> ProfileSession:
-        """
-        Accessor for the current profile session.
-
-        Returns:
-            The profile session for this presentation manager
-
-        """
-        return self._session
+        self._profile = profile
 
     async def create_exchange_for_proposal(
         self,
@@ -79,13 +70,14 @@ class PresentationManager:
             initiator=V10PresentationExchange.INITIATOR_SELF,
             role=V10PresentationExchange.ROLE_PROVER,
             state=V10PresentationExchange.STATE_PROPOSAL_SENT,
-            presentation_proposal_dict=presentation_proposal_message.serialize(),
+            presentation_proposal_dict=presentation_proposal_message,
             auto_present=auto_present,
             trace=(presentation_proposal_message._trace is not None),
         )
-        await presentation_exchange_record.save(
-            self._session, reason="create presentation proposal"
-        )
+        async with self._profile.session() as session:
+            await presentation_exchange_record.save(
+                session, reason="create presentation proposal"
+            )
 
         return presentation_exchange_record
 
@@ -105,12 +97,13 @@ class PresentationManager:
             initiator=V10PresentationExchange.INITIATOR_EXTERNAL,
             role=V10PresentationExchange.ROLE_VERIFIER,
             state=V10PresentationExchange.STATE_PROPOSAL_RECEIVED,
-            presentation_proposal_dict=message.serialize(),
+            presentation_proposal_dict=message,
             trace=(message._trace is not None),
         )
-        await presentation_exchange_record.save(
-            self._session, reason="receive presentation request"
-        )
+        async with self._profile.session() as session:
+            await presentation_exchange_record.save(
+                session, reason="receive presentation request"
+            )
 
         return presentation_exchange_record
 
@@ -138,20 +131,18 @@ class PresentationManager:
 
         """
         indy_proof_request = await (
-            PresentationProposal.deserialize(
-                presentation_exchange_record.presentation_proposal_dict
-            )
+            presentation_exchange_record.presentation_proposal_dict
         ).presentation_proposal.indy_proof_request(
             name=name,
             version=version,
             nonce=nonce,
-            ledger=self._session.inject(BaseLedger),
+            profile=self._profile,
         )
         presentation_request_message = PresentationRequest(
             comment=comment,
             request_presentations_attach=[
-                AttachDecorator.from_indy_dict(
-                    indy_dict=indy_proof_request,
+                AttachDecorator.data_base64(
+                    mapping=indy_proof_request,
                     ident=ATTACH_DECO_IDS[PRESENTATION_REQUEST],
                 )
             ],
@@ -160,15 +151,16 @@ class PresentationManager:
             "thid": presentation_exchange_record.thread_id
         }
         presentation_request_message.assign_trace_decorator(
-            self._session.settings, presentation_exchange_record.trace
+            self._profile.settings, presentation_exchange_record.trace
         )
 
         presentation_exchange_record.thread_id = presentation_request_message._thread_id
         presentation_exchange_record.state = V10PresentationExchange.STATE_REQUEST_SENT
         presentation_exchange_record.presentation_request = indy_proof_request
-        await presentation_exchange_record.save(
-            self._session, reason="create (bound) presentation request"
-        )
+        async with self._profile.session() as session:
+            await presentation_exchange_record.save(
+                session, reason="create (bound) presentation request"
+            )
 
         return presentation_exchange_record, presentation_request_message
 
@@ -194,12 +186,13 @@ class PresentationManager:
             role=V10PresentationExchange.ROLE_VERIFIER,
             state=V10PresentationExchange.STATE_REQUEST_SENT,
             presentation_request=presentation_request_message.indy_proof_request(),
-            presentation_request_dict=presentation_request_message.serialize(),
+            presentation_request_dict=presentation_request_message,
             trace=(presentation_request_message._trace is not None),
         )
-        await presentation_exchange_record.save(
-            self._session, reason="create (free) presentation request"
-        )
+        async with self._profile.session() as session:
+            await presentation_exchange_record.save(
+                session, reason="create (free) presentation request"
+            )
 
         return presentation_exchange_record
 
@@ -220,9 +213,10 @@ class PresentationManager:
         presentation_exchange_record.state = (
             V10PresentationExchange.STATE_REQUEST_RECEIVED
         )
-        await presentation_exchange_record.save(
-            self._session, reason="receive presentation request"
-        )
+        async with self._profile.session() as session:
+            await presentation_exchange_record.save(
+                session, reason="receive presentation request"
+            )
 
         return presentation_exchange_record
 
@@ -267,205 +261,24 @@ class PresentationManager:
             A tuple (updated presentation exchange record, presentation message)
 
         """
-
-        # Get all credentials for this presentation
-        holder = self._session.inject(IndyHolder)
-        credentials = {}
-
-        # extract credential ids and non_revoked
-        requested_referents = {}
-        presentation_request = presentation_exchange_record.presentation_request
-        non_revoc_intervals = indy_proof_req2non_revoc_intervals(presentation_request)
-        attr_creds = requested_credentials.get("requested_attributes", {})
-        req_attrs = presentation_request.get("requested_attributes", {})
-        for reft in attr_creds:
-            requested_referents[reft] = {"cred_id": attr_creds[reft]["cred_id"]}
-            if reft in req_attrs and reft in non_revoc_intervals:
-                requested_referents[reft]["non_revoked"] = non_revoc_intervals[reft]
-
-        preds_creds = requested_credentials.get("requested_predicates", {})
-        req_preds = presentation_request.get("requested_predicates", {})
-        for reft in preds_creds:
-            requested_referents[reft] = {"cred_id": preds_creds[reft]["cred_id"]}
-            if reft in req_preds and reft in non_revoc_intervals:
-                requested_referents[reft]["non_revoked"] = non_revoc_intervals[reft]
-            """
-            if referent in req_preds and "non_revoked" in req_preds[referent]:
-                requested_referents[referent]["non_revoked"] = req_preds[referent][
-                    "non_revoked"
-                ]
-            """
-
-        # extract mapping of presentation referents to credential ids
-        for reft in requested_referents:
-            credential_id = requested_referents[reft]["cred_id"]
-            if credential_id not in credentials:
-                credentials[credential_id] = json.loads(
-                    await holder.get_credential(credential_id)
-                )
-
-        # Get all schemas, credential definitions, and revocation registries in use
-        ledger = self._session.inject(BaseLedger)
-        schemas = {}
-        credential_definitions = {}
-        revocation_registries = {}
-
-        async with ledger:
-            for credential in credentials.values():
-                schema_id = credential["schema_id"]
-                if schema_id not in schemas:
-                    schemas[schema_id] = await ledger.get_schema(schema_id)
-
-                credential_definition_id = credential["cred_def_id"]
-                if credential_definition_id not in credential_definitions:
-                    credential_definitions[
-                        credential_definition_id
-                    ] = await ledger.get_credential_definition(credential_definition_id)
-
-                if credential.get("rev_reg_id"):
-                    revocation_registry_id = credential["rev_reg_id"]
-                    if revocation_registry_id not in revocation_registries:
-                        revocation_registries[
-                            revocation_registry_id
-                        ] = RevocationRegistry.from_definition(
-                            await ledger.get_revoc_reg_def(revocation_registry_id), True
-                        )
-
-        # Get delta with non-revocation interval defined in "non_revoked"
-        # of the presentation request or attributes
-        epoch_now = int(time.time())
-
-        """
-        non_revoc_interval = {"from": 0, "to": epoch_now}
-        non_revoc_interval.update(
-            presentation_exchange_record.presentation_request.get("non_revoked") or {}
+        indy_handler = IndyPresExchHandler(self._profile)
+        indy_proof = await indy_handler.return_presentation(
+            pres_ex_record=presentation_exchange_record,
+            requested_credentials=requested_credentials,
         )
-        """
-
-        revoc_reg_deltas = {}
-        async with ledger:
-            for precis in requested_referents.values():  # cred_id, non-revoc interval
-                credential_id = precis["cred_id"]
-                if not credentials[credential_id].get("rev_reg_id"):
-                    continue
-                if "timestamp" in precis:
-                    continue
-                rev_reg_id = credentials[credential_id]["rev_reg_id"]
-                reft_non_revoc_interval = precis.get("non_revoked")
-                if reft_non_revoc_interval:
-                    key = (
-                        f"{rev_reg_id}_"
-                        f"{reft_non_revoc_interval.get('from', 0)}_"
-                        f"{reft_non_revoc_interval.get('to', epoch_now)}"
-                    )
-                    if key not in revoc_reg_deltas:
-                        (delta, delta_timestamp) = await ledger.get_revoc_reg_delta(
-                            rev_reg_id,
-                            reft_non_revoc_interval.get("from", 0),
-                            reft_non_revoc_interval.get("to", epoch_now),
-                        )
-                        revoc_reg_deltas[key] = (
-                            rev_reg_id,
-                            credential_id,
-                            delta,
-                            delta_timestamp,
-                        )
-                    for stamp_me in requested_referents.values():
-                        # often one cred satisfies many requested attrs/preds
-                        if stamp_me["cred_id"] == credential_id:
-                            stamp_me["timestamp"] = revoc_reg_deltas[key][3]
-
-                """
-                referent_non_revoc_interval = precis.get(
-                    "non_revoked", non_revoc_interval
-                )
-
-                if referent_non_revoc_interval:
-                    key = (
-                        f"{rev_reg_id}_{referent_non_revoc_interval.get('from', 0)}_"
-                        f"{referent_non_revoc_interval.get('to', epoch_now)}"
-                    )
-                    if key not in revoc_reg_deltas:
-                        (delta, delta_timestamp) = await ledger.get_revoc_reg_delta(
-                            rev_reg_id,
-                            referent_non_revoc_interval.get("from", 0),
-                            referent_non_revoc_interval.get("to", epoch_now),
-                        )
-                        revoc_reg_deltas[key] = (
-                            rev_reg_id,
-                            credential_id,
-                            delta,
-                            delta_timestamp,
-                        )
-                    for stamp_me in requested_referents.values():
-                        # often one cred satisfies many requested attrs/preds
-                        if stamp_me["cred_id"] == credential_id:
-                            stamp_me["timestamp"] = revoc_reg_deltas[key][3]
-                """
-
-        # Get revocation states to prove non-revoked
-        revocation_states = {}
-        for (
-            rev_reg_id,
-            credential_id,
-            delta,
-            delta_timestamp,
-        ) in revoc_reg_deltas.values():
-            if rev_reg_id not in revocation_states:
-                revocation_states[rev_reg_id] = {}
-
-            rev_reg = revocation_registries[rev_reg_id]
-            tails_local_path = await rev_reg.get_or_fetch_local_tails_path()
-
-            try:
-                revocation_states[rev_reg_id][delta_timestamp] = json.loads(
-                    await holder.create_revocation_state(
-                        credentials[credential_id]["cred_rev_id"],
-                        rev_reg.reg_def,
-                        delta,
-                        delta_timestamp,
-                        tails_local_path,
-                    )
-                )
-            except IndyHolderError as e:
-                LOGGER.error(
-                    f"Failed to create revocation state: {e.error_code}, {e.message}"
-                )
-                raise e
-
-        for (referent, precis) in requested_referents.items():
-            if "timestamp" not in precis:
-                continue
-            if referent in requested_credentials["requested_attributes"]:
-                requested_credentials["requested_attributes"][referent][
-                    "timestamp"
-                ] = precis["timestamp"]
-            if referent in requested_credentials["requested_predicates"]:
-                requested_credentials["requested_predicates"][referent][
-                    "timestamp"
-                ] = precis["timestamp"]
-
-        indy_proof_json = await holder.create_presentation(
-            presentation_exchange_record.presentation_request,
-            requested_credentials,
-            schemas,
-            credential_definitions,
-            revocation_states,
-        )
-        indy_proof = json.loads(indy_proof_json)
 
         presentation_message = Presentation(
             comment=comment,
             presentations_attach=[
-                AttachDecorator.from_indy_dict(
-                    indy_dict=indy_proof, ident=ATTACH_DECO_IDS[PRESENTATION]
+                AttachDecorator.data_base64(
+                    mapping=indy_proof, ident=ATTACH_DECO_IDS[PRESENTATION]
                 )
             ],
         )
 
         presentation_message._thread = {"thid": presentation_exchange_record.thread_id}
         presentation_message.assign_trace_decorator(
-            self._session.settings, presentation_exchange_record.trace
+            self._profile.settings, presentation_exchange_record.trace
         )
 
         # save presentation exchange state
@@ -473,9 +286,10 @@ class PresentationManager:
             V10PresentationExchange.STATE_PRESENTATION_SENT
         )
         presentation_exchange_record.presentation = indy_proof
-        await presentation_exchange_record.save(
-            self._session, reason="create presentation"
-        )
+        async with self._profile.session() as session:
+            await presentation_exchange_record.save(
+                session, reason="create presentation"
+            )
 
         return presentation_exchange_record, presentation_message
 
@@ -497,20 +311,29 @@ class PresentationManager:
             if connection_record is not None
             else None
         )
-        (
-            presentation_exchange_record
-        ) = await V10PresentationExchange.retrieve_by_tag_filter(
-            self._session, {"thread_id": thread_id}, connection_id_filter
-        )
+        async with self._profile.session() as session:
+            try:
+                (
+                    presentation_exchange_record
+                ) = await V10PresentationExchange.retrieve_by_tag_filter(
+                    session, {"thread_id": thread_id}, connection_id_filter
+                )
+            except StorageNotFoundError:
+                # Proof Request not bound to any connection: requests_attach in OOB msg
+                (
+                    presentation_exchange_record
+                ) = await V10PresentationExchange.retrieve_by_tag_filter(
+                    session, {"thread_id": thread_id}, None
+                )
 
         # Check for bait-and-switch in presented attribute values vs. proposal
         if presentation_exchange_record.presentation_proposal_dict:
-            exchange_pres_proposal = PresentationProposal.deserialize(
+            exchange_pres_proposal = (
                 presentation_exchange_record.presentation_proposal_dict
             )
             presentation_preview = exchange_pres_proposal.presentation_proposal
 
-            proof_req = presentation_exchange_record.presentation_request
+            proof_req = presentation_exchange_record._presentation_request.ser
             for (reft, attr_spec) in presentation["requested_proof"][
                 "revealed_attrs"
             ].items():
@@ -523,6 +346,16 @@ class PresentationManager:
                     name=name,
                     value=value,
                 ):
+                    presentation_exchange_record.state = (
+                        V10PresentationExchange.STATE_ABANDONED
+                    )
+                    async with self._profile.session() as session:
+                        await presentation_exchange_record.save(
+                            session,
+                            reason=(
+                                f"Presentation {name}={value} mismatches proposal value"
+                            ),
+                        )
                     raise PresentationManagerError(
                         f"Presentation {name}={value} mismatches proposal value"
                     )
@@ -532,9 +365,10 @@ class PresentationManager:
             V10PresentationExchange.STATE_PRESENTATION_RECEIVED
         )
 
-        await presentation_exchange_record.save(
-            self._session, reason="receive presentation"
-        )
+        async with self._profile.session() as session:
+            await presentation_exchange_record.save(
+                session, reason="receive presentation"
+            )
 
         return presentation_exchange_record
 
@@ -552,76 +386,35 @@ class PresentationManager:
             presentation record, updated
 
         """
-        indy_proof_request = presentation_exchange_record.presentation_request
-        indy_proof = presentation_exchange_record.presentation
+        indy_proof_request = presentation_exchange_record._presentation_request.ser
+        indy_proof = presentation_exchange_record._presentation.ser
+        indy_handler = IndyPresExchHandler(self._profile)
+        (
+            schemas,
+            cred_defs,
+            rev_reg_defs,
+            rev_reg_entries,
+        ) = await indy_handler.process_pres_identifiers(indy_proof["identifiers"])
 
-        schema_ids = []
-        credential_definition_ids = []
-
-        schemas = {}
-        credential_definitions = {}
-        rev_reg_defs = {}
-        rev_reg_entries = {}
-
-        identifiers = indy_proof["identifiers"]
-        ledger = self._session.inject(BaseLedger)
-        async with ledger:
-            for identifier in identifiers:
-                schema_ids.append(identifier["schema_id"])
-                credential_definition_ids.append(identifier["cred_def_id"])
-
-                # Build schemas for anoncreds
-                if identifier["schema_id"] not in schemas:
-                    schemas[identifier["schema_id"]] = await ledger.get_schema(
-                        identifier["schema_id"]
-                    )
-
-                if identifier["cred_def_id"] not in credential_definitions:
-                    credential_definitions[
-                        identifier["cred_def_id"]
-                    ] = await ledger.get_credential_definition(
-                        identifier["cred_def_id"]
-                    )
-
-                if identifier.get("rev_reg_id"):
-                    if identifier["rev_reg_id"] not in rev_reg_defs:
-                        rev_reg_defs[
-                            identifier["rev_reg_id"]
-                        ] = await ledger.get_revoc_reg_def(identifier["rev_reg_id"])
-
-                    if identifier.get("timestamp"):
-                        rev_reg_entries.setdefault(identifier["rev_reg_id"], {})
-
-                        if (
-                            identifier["timestamp"]
-                            not in rev_reg_entries[identifier["rev_reg_id"]]
-                        ):
-                            (
-                                found_rev_reg_entry,
-                                _found_timestamp,
-                            ) = await ledger.get_revoc_reg_entry(
-                                identifier["rev_reg_id"], identifier["timestamp"]
-                            )
-                            rev_reg_entries[identifier["rev_reg_id"]][
-                                identifier["timestamp"]
-                            ] = found_rev_reg_entry
-
-        verifier = self._session.inject(IndyVerifier)
+        verifier = self._profile.inject(IndyVerifier)
         presentation_exchange_record.verified = json.dumps(  # tag: needs string value
             await verifier.verify_presentation(
-                indy_proof_request,
+                dict(
+                    indy_proof_request
+                ),  # copy to avoid changing the proof req in the stored pres exch
                 indy_proof,
                 schemas,
-                credential_definitions,
+                cred_defs,
                 rev_reg_defs,
                 rev_reg_entries,
             )
         )
         presentation_exchange_record.state = V10PresentationExchange.STATE_VERIFIED
 
-        await presentation_exchange_record.save(
-            self._session, reason="verify presentation"
-        )
+        async with self._profile.session() as session:
+            await presentation_exchange_record.save(
+                session, reason="verify presentation"
+            )
 
         await self.send_presentation_ack(presentation_exchange_record)
         return presentation_exchange_record
@@ -636,7 +429,7 @@ class PresentationManager:
             presentation_exchange_record: presentation exchange record with thread id
 
         """
-        responder = self._session.inject(BaseResponder, required=False)
+        responder = self._profile.inject_or(BaseResponder)
 
         if responder:
             presentation_ack_message = PresentationAck()
@@ -644,7 +437,7 @@ class PresentationManager:
                 "thid": presentation_exchange_record.thread_id
             }
             presentation_ack_message.assign_trace_decorator(
-                self._session.settings, presentation_exchange_record.trace
+                self._profile.settings, presentation_exchange_record.trace
             )
 
             await responder.send_reply(
@@ -667,20 +460,48 @@ class PresentationManager:
             presentation exchange record, retrieved and updated
 
         """
-        (
-            presentation_exchange_record
-        ) = await V10PresentationExchange.retrieve_by_tag_filter(
-            self._session,
-            {"thread_id": message._thread_id},
-            {"connection_id": connection_record.connection_id},
-        )
+        async with self._profile.session() as session:
+            (
+                presentation_exchange_record
+            ) = await V10PresentationExchange.retrieve_by_tag_filter(
+                session,
+                {"thread_id": message._thread_id},
+                {"connection_id": connection_record.connection_id},
+            )
 
-        presentation_exchange_record.state = (
-            V10PresentationExchange.STATE_PRESENTATION_ACKED
-        )
+            presentation_exchange_record.state = (
+                V10PresentationExchange.STATE_PRESENTATION_ACKED
+            )
 
-        await presentation_exchange_record.save(
-            self._session, reason="receive presentation ack"
-        )
+            await presentation_exchange_record.save(
+                session, reason="receive presentation ack"
+            )
 
         return presentation_exchange_record
+
+    async def receive_problem_report(
+        self, message: PresentationProblemReport, connection_id: str
+    ):
+        """
+        Receive problem report.
+
+        Returns:
+            presentation exchange record, retrieved and updated
+
+        """
+        # FIXME use transaction, fetch for_update
+        async with self._profile.session() as session:
+            pres_ex_record = await (
+                V10PresentationExchange.retrieve_by_tag_filter(
+                    session,
+                    {"thread_id": message._thread_id},
+                    {"connection_id": connection_id},
+                )
+            )
+
+            pres_ex_record.state = V10PresentationExchange.STATE_ABANDONED
+            code = message.description.get("code", ProblemReportReason.ABANDONED.value)
+            pres_ex_record.error_msg = f"{code}: {message.description.get('en', code)}"
+            await pres_ex_record.save(session, reason="received problem report")
+
+        return pres_ex_record

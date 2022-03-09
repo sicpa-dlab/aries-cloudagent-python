@@ -39,17 +39,13 @@ class DIDCommPrefix(Enum):
     def qualify_all(cls, messages: dict) -> dict:
         """Apply all known prefixes to a dictionary of message types."""
 
-        result = {}
-        for pfx in cls:
-            for k, v in messages.items():
-                result[qualify(k, pfx.value)] = v
-        return result
+        return {qualify(k, pfx.value): v for pfx in cls for k, v in messages.items()}
 
     @staticmethod
     def qualify_current(slug: str = None) -> str:
         """Qualify input slug with prefix currently in effect and separator."""
 
-        return qualify(slug, environ.get("DIDCOMM_PREFIX", DIDCommPrefix.NEW.value))
+        return qualify(slug, environ.get("DIDCOMM_PREFIX", DIDCommPrefix.OLD.value))
 
     @staticmethod
     def unqualify(qual: str) -> str:

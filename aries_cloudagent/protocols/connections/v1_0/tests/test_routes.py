@@ -1,5 +1,6 @@
 import json
 
+from unittest.mock import ANY
 from asynctest import TestCase as AsyncTestCase
 from asynctest import mock as async_mock
 
@@ -29,6 +30,9 @@ class TestConnectionRoutes(AsyncTestCase):
         self.request.query = {
             "invitation_id": "dummy",  # exercise tag filter assignment
             "their_role": ConnRecord.Role.REQUESTER.rfc160,
+            "connection_protocol": ConnRecord.Protocol.RFC_0160.aries_protocol,
+            "invitation_key": "some-invitation-key",
+            "their_public_did": "a_public_did",
         }
 
         STATE_COMPLETED = ConnRecord.State.COMPLETED
@@ -39,7 +43,7 @@ class TestConnectionRoutes(AsyncTestCase):
             test_module, "ConnRecord", autospec=True
         ) as mock_conn_rec:
             mock_conn_rec.query = async_mock.CoroutineMock()
-            mock_conn_rec.Role = async_mock.MagicMock(return_value=ROLE_REQUESTER)
+            mock_conn_rec.Role = ConnRecord.Role
             mock_conn_rec.State = async_mock.MagicMock(
                 COMPLETED=STATE_COMPLETED,
                 INVITATION=STATE_INVITATION,
@@ -84,6 +88,19 @@ class TestConnectionRoutes(AsyncTestCase):
                 test_module.web, "json_response"
             ) as mock_response:
                 await test_module.connections_list(self.request)
+                mock_conn_rec.query.assert_called_once_with(
+                    ANY,
+                    {
+                        "invitation_id": "dummy",
+                        "invitation_key": "some-invitation-key",
+                        "their_public_did": "a_public_did",
+                    },
+                    post_filter_positive={
+                        "their_role": [v for v in ConnRecord.Role.REQUESTER.value],
+                        "connection_protocol": ConnRecord.Protocol.RFC_0160.aries_protocol,
+                    },
+                    alt=True,
+                )
                 mock_response.assert_called_once_with(
                     {
                         "results": [
@@ -135,6 +152,55 @@ class TestConnectionRoutes(AsyncTestCase):
             await test_module.connections_retrieve(self.request)
             mock_response.assert_called_once_with({"hello": "world"})
 
+    async def test_connections_endpoints(self):
+        self.request.match_info = {"conn_id": "dummy"}
+        mock_conn_rec = async_mock.MagicMock()
+
+        with async_mock.patch.object(
+            test_module, "ConnectionManager", autospec=True
+        ) as mock_conn_mgr_cls, async_mock.patch.object(
+            test_module.web, "json_response"
+        ) as mock_response:
+            mock_conn_mgr_cls.return_value = async_mock.MagicMock(
+                get_endpoints=async_mock.CoroutineMock(
+                    return_value=("localhost:8080", "1.2.3.4:8081")
+                )
+            )
+            await test_module.connections_endpoints(self.request)
+            mock_response.assert_called_once_with(
+                {
+                    "my_endpoint": "localhost:8080",
+                    "their_endpoint": "1.2.3.4:8081",
+                }
+            )
+
+    async def test_connections_endpoints_x(self):
+        self.request.match_info = {"conn_id": "dummy"}
+        mock_conn_rec = async_mock.MagicMock()
+
+        with async_mock.patch.object(
+            test_module, "ConnectionManager", autospec=True
+        ) as mock_conn_mgr_cls, async_mock.patch.object(
+            test_module.web, "json_response"
+        ) as mock_response:
+            mock_conn_mgr_cls.return_value = async_mock.MagicMock(
+                get_endpoints=async_mock.CoroutineMock(
+                    side_effect=StorageNotFoundError()
+                )
+            )
+
+            with self.assertRaises(test_module.web.HTTPNotFound):
+                await test_module.connections_endpoints(self.request)
+
+            mock_conn_mgr_cls.return_value = async_mock.MagicMock(
+                get_endpoints=async_mock.CoroutineMock(
+                    side_effect=test_module.WalletError()
+                )
+            )
+
+            with self.assertRaises(test_module.web.HTTPBadRequest):
+                await test_module.connections_endpoints(self.request)
+
     async def test_connections_metadata(self):
         self.request.match_info = {"conn_id": "dummy"}
         mock_conn_rec = async_mock.MagicMock()
@@ -151,7 +217,7 @@ class TestConnectionRoutes(AsyncTestCase):
 
             await test_module.connections_metadata(self.request)
             mock_metadata_get_all.assert_called_once()
-            mock_response.assert_called_once_with({"hello": "world"})
+            mock_response.assert_called_once_with({"results": {"hello": "world"}})
 
     async def test_connections_metadata_get_single(self):
         self.request.match_info = {"conn_id": "dummy"}
@@ -172,7 +238,7 @@ class TestConnectionRoutes(AsyncTestCase):
 
             await test_module.connections_metadata(self.request)
             mock_metadata_get.assert_called_once()
-            mock_response.assert_called_once_with({"test": "value"})
+            mock_response.assert_called_once_with({"results": {"test": "value"}})
 
     async def test_connections_metadata_x(self):
         self.request.match_info = {"conn_id": "dummy"}
@@ -216,7 +282,7 @@ class TestConnectionRoutes(AsyncTestCase):
 
             await test_module.connections_metadata_set(self.request)
             mock_metadata_set.assert_called_once()
-            mock_response.assert_called_once_with({"hello": "world"})
+            mock_response.assert_called_once_with({"results": {"hello": "world"}})
 
     async def test_connections_metadata_set_x(self):
         self.request.match_info = {"conn_id": "dummy"}
@@ -311,6 +377,7 @@ class TestConnectionRoutes(AsyncTestCase):
                     key: json.loads(value) if key != "alias" else value
                     for key, value in self.request.query.items()
                 },
+                my_label=None,
                 recipient_keys=body["recipient_keys"],
                 routing_keys=body["routing_keys"],
                 my_endpoint=body["service_endpoint"],

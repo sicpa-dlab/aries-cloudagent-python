@@ -1,7 +1,6 @@
 """Action menu utility methods."""
 
 from ....admin.request_context import AdminRequestContext
-from ....messaging.responder import BaseResponder
 from ....storage.base import (
     BaseStorage,
     StorageRecord,
@@ -17,7 +16,7 @@ async def retrieve_connection_menu(
     connection_id: str, context: AdminRequestContext
 ) -> Menu:
     """Retrieve the previously-received action menu."""
-    async with context.session() as session:
+    async with context.profile.session() as session:
         storage = session.inject(BaseStorage)
         try:
             record = await storage.find_record(
@@ -32,7 +31,7 @@ async def save_connection_menu(
     menu: Menu, connection_id: str, context: AdminRequestContext
 ):
     """Save a received action menu."""
-    async with context.session() as session:
+    async with context.profile.session() as session:
         storage = session.inject(BaseStorage)
         try:
             record = await storage.find_record(
@@ -54,12 +53,10 @@ async def save_connection_menu(
             else:
                 await storage.delete_record(record)
 
-    responder = context.inject(BaseResponder, required=False)
-    if responder:
-        await responder.send_webhook(
-            "actionmenu",
-            {
-                "connection_id": connection_id,
-                "menu": menu.serialize() if menu else None,
-            },
-        )
+    await context.profile.notify(
+        "acapy::actionmenu::received",
+        {
+            "connection_id": connection_id,
+            "menu": menu.serialize() if menu else None,
+        },
+    )

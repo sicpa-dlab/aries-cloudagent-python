@@ -1,8 +1,7 @@
 import json
 import pytest
 
-from asynctest import TestCase as AsyncTestCase
-from asynctest import mock as async_mock
+from asynctest import mock as async_mock, TestCase as AsyncTestCase
 
 from indy.error import (
     AnoncredsRevocationRegistryFullError,
@@ -15,8 +14,9 @@ from ....config.injection_context import InjectionContext
 from ....indy.sdk.profile import IndySdkProfile
 from ....indy.sdk.wallet_setup import IndyWalletConfig
 from ....wallet.indy import IndySdkWallet
-from ...issuer import IndyIssuerRevocationRegistryFullError
 from ....ledger.indy import IndySdkLedgerPool
+
+from ...issuer import IndyIssuerRevocationRegistryFullError
 
 from .. import issuer as test_module
 
@@ -81,14 +81,6 @@ class TestIndySdkIssuer(AsyncTestCase):
             self.issuer.make_credential_definition_id(TEST_DID, schema, tag="default")
             == CRED_DEF_ID
         )
-
-        (s_id, _) = await self.issuer.create_schema(
-            TEST_DID,
-            SCHEMA_NAME,
-            SCHEMA_VERSION,
-            ["name", "moniker", "genre", "effective"],
-        )
-        assert s_id == SCHEMA_ID
 
         mock_indy_cred_def.return_value = (
             CRED_DEF_ID,

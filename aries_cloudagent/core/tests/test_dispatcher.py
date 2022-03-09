@@ -1,27 +1,27 @@
-import asyncio
 import json
 
-from asynctest import TestCase as AsyncTestCase, mock as async_mock
+import pytest
 
+from asynctest import TestCase as AsyncTestCase, mock as async_mock
 from marshmallow import EXCLUDE
 
 from ...config.injection_context import InjectionContext
-from ...connections.models.conn_record import ConnRecord
+from ...core.event_bus import EventBus
 from ...core.in_memory import InMemoryProfile
 from ...core.profile import Profile
 from ...core.protocol_registry import ProtocolRegistry
 from ...messaging.agent_message import AgentMessage, AgentMessageSchema
-from ...messaging.responder import MockResponder
 from ...messaging.request_context import RequestContext
-from ...messaging.util import datetime_now
-from ...utils.stats import Collector
-
 from ...protocols.didcomm_prefix import DIDCommPrefix
+from ...protocols.issue_credential.v2_0.message_types import CRED_20_PROBLEM_REPORT
+from ...protocols.issue_credential.v2_0.messages.cred_problem_report import (
+    V20CredProblemReport,
+)
 from ...protocols.problem_report.v1_0.message import ProblemReport
-
 from ...transport.inbound.message import InboundMessage
 from ...transport.inbound.receipt import MessageReceipt
 from ...transport.outbound.message import OutboundMessage
+from ...utils.stats import Collector
 
 from .. import dispatcher as test_module
 
@@ -30,6 +30,7 @@ def make_profile() -> Profile:
     profile = InMemoryProfile.test_profile()
     profile.context.injector.bind_instance(ProtocolRegistry, ProtocolRegistry())
     profile.context.injector.bind_instance(Collector, Collector())
+    profile.context.injector.bind_instance(EventBus, EventBus())
     return profile
 
 
@@ -308,20 +309,44 @@ class TestDispatcher(AsyncTestCase):
                 ProblemReport.Meta.message_type
             )
 
-    async def test_bad_message_dispatch(self):
+    async def test_bad_message_dispatch_parse_x(self):
         dispatcher = test_module.Dispatcher(make_profile())
         await dispatcher.setup()
         rcv = Receiver()
-        bad_message = {"bad": "message"}
+        bad_messages = ["not even a dict", {"bad": "message"}]
+        for bad in bad_messages:
+            await dispatcher.queue_message(
+                dispatcher.profile, make_inbound(bad), rcv.send
+            )
+            await dispatcher.task_queue
+            assert rcv.messages and isinstance(rcv.messages[0][1], OutboundMessage)
+            payload = json.loads(rcv.messages[0][1].payload)
+            assert payload["@type"] == DIDCommPrefix.qualify_current(
+                ProblemReport.Meta.message_type
+            )
+            rcv.messages.clear()
+
+    async def test_bad_message_dispatch_problem_report_x(self):
+        profile = make_profile()
+        registry = profile.inject(ProtocolRegistry)
+        registry.register_message_types(
+            {
+                pfx.qualify(CRED_20_PROBLEM_REPORT): V20CredProblemReport
+                for pfx in DIDCommPrefix
+            }
+        )
+        dispatcher = test_module.Dispatcher(profile)
+        await dispatcher.setup()
+        rcv = Receiver()
+        bad_message = {
+            "@type": DIDCommPrefix.qualify_current(CRED_20_PROBLEM_REPORT),
+            "description": "should be a dict",
+        }
         await dispatcher.queue_message(
             dispatcher.profile, make_inbound(bad_message), rcv.send
         )
         await dispatcher.task_queue
-        assert rcv.messages and isinstance(rcv.messages[0][1], OutboundMessage)
-        payload = json.loads(rcv.messages[0][1].payload)
-        assert payload["@type"] == DIDCommPrefix.qualify_current(
-            ProblemReport.Meta.message_type
-        )
+        assert not rcv.messages
 
     async def test_dispatch_log(self):
         profile = make_profile()
@@ -349,38 +374,31 @@ class TestDispatcher(AsyncTestCase):
         )
         dispatcher.log_task(mock_task)
 
-    async def test_create_outbound_send_webhook(self):
+    async def test_create_send_outbound(self):
+        profile = make_profile()
+        context = RequestContext(
+            profile,
+            settings={"timing.enabled": True},
+        )
+        message = StubAgentMessage()
+        responder = test_module.DispatcherResponder(context, message, None)
+        outbound_message = await responder.create_outbound(message)
+        with async_mock.patch.object(responder, "_send", async_mock.CoroutineMock()):
+            await responder.send_outbound(outbound_message)
+
+    async def test_create_send_webhook(self):
         profile = make_profile()
         context = RequestContext(profile)
-        context.message_receipt = async_mock.MagicMock(in_time=datetime_now())
-        context.update_settings({"timing.enabled": True})
         message = StubAgentMessage()
-        responder = test_module.DispatcherResponder(
-            context, message, None, async_mock.CoroutineMock()
-        )
-        result = await responder.create_outbound(message)
-        assert json.loads(result.payload)["@type"] == DIDCommPrefix.qualify_current(
-            StubAgentMessage.Meta.message_type
-        )
-        await responder.send_webhook("topic", "payload")
-
-        context.default_endpoint = "http://agent.ca"
-        assert context.default_endpoint == "http://agent.ca"
-
-    async def test_create_send_outbound(self):
-        message = StubAgentMessage()
-        responder = MockResponder()
-        outbound_message = await responder.create_outbound(message)
-        await responder.send_outbound(outbound_message)
-        assert len(responder.messages) == 1
+        responder = test_module.DispatcherResponder(context, message, None)
+        with pytest.deprecated_call():
+            await responder.send_webhook("topic", {"pay": "load"})
 
     async def test_create_enc_outbound(self):
         profile = make_profile()
         context = RequestContext(profile)
         message = b"abc123xyz7890000"
-        responder = test_module.DispatcherResponder(
-            context, message, None, async_mock.CoroutineMock()
-        )
+        responder = test_module.DispatcherResponder(context, message, None)
         with async_mock.patch.object(
             responder, "send_outbound", async_mock.CoroutineMock()
         ) as mock_send_outbound:

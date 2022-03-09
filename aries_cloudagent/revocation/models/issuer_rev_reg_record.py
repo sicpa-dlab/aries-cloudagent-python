@@ -3,19 +3,24 @@
 import json
 import logging
 import uuid
-
-from asyncio import shield
 from functools import total_ordering
 from os.path import join
 from shutil import move
-from typing import Any, Sequence
+from typing import Any, Mapping, Sequence, Union
 from urllib.parse import urlparse
 
 from marshmallow import fields, validate
 
-from ...core.profile import ProfileSession
-from ...indy.util import indy_client_dir
+from ...core.profile import Profile, ProfileSession
 from ...indy.issuer import IndyIssuer, IndyIssuerError
+from ...indy.models.revocation import (
+    IndyRevRegDef,
+    IndyRevRegDefSchema,
+    IndyRevRegEntry,
+    IndyRevRegEntrySchema,
+)
+from ...indy.util import indy_client_dir
+from ...ledger.base import BaseLedger
 from ...messaging.models.base_record import BaseRecord, BaseRecordSchema
 from ...messaging.valid import (
     BASE58_SHA256_HASH,
@@ -24,11 +29,7 @@ from ...messaging.valid import (
     INDY_REV_REG_ID,
     UUIDFour,
 )
-from ...ledger.base import BaseLedger
-from ...tails.base import BaseTailsServer
-
 from ..error import RevocationError
-
 from .revocation_registry import RevocationRegistry
 
 DEFAULT_REGISTRY_SIZE = 1000
@@ -47,7 +48,7 @@ class IssuerRevRegRecord(BaseRecord):
 
     RECORD_ID_NAME = "record_id"
     RECORD_TYPE = "issuer_rev_reg"
-    WEBHOOK_TOPIC = "revocation_registry"
+    RECORD_TOPIC = "revocation_registry"
     LOG_STATE_FLAG = "debug.revocation"
     TAG_NAMES = {
         "cred_def_id",
@@ -76,8 +77,8 @@ class IssuerRevRegRecord(BaseRecord):
         max_cred_num: int = None,
         revoc_def_type: str = None,
         revoc_reg_id: str = None,
-        revoc_reg_def: dict = None,
-        revoc_reg_entry: dict = None,
+        revoc_reg_def: Union[IndyRevRegDef, Mapping] = None,
+        revoc_reg_entry: Union[IndyRevRegEntry, Mapping] = None,
         tag: str = None,
         tails_hash: str = None,
         tails_local_path: str = None,
@@ -95,8 +96,8 @@ class IssuerRevRegRecord(BaseRecord):
         self.max_cred_num = max_cred_num or DEFAULT_REGISTRY_SIZE
         self.revoc_def_type = revoc_def_type or self.REVOC_DEF_TYPE_CL
         self.revoc_reg_id = revoc_reg_id
-        self.revoc_reg_def = revoc_reg_def
-        self.revoc_reg_entry = revoc_reg_entry
+        self._revoc_reg_def = IndyRevRegDef.serde(revoc_reg_def)
+        self._revoc_reg_entry = IndyRevRegEntry.serde(revoc_reg_entry)
         self.tag = tag
         self.tails_hash = tails_hash
         self.tails_local_path = tails_local_path
@@ -111,21 +112,49 @@ class IssuerRevRegRecord(BaseRecord):
         return self._id
 
     @property
-    def record_value(self) -> dict:
+    def revoc_reg_def(self) -> IndyRevRegDef:
+        """Accessor; get deserialized."""
+        return None if self._revoc_reg_def is None else self._revoc_reg_def.de
+
+    @revoc_reg_def.setter
+    def revoc_reg_def(self, value):
+        """Setter; store de/serialized views."""
+        self._revoc_reg_def = IndyRevRegDef.serde(value)
+
+    @property
+    def revoc_reg_entry(self) -> IndyRevRegEntry:
+        """Accessor; get deserialized."""
+        return None if self._revoc_reg_entry is None else self._revoc_reg_entry.de
+
+    @revoc_reg_entry.setter
+    def revoc_reg_entry(self, value):
+        """Setter; store de/serialized views."""
+        self._revoc_reg_entry = IndyRevRegEntry.serde(value)
+
+    @property
+    def record_value(self) -> Mapping:
         """Accessor for JSON value properties of this revocation registry record."""
         return {
-            prop: getattr(self, prop)
-            for prop in (
-                "error_msg",
-                "max_cred_num",
-                "revoc_reg_def",
-                "revoc_reg_entry",
-                "tag",
-                "tails_hash",
-                "tails_public_uri",
-                "tails_local_path",
-                "pending_pub",
-            )
+            **{
+                prop: getattr(self, prop)
+                for prop in (
+                    "error_msg",
+                    "max_cred_num",
+                    "tag",
+                    "tails_hash",
+                    "tails_public_uri",
+                    "tails_local_path",
+                    "pending_pub",
+                )
+            },
+            **{
+                prop: getattr(self, f"_{prop}").ser
+                for prop in (
+                    "revoc_reg_def",
+                    "revoc_reg_entry",
+                )
+                if getattr(self, prop) is not None
+            },
         }
 
     def _check_url(self, url) -> None:
@@ -133,7 +162,7 @@ class IssuerRevRegRecord(BaseRecord):
         if not (parsed.scheme and parsed.netloc and parsed.path):
             raise RevocationError("URI {} is not a valid URL".format(url))
 
-    async def generate_registry(self, session: ProfileSession):
+    async def generate_registry(self, profile: Profile):
         """Create the revocation registry definition and tails file."""
         if not self.tag:
             self.tag = self._id or str(uuid.uuid4())
@@ -145,7 +174,7 @@ class IssuerRevRegRecord(BaseRecord):
                 )
             )
 
-        issuer: IndyIssuer = session.inject(IndyIssuer)
+        issuer = profile.inject(IndyIssuer)
         tails_hopper_dir = indy_client_dir(join("tails", ".hopper"), create=True)
 
         LOGGER.debug("Creating revocation registry with size: %d", self.max_cred_num)
@@ -170,63 +199,35 @@ class IssuerRevRegRecord(BaseRecord):
         self.revoc_reg_def = json.loads(revoc_reg_def_json)
         self.revoc_reg_entry = json.loads(revoc_reg_entry_json)
         self.state = IssuerRevRegRecord.STATE_GENERATED
-        self.tails_hash = self.revoc_reg_def["value"]["tailsHash"]
+        self.tails_hash = self.revoc_reg_def.value.tails_hash
 
         tails_dir = indy_client_dir(join("tails", self.revoc_reg_id), create=True)
         tails_path = join(tails_dir, self.tails_hash)
         move(join(tails_hopper_dir, self.tails_hash), tails_path)
         self.tails_local_path = tails_path
 
-        await self.save(session, reason="Generated registry")
+        async with profile.session() as session:
+            await self.save(session, reason="Generated registry")
 
-    async def set_tails_file_public_uri(
-        self, session: ProfileSession, tails_file_uri: str
-    ):
+    async def set_tails_file_public_uri(self, profile: Profile, tails_file_uri: str):
         """Update tails file's publicly accessible URI."""
-        if not (
-            self.revoc_reg_def
-            and self.revoc_reg_def.get("value", {}).get("tailsLocation")
-        ):
+        if not (self.revoc_reg_def and self.revoc_reg_def.value.tails_location):
             raise RevocationError("Revocation registry undefined")
 
         self._check_url(tails_file_uri)
 
         self.tails_public_uri = tails_file_uri
-        self.revoc_reg_def["value"]["tailsLocation"] = tails_file_uri
-        await self.save(session, reason="Set tails file public URI")
+        self._revoc_reg_def.de.value.tails_location = tails_file_uri  # update ...
+        self.revoc_reg_def = self._revoc_reg_def.de  # ... and pick up change via setter
+        async with profile.session() as session:
+            await self.save(session, reason="Set tails file public URI")
 
-    async def stage_pending_registry(
-        self, session: ProfileSession, max_attempts: int = 5
+    async def send_def(
+        self,
+        profile: Profile,
+        write_ledger: bool = True,
+        endorser_did: str = None,
     ):
-        """Prepare registry definition for future use."""
-        await shield(self.generate_registry(session))
-        tails_base_url = session.settings.get("tails_server_base_url")
-        await self.set_tails_file_public_uri(
-            session,
-            f"{tails_base_url}/{self.revoc_reg_id}",
-        )
-        await self.send_def(session)
-        await self.send_entry(session)
-
-        tails_server: BaseTailsServer = session.inject(BaseTailsServer)
-        (upload_success, reason) = await tails_server.upload_tails_file(
-            session.context,
-            self.revoc_reg_id,
-            self.tails_local_path,
-            interval=0.25,
-            backoff=-0.5,
-            max_attempts=max_attempts,
-        )
-        if not upload_success:
-            LOGGER.error(
-                "Tails file for rev reg %s failed to upload: %s",
-                self.revoc_reg_id,
-                reason,
-            )
-
-        LOGGER.info("Staged pending registry %s", self.revoc_reg_id)
-
-    async def send_def(self, session: ProfileSession):
         """Send the revocation registry definition to the ledger."""
         if not (self.revoc_reg_def and self.issuer_did):
             raise RevocationError(f"Revocation registry {self.revoc_reg_id} undefined")
@@ -240,14 +241,27 @@ class IssuerRevRegRecord(BaseRecord):
                 )
             )
 
-        ledger: BaseLedger = session.inject(BaseLedger)
+        ledger = profile.inject(BaseLedger)
         async with ledger:
-            await ledger.send_revoc_reg_def(self.revoc_reg_def, self.issuer_did)
+            rev_reg_res = await ledger.send_revoc_reg_def(
+                self._revoc_reg_def.ser,
+                self.issuer_did,
+                write_ledger=write_ledger,
+                endorser_did=endorser_did,
+            )
 
         self.state = IssuerRevRegRecord.STATE_POSTED
-        await self.save(session, reason="Published revocation registry definition")
+        async with profile.session() as session:
+            await self.save(session, reason="Published revocation registry definition")
 
-    async def send_entry(self, session: ProfileSession):
+        return rev_reg_res
+
+    async def send_entry(
+        self,
+        profile: Profile,
+        write_ledger: bool = True,
+        endorser_did: str = None,
+    ):
         """Send a registry entry to the ledger."""
         if not (
             self.revoc_reg_id
@@ -270,19 +284,24 @@ class IssuerRevRegRecord(BaseRecord):
                 )
             )
 
-        ledger: BaseLedger = session.inject(BaseLedger)
+        ledger = profile.inject(BaseLedger)
         async with ledger:
-            await ledger.send_revoc_reg_entry(
+            rev_entry_res = await ledger.send_revoc_reg_entry(
                 self.revoc_reg_id,
                 self.revoc_def_type,
-                self.revoc_reg_entry,
+                self._revoc_reg_entry.ser,
                 self.issuer_did,
+                write_ledger=write_ledger,
+                endorser_did=endorser_did,
             )
         if self.state == IssuerRevRegRecord.STATE_POSTED:
             self.state = IssuerRevRegRecord.STATE_ACTIVE  # initial entry activates
-            await self.save(
-                session, reason="Published initial revocation registry entry"
-            )
+            async with profile.session() as session:
+                await self.save(
+                    session, reason="Published initial revocation registry entry"
+                )
+
+        return rev_entry_res
 
     async def mark_pending(self, session: ProfileSession, cred_rev_id: str) -> None:
         """Mark a credential revocation id as revoked pending publication to ledger.
@@ -435,11 +454,13 @@ class IssuerRevRegRecordSchema(BaseRecordSchema):
     revoc_reg_id = fields.Str(
         required=False, description="Revocation registry identifier", **INDY_REV_REG_ID
     )
-    revoc_reg_def = fields.Dict(
-        required=False, description="Revocation registry definition"
+    revoc_reg_def = fields.Nested(
+        IndyRevRegDefSchema(),
+        required=False,
+        description="Revocation registry definition",
     )
-    revoc_reg_entry = fields.Dict(
-        required=False, description="Revocation registry entry"
+    revoc_reg_entry = fields.Nested(
+        IndyRevRegEntrySchema(), required=False, description="Revocation registry entry"
     )
     tag = fields.Str(
         required=False, description="Tag within issuer revocation registry identifier"

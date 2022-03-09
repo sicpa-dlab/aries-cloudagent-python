@@ -9,7 +9,7 @@ from .....protocols.trustping.v1_0.messages.ping import Ping
 
 from ..manager import ConnectionManager, ConnectionManagerError
 from ..messages.connection_response import ConnectionResponse
-from ..messages.problem_report import ProblemReport
+from ..messages.problem_report import ConnectionProblemReport
 
 
 class ConnectionResponseHandler(BaseHandler):
@@ -26,8 +26,8 @@ class ConnectionResponseHandler(BaseHandler):
         self._logger.debug(f"ConnectionResponseHandler called with context {context}")
         assert isinstance(context.message, ConnectionResponse)
 
-        session = await context.session()
-        mgr = ConnectionManager(session)
+        profile = context.profile
+        mgr = ConnectionManager(profile)
         try:
             connection = await mgr.accept_response(
                 context.message, context.message_receipt
@@ -47,7 +47,7 @@ class ConnectionResponseHandler(BaseHandler):
                             "Error parsing DIDDoc for problem report"
                         )
                 await responder.send_reply(
-                    ProblemReport(problem_code=e.error_code, explain=str(e)),
+                    ConnectionProblemReport(problem_code=e.error_code, explain=str(e)),
                     target_list=targets,
                 )
             return

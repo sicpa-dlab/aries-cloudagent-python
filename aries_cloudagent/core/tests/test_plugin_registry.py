@@ -8,6 +8,7 @@ from ...utils.classloader import ClassLoader, ModuleLoadError
 
 from ..plugin_registry import PluginRegistry
 from ..protocol_registry import ProtocolRegistry
+from ..goal_code_registry import GoalCodeRegistry
 
 from ..error import ProtocolDefinitionValidationError
 
@@ -21,7 +22,11 @@ class TestPluginRegistry(AsyncTestCase):
             register_message_types=async_mock.MagicMock(),
             register_controllers=async_mock.MagicMock(),
         )
+        self.goal_code_registry = async_mock.MagicMock(
+            register_controllers=async_mock.MagicMock(),
+        )
         self.context.injector.bind_instance(ProtocolRegistry, self.proto_registry)
+        self.context.injector.bind_instance(GoalCodeRegistry, self.goal_code_registry)
 
     async def test_setup(self):
         mod_name = "test_mod"
@@ -426,11 +431,15 @@ class TestPluginRegistry(AsyncTestCase):
             assert self.registry.register_plugin("dummy") is None
 
     async def test_register_plugin_no_definition(self):
+        class MODULE:
+            no_setup = "no setup attr"
+
+        obj = MODULE()
         with async_mock.patch.object(
             ClassLoader, "load_module", async_mock.MagicMock()
         ) as load_module:
             load_module.side_effect = [
-                async_mock.MagicMock(),  # module
+                obj,  # module
                 None,  # routes
                 None,  # message types
                 None,  # definition
@@ -438,23 +447,47 @@ class TestPluginRegistry(AsyncTestCase):
             assert self.registry.register_plugin("dummy") is None
 
     async def test_register_plugin_no_versions(self):
+        class MODULE:
+            no_setup = "no setup attr"
+
+        obj = MODULE()
         with async_mock.patch.object(
             ClassLoader, "load_module", async_mock.MagicMock()
         ) as load_module:
             load_module.side_effect = [
-                async_mock.MagicMock(),  # module
+                obj,  # module
                 None,  # routes
                 None,  # message types
                 "str-has-no-versions-attr",  # definition without versions attr
             ]
             assert self.registry.register_plugin("dummy") is None
 
-    async def test_register_definitions_malformed(self):
+    async def test_register_plugin_has_setup(self):
+        class MODULE:
+            setup = "present"
+
+        obj = MODULE()
         with async_mock.patch.object(
             ClassLoader, "load_module", async_mock.MagicMock()
         ) as load_module:
             load_module.side_effect = [
-                async_mock.MagicMock(),  # module
+                obj,  # module
+                None,  # routes
+                None,  # message types
+                None,  # definition without versions attr
+            ]
+            assert self.registry.register_plugin("dummy") == obj
+
+    async def test_register_definitions_malformed(self):
+        class MODULE:
+            no_setup = "no setup attr"
+
+        obj = MODULE()
+        with async_mock.patch.object(
+            ClassLoader, "load_module", async_mock.MagicMock()
+        ) as load_module:
+            load_module.side_effect = [
+                obj,  # module
                 None,  # routes
                 None,  # message types
                 async_mock.MagicMock(versions="not-a-list"),

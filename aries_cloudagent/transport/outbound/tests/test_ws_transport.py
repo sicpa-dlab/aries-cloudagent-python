@@ -4,15 +4,16 @@ import json
 from aiohttp.test_utils import AioHTTPTestCase, unittest_run_loop
 from aiohttp import web, WSMsgType
 
-from ....config.injection_context import InjectionContext
+from ....core.in_memory import InMemoryProfile
 
 from ..ws import WsTransport
 
 
 class TestWsTransport(AioHTTPTestCase):
     async def setUpAsync(self):
-        self.context = InjectionContext()
+        self.profile = InMemoryProfile.test_profile()
         self.message_results = []
+        await super().setUpAsync()
 
     async def receive_message(self, request):
         ws = web.WebSocketResponse()
@@ -35,13 +36,12 @@ class TestWsTransport(AioHTTPTestCase):
         app.add_routes([web.get("/", self.receive_message)])
         return app
 
-    @unittest_run_loop
     async def test_handle_message(self):
         server_addr = f"ws://localhost:{self.server.port}"
 
         async def send_message(transport, payload, endpoint: str):
             async with transport:
-                await transport.handle_message(self.context, payload, endpoint)
+                await transport.handle_message(self.profile, payload, endpoint)
 
         transport = WsTransport()
         await asyncio.wait_for(send_message(transport, "{}", endpoint=server_addr), 5.0)

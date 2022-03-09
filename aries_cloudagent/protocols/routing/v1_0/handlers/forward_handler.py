@@ -26,11 +26,10 @@ class ForwardHandler(BaseHandler):
         self._logger.info(
             "Received forward for: %s", context.message_receipt.recipient_verkey
         )
-        session = await context.session()
 
         packed = context.message.msg
         packed = json.dumps(packed).encode("ascii")
-        rt_mgr = RoutingManager(session)
+        rt_mgr = RoutingManager(context.profile)
         target = context.message.to
 
         try:
@@ -40,7 +39,7 @@ class ForwardHandler(BaseHandler):
             return
 
         # load connection
-        connection_mgr = ConnectionManager(session)
+        connection_mgr = ConnectionManager(context.profile)
         connection_targets = await connection_mgr.get_connection_targets(
             connection_id=recipient.connection_id
         )
@@ -51,9 +50,20 @@ class ForwardHandler(BaseHandler):
         self._logger.info(
             f"Forwarding message to connection: {recipient.connection_id}"
         )
-        await responder.send(
+
+        send_status = await responder.send(
             packed,
             connection_id=recipient.connection_id,
             target_list=connection_targets,
             reply_to_verkey=connection_verkey,
+        )
+
+        # emit event that a forward message is received (may trigger webhook event)
+        await context.profile.notify(
+            "acapy::forward::received",
+            {
+                "connection_id": recipient.connection_id,
+                "status": send_status.value,
+                "recipient_key": context.message.to,
+            },
         )

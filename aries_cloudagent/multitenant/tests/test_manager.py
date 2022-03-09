@@ -1,24 +1,23 @@
+import jwt
+from aries_cloudagent.config.base import InjectionError
+from aries_cloudagent.multitenant.base import MultitenantManagerError
+from aries_cloudagent.multitenant.error import WalletKeyMissingError
+from aries_cloudagent.protocols.coordinate_mediation.v1_0.manager import \
+    MediationManager
+from aries_cloudagent.protocols.routing.v1_0.manager import RoutingManager
+from aries_cloudagent.protocols.routing.v1_0.models.route_record import \
+    RouteRecord
+from aries_cloudagent.storage.error import StorageNotFoundError
+from aries_cloudagent.storage.in_memory import InMemoryStorage
+from aries_cloudagent.wallet.did_info import DIDInfo
+from aries_cloudagent.wallet.in_memory import InMemoryWallet
 from asynctest import TestCase as AsyncTestCase
 from asynctest import mock as async_mock
 
-import jwt
-
 from ...core.in_memory import InMemoryProfile
-from ...config.base import InjectionError
 from ...messaging.responder import BaseResponder
 from ...wallet.models.wallet_record import WalletRecord
-from ...wallet.in_memory import InMemoryWallet
-from ...wallet.base import DIDInfo
-from ...storage.error import StorageNotFoundError
-from ...storage.in_memory import InMemoryStorage
-from ...protocols.routing.v1_0.manager import RoutingManager
-from ...protocols.routing.v1_0.models.route_record import RouteRecord
-from ...protocols.coordinate_mediation.v1_0.manager import (
-    MediationRecord,
-    MediationManager,
-)
-from ..manager import MultitenantManager, MultitenantManagerError
-from ..error import WalletKeyMissingError
+from ..manager import MultitenantManager
 
 
 class TestMultitenantManager(AsyncTestCase):
@@ -30,27 +29,6 @@ class TestMultitenantManager(AsyncTestCase):
         self.context.injector.bind_instance(BaseResponder, self.responder)
 
         self.manager = MultitenantManager(self.profile)
-        assert self.manager.profile
-
-    async def test_init_throws_no_profile(self):
-        with self.assertRaises(MultitenantManagerError):
-            MultitenantManager(None)
-
-    async def test_get_default_mediator(self):
-        with async_mock.patch.object(
-            MediationManager, "get_default_mediator"
-        ) as get_default_mediator:
-            mediaton_record = MediationRecord()
-
-            # has default mediator
-            get_default_mediator.return_value = mediaton_record
-            default_mediator = await self.manager.get_default_mediator()
-            assert default_mediator is mediaton_record
-
-            # Doesn't have default mediator
-            get_default_mediator.return_value = None
-            default_mediator = await self.manager.get_default_mediator()
-            assert default_mediator is None
 
     async def test_get_wallet_profile_returns_from_cache(self):
         wallet_record = WalletRecord(wallet_id="test")
@@ -68,6 +46,9 @@ class TestMultitenantManager(AsyncTestCase):
     async def test_get_wallet_profile_not_in_cache(self):
         wallet_record = WalletRecord(wallet_id="test", settings={})
         await self.manager._profiles.put("test", InMemoryProfile.test_profile())
+        self.profile.context.update_settings(
+            {"admin.webhook_urls": ["http://localhost:8020"]}
+        )
 
         with async_mock.patch(
             "aries_cloudagent.config.wallet.wallet_config"
@@ -80,30 +61,49 @@ class TestMultitenantManager(AsyncTestCase):
 
     async def test_get_wallet_profile_settings(self):
         extra_settings = {"extra_settings": "extra_settings"}
-        wallet_record_settings = {"wallet_record_settings": "wallet_record_settings"}
-        wallet_record = WalletRecord(
-            wallet_id="test",
-            settings=wallet_record_settings,
-        )
+        all_wallet_record_settings = [
+            {
+                "wallet_record_settings": "wallet_record_settings",
+                "wallet.dispatch_type": "default",
+            },
+            {
+                "wallet_record_settings": "wallet_record_settings",
+                "wallet.dispatch_type": "default",
+                "wallet.webhook_urls": ["https://localhost:8090"],
+            },
+            {
+                "wallet_record_settings": "wallet_record_settings",
+                "wallet.dispatch_type": "both",
+            },
+            {
+                "wallet_record_settings": "wallet_record_settings",
+                "wallet.dispatch_type": "both",
+                "wallet.webhook_urls": ["https://localhost:8090"],
+            },
+        ]
 
-        with async_mock.patch(
-            "aries_cloudagent.multitenant.manager.wallet_config"
-        ) as wallet_config:
+        def side_effect(context, provision):
+            return (InMemoryProfile(context=context), None)
 
-            def side_effect(context, provision):
-                return (InMemoryProfile(context=context), None)
-
-            wallet_config.side_effect = side_effect
-
-            profile = await self.manager.get_wallet_profile(
-                self.profile.context, wallet_record, extra_settings
+        for idx, wallet_record_settings in enumerate(all_wallet_record_settings):
+            wallet_record = WalletRecord(
+                wallet_id=f"test.{idx}",
+                settings=wallet_record_settings,
             )
 
-            assert (
-                profile.settings.get("wallet_record_settings")
-                == "wallet_record_settings"
-            )
-            assert profile.settings.get("extra_settings") == "extra_settings"
+            with async_mock.patch(
+                "aries_cloudagent.multitenant.manager.wallet_config"
+            ) as wallet_config:
+                wallet_config.side_effect = side_effect
+                profile = await self.manager.get_wallet_profile(
+                    self.profile.context, wallet_record, extra_settings
+                )
+
+                assert (
+                    profile.settings.get("wallet_record_settings")
+                    == "wallet_record_settings"
+                )
+                assert profile.settings.get("extra_settings") == "extra_settings"
 
     async def test_get_wallet_profile_settings_reset(self):
         wallet_record = WalletRecord(
@@ -187,28 +187,17 @@ class TestMultitenantManager(AsyncTestCase):
             assert profile.settings.get("mediation.default_id") == "24a96ef5"
             assert profile.settings.get("mediation.clear") == True
 
-    async def test_wallet_exists_name_is_root_profile_name(self):
-        session = InMemoryProfile.test_session({"wallet.name": "test_wallet"})
-
-        wallet_name_exists = await self.manager._wallet_name_exists(
-            session, "test_wallet"
+    async def test_remove_wallet_profile(self):
+        test_profile = InMemoryProfile.test_profile(
+            settings={"wallet.id": "test"},
         )
-        assert wallet_name_exists is True
+        
+        await self.manager._profiles.put("test", test_profile)
 
-    async def test_wallet_exists_in_wallet_record(self):
-        session = InMemoryProfile.test_session({"wallet.name": "test_wallet"})
-
-        # create wallet record with existing wallet_name
-        wallet_record = WalletRecord(
-            key_management_mode="managed",
-            settings={"wallet.name": "another_test_wallet"},
-        )
-        await wallet_record.save(session)
-
-        wallet_name_exists = await self.manager._wallet_name_exists(
-            session, "another_test_wallet"
-        )
-        assert wallet_name_exists is True
+        with async_mock.patch.object(InMemoryProfile, "remove") as profile_remove:
+            await self.manager.remove_wallet_profile(test_profile)
+            assert "test" not in self.manager._profile.get("test")
+            profile_remove.assert_called_once_with()
 
     async def test_wallet_exists_false(self):
         session = InMemoryProfile.test_session({"wallet.name": "test_wallet"})

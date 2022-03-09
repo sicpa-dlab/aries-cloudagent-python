@@ -4,8 +4,10 @@ import asyncio
 import logging
 from typing import Callable, Sequence, Union
 
+from ...admin.server import AdminResponder
 from ...core.profile import Profile
-from ...multitenant.manager import MultitenantManager
+from ...messaging.responder import BaseResponder
+from ...multitenant.base import BaseMultitenantManager
 
 from ..error import WireFormatError
 from ..outbound.message import OutboundMessage
@@ -157,7 +159,7 @@ class InboundSession:
 
     async def handle_relay_context(self, payload_enc: Union[str, bytes]):
         """Update the session profile based on the recipients of an incoming message."""
-        multitenant_mgr = self.profile.context.inject(MultitenantManager)
+        multitenant_mgr = self.profile.context.inject(BaseMultitenantManager)
 
         try:
             [wallet] = await multitenant_mgr.get_wallets_by_message(
@@ -168,6 +170,15 @@ class InboundSession:
                 profile = await multitenant_mgr.get_wallet_profile(
                     self.profile.context, wallet
                 )
+
+                base_responder: AdminResponder = profile.inject(BaseResponder)
+
+                # Create new responder based on base responder
+                responder = AdminResponder(
+                    profile,
+                    base_responder.send_fn,
+                )
+                profile.context.injector.bind_instance(BaseResponder, responder)
 
                 # overwrite session profile with wallet profile
                 self.profile = profile

@@ -102,6 +102,11 @@ class CreateInvitationRequestSchema(OpenAPISchema):
         required=False,
         description="List of routing keys",
     )
+    my_label = fields.Str(
+        description="Optional label for connection invitation",
+        required=False,
+        example="Bob",
+    )
     metadata = fields.Dict(
         description="Optional metadata to attach to the connection created with "
         "the invitation",
@@ -138,10 +143,10 @@ class ConnectionStaticRequestSchema(OpenAPISchema):
     their_did = fields.Str(description="Remote DID", required=False, **INDY_DID)
     their_verkey = fields.Str(description="Remote verification key", required=False)
     their_endpoint = fields.Str(
-        description="URL endpoint for the other party", required=False, **ENDPOINT
+        description="URL endpoint for other party", required=False, **ENDPOINT
     )
     their_label = fields.Str(
-        description="Label to assign to this connection", required=False
+        description="Other party's label for this connection", required=False
     )
     alias = fields.Str(description="Alias to assign to this connection", required=False)
 
@@ -150,7 +155,7 @@ class ConnectionStaticResultSchema(OpenAPISchema):
     """Result schema for new static connection."""
 
     my_did = fields.Str(description="Local DID", required=True, **INDY_DID)
-    mv_verkey = fields.Str(
+    my_verkey = fields.Str(
         description="My verification key", required=True, **INDY_RAW_PUBLIC_KEY
     )
     my_endpoint = fields.Str(description="My URL endpoint", required=True, **ENDPOINT)
@@ -181,6 +186,9 @@ class ConnectionsListQueryStringSchema(OpenAPISchema):
         ),
     )
     their_did = fields.Str(description="Their DID", required=False, **INDY_DID)
+    their_public_did = fields.Str(
+        description="Their Public DID", required=False, **INDY_DID
+    )
     their_role = fields.Str(
         description="Their role in the connection protocol",
         required=False,
@@ -188,6 +196,14 @@ class ConnectionsListQueryStringSchema(OpenAPISchema):
             [label for role in ConnRecord.Role for label in role.value]
         ),
         example=ConnRecord.Role.REQUESTER.rfc160,
+    )
+    connection_protocol = fields.Str(
+        description="Connection protocol used",
+        required=False,
+        validate=validate.OneOf(
+            [proto.aries_protocol for proto in ConnRecord.Protocol]
+        ),
+        example=ConnRecord.Protocol.RFC_0160.aries_protocol,
     )
 
 
@@ -200,7 +216,7 @@ class CreateInvitationQueryStringSchema(OpenAPISchema):
         example="Barry",
     )
     auto_accept = fields.Boolean(
-        description="Auto-accept connection (default as per configuration)",
+        description="Auto-accept connection (defaults to configuration)",
         required=False,
     )
     public = fields.Boolean(
@@ -250,7 +266,7 @@ class AcceptRequestQueryStringSchema(OpenAPISchema):
     my_endpoint = fields.Str(description="My URL endpoint", required=False, **ENDPOINT)
 
 
-class ConnIdMatchInfoSchema(OpenAPISchema):
+class ConnectionsConnIdMatchInfoSchema(OpenAPISchema):
     """Path parameters and validators for request taking connection id."""
 
     conn_id = fields.Str(
@@ -270,6 +286,13 @@ class ConnIdRefIdMatchInfoSchema(OpenAPISchema):
         required=True,
         example=UUIDFour.EXAMPLE,
     )
+
+
+class EndpointsResultSchema(OpenAPISchema):
+    """Result schema for connection endpoints."""
+
+    my_endpoint = fields.Str(description="My endpoint", **ENDPOINT)
+    their_endpoint = fields.Str(description="Their endpoint", **ENDPOINT)
 
 
 def connection_sort_key(conn):
@@ -311,6 +334,8 @@ async def connections_list(request: web.BaseRequest):
         "my_did",
         "their_did",
         "request_id",
+        "invitation_key",
+        "their_public_did",
     ):
         if param_name in request.query and request.query[param_name] != "":
             tag_filter[param_name] = request.query[param_name]
@@ -326,12 +351,15 @@ async def connections_list(request: web.BaseRequest):
         post_filter["their_role"] = [
             v for v in ConnRecord.Role.get(request.query["their_role"]).value
         ]
+    if request.query.get("connection_protocol"):
+        post_filter["connection_protocol"] = request.query["connection_protocol"]
 
-    session = await context.session()
+    profile = context.profile
     try:
-        records = await ConnRecord.query(
-            session, tag_filter, post_filter_positive=post_filter, alt=True
-        )
+        async with profile.session() as session:
+            records = await ConnRecord.query(
+                session, tag_filter, post_filter_positive=post_filter, alt=True
+            )
         results = [record.serialize() for record in records]
         results.sort(key=connection_sort_key)
     except (StorageError, BaseModelError) as err:
@@ -341,7 +369,7 @@ async def connections_list(request: web.BaseRequest):
 
 
 @docs(tags=["connection"], summary="Fetch a single connection record")
-@match_info_schema(ConnIdMatchInfoSchema())
+@match_info_schema(ConnectionsConnIdMatchInfoSchema())
 @response_schema(ConnRecordSchema(), 200, description="")
 async def connections_retrieve(request: web.BaseRequest):
     """
@@ -356,10 +384,11 @@ async def connections_retrieve(request: web.BaseRequest):
     """
     context: AdminRequestContext = request["context"]
     connection_id = request.match_info["conn_id"]
-    session = await context.session()
 
+    profile = context.profile
     try:
-        record = await ConnRecord.retrieve_by_id(session, connection_id)
+        async with profile.session() as session:
+            record = await ConnRecord.retrieve_by_id(session, connection_id)
         result = record.serialize()
     except StorageNotFoundError as err:
         raise web.HTTPNotFound(reason=err.roll_up) from err
@@ -369,8 +398,37 @@ async def connections_retrieve(request: web.BaseRequest):
     return web.json_response(result)
 
 
+@docs(tags=["connection"], summary="Fetch connection remote endpoint")
+@match_info_schema(ConnectionsConnIdMatchInfoSchema())
+@response_schema(EndpointsResultSchema(), 200, description="")
+async def connections_endpoints(request: web.BaseRequest):
+    """
+    Request handler for fetching connection endpoints.
+
+    Args:
+        request: aiohttp request object
+
+    Returns:
+        The endpoints response
+
+    """
+    context: AdminRequestContext = request["context"]
+    connection_id = request.match_info["conn_id"]
+
+    profile = context.profile
+    connection_mgr = ConnectionManager(profile)
+    try:
+        endpoints = await connection_mgr.get_endpoints(connection_id)
+    except StorageNotFoundError as err:
+        raise web.HTTPNotFound(reason=err.roll_up) from err
+    except (BaseModelError, StorageError, WalletError) as err:
+        raise web.HTTPBadRequest(reason=err.roll_up) from err
+
+    return web.json_response(dict(zip(("my_endpoint", "their_endpoint"), endpoints)))
+
+
 @docs(tags=["connection"], summary="Fetch connection metadata")
-@match_info_schema(ConnIdMatchInfoSchema())
+@match_info_schema(ConnectionsConnIdMatchInfoSchema())
 @querystring_schema(ConnectionMetadataQuerySchema())
 @response_schema(ConnectionMetadataSchema(), 200, description="")
 async def connections_metadata(request: web.BaseRequest):
@@ -378,24 +436,25 @@ async def connections_metadata(request: web.BaseRequest):
     context: AdminRequestContext = request["context"]
     connection_id = request.match_info["conn_id"]
     key = request.query.get("key", None)
-    session = await context.session()
 
+    profile = context.profile
     try:
-        record = await ConnRecord.retrieve_by_id(session, connection_id)
-        if key:
-            result = await record.metadata_get(session, key)
-        else:
-            result = await record.metadata_get_all(session)
+        async with profile.session() as session:
+            record = await ConnRecord.retrieve_by_id(session, connection_id)
+            if key:
+                result = await record.metadata_get(session, key)
+            else:
+                result = await record.metadata_get_all(session)
     except StorageNotFoundError as err:
         raise web.HTTPNotFound(reason=err.roll_up) from err
     except BaseModelError as err:
         raise web.HTTPBadRequest(reason=err.roll_up) from err
 
-    return web.json_response(result)
+    return web.json_response({"results": result})
 
 
 @docs(tags=["connection"], summary="Set connection metadata")
-@match_info_schema(ConnIdMatchInfoSchema())
+@match_info_schema(ConnectionsConnIdMatchInfoSchema())
 @request_schema(ConnectionMetadataSetRequestSchema())
 @response_schema(ConnectionMetadataSchema(), 200, description="")
 async def connections_metadata_set(request: web.BaseRequest):
@@ -403,19 +462,20 @@ async def connections_metadata_set(request: web.BaseRequest):
     context: AdminRequestContext = request["context"]
     connection_id = request.match_info["conn_id"]
     body = await request.json() if request.body_exists else {}
-    session = await context.session()
 
+    profile = context.profile
     try:
-        record = await ConnRecord.retrieve_by_id(session, connection_id)
-        for key, value in body.get("metadata", {}).items():
-            await record.metadata_set(session, key, value)
-        result = await record.metadata_get_all(session)
+        async with profile.session() as session:
+            record = await ConnRecord.retrieve_by_id(session, connection_id)
+            for key, value in body.get("metadata", {}).items():
+                await record.metadata_set(session, key, value)
+            result = await record.metadata_get_all(session)
     except StorageNotFoundError as err:
         raise web.HTTPNotFound(reason=err.roll_up) from err
     except BaseModelError as err:
         raise web.HTTPBadRequest(reason=err.roll_up) from err
 
-    return web.json_response(result)
+    return web.json_response({"results": result})
 
 
 @docs(
@@ -442,6 +502,7 @@ async def connections_create_invitation(request: web.BaseRequest):
     public = json.loads(request.query.get("public", "false"))
     multi_use = json.loads(request.query.get("multi_use", "false"))
     body = await request.json() if request.body_exists else {}
+    my_label = body.get("my_label")
     recipient_keys = body.get("recipient_keys")
     service_endpoint = body.get("service_endpoint")
     routing_keys = body.get("routing_keys")
@@ -452,12 +513,13 @@ async def connections_create_invitation(request: web.BaseRequest):
         raise web.HTTPForbidden(
             reason="Configuration does not include public invitations"
         )
-    session = await context.session()
-    base_url = session.settings.get("invite_base_url")
+    profile = context.profile
+    base_url = profile.settings.get("invite_base_url")
 
-    connection_mgr = ConnectionManager(session)
+    connection_mgr = ConnectionManager(profile)
     try:
         (connection, invitation) = await connection_mgr.create_invitation(
+            my_label=my_label,
             auto_accept=auto_accept,
             public=public,
             multi_use=multi_use,
@@ -506,8 +568,8 @@ async def connections_receive_invitation(request: web.BaseRequest):
         raise web.HTTPForbidden(
             reason="Configuration does not allow receipt of invitations"
         )
-    session = await context.session()
-    connection_mgr = ConnectionManager(session)
+    profile = context.profile
+    connection_mgr = ConnectionManager(profile)
     invitation_json = await request.json()
 
     try:
@@ -529,7 +591,7 @@ async def connections_receive_invitation(request: web.BaseRequest):
     tags=["connection"],
     summary="Accept a stored connection invitation",
 )
-@match_info_schema(ConnIdMatchInfoSchema())
+@match_info_schema(ConnectionsConnIdMatchInfoSchema())
 @querystring_schema(AcceptInvitationQueryStringSchema())
 @response_schema(ConnRecordSchema(), 200, description="")
 async def connections_accept_invitation(request: web.BaseRequest):
@@ -546,11 +608,12 @@ async def connections_accept_invitation(request: web.BaseRequest):
     context: AdminRequestContext = request["context"]
     outbound_handler = request["outbound_message_router"]
     connection_id = request.match_info["conn_id"]
-    session = await context.session()
+    profile = context.profile
 
     try:
-        connection = await ConnRecord.retrieve_by_id(session, connection_id)
-        connection_mgr = ConnectionManager(session)
+        async with profile.session() as session:
+            connection = await ConnRecord.retrieve_by_id(session, connection_id)
+        connection_mgr = ConnectionManager(profile)
         my_label = request.query.get("my_label")
         my_endpoint = request.query.get("my_endpoint")
         mediation_id = request.query.get("mediation_id")
@@ -579,7 +642,7 @@ async def connections_accept_invitation(request: web.BaseRequest):
     tags=["connection"],
     summary="Accept a stored connection request",
 )
-@match_info_schema(ConnIdMatchInfoSchema())
+@match_info_schema(ConnectionsConnIdMatchInfoSchema())
 @querystring_schema(AcceptRequestQueryStringSchema())
 @response_schema(ConnRecordSchema(), 200, description="")
 async def connections_accept_request(request: web.BaseRequest):
@@ -596,11 +659,12 @@ async def connections_accept_request(request: web.BaseRequest):
     context: AdminRequestContext = request["context"]
     outbound_handler = request["outbound_message_router"]
     connection_id = request.match_info["conn_id"]
-    session = await context.session()
 
+    profile = context.profile
     try:
-        connection = await ConnRecord.retrieve_by_id(session, connection_id)
-        connection_mgr = ConnectionManager(session)
+        async with profile.session() as session:
+            connection = await ConnRecord.retrieve_by_id(session, connection_id)
+        connection_mgr = ConnectionManager(profile)
         my_endpoint = request.query.get("my_endpoint") or None
         response = await connection_mgr.create_response(connection, my_endpoint)
         result = connection.serialize()
@@ -629,11 +693,12 @@ async def connections_establish_inbound(request: web.BaseRequest):
     connection_id = request.match_info["conn_id"]
     outbound_handler = request["outbound_message_router"]
     inbound_connection_id = request.match_info["ref_id"]
-    session = await context.session()
 
+    profile = context.profile
     try:
-        connection = await ConnRecord.retrieve_by_id(session, connection_id)
-        connection_mgr = ConnectionManager(session)
+        async with profile.session() as session:
+            connection = await ConnRecord.retrieve_by_id(session, connection_id)
+        connection_mgr = ConnectionManager(profile)
         await connection_mgr.establish_inbound(
             connection, inbound_connection_id, outbound_handler
         )
@@ -646,7 +711,7 @@ async def connections_establish_inbound(request: web.BaseRequest):
 
 
 @docs(tags=["connection"], summary="Remove an existing connection record")
-@match_info_schema(ConnIdMatchInfoSchema())
+@match_info_schema(ConnectionsConnIdMatchInfoSchema())
 @response_schema(ConnectionModuleResponseSchema, 200, description="")
 async def connections_remove(request: web.BaseRequest):
     """
@@ -657,11 +722,12 @@ async def connections_remove(request: web.BaseRequest):
     """
     context: AdminRequestContext = request["context"]
     connection_id = request.match_info["conn_id"]
-    session = await context.session()
+    profile = context.profile
 
     try:
-        connection = await ConnRecord.retrieve_by_id(session, connection_id)
-        await connection.delete_record(session)
+        async with profile.session() as session:
+            connection = await ConnRecord.retrieve_by_id(session, connection_id)
+            await connection.delete_record(session)
     except StorageNotFoundError as err:
         raise web.HTTPNotFound(reason=err.roll_up) from err
     except StorageError as err:
@@ -686,9 +752,9 @@ async def connections_create_static(request: web.BaseRequest):
     """
     context: AdminRequestContext = request["context"]
     body = await request.json()
-    session = await context.session()
 
-    connection_mgr = ConnectionManager(session)
+    profile = context.profile
+    connection_mgr = ConnectionManager(profile)
     try:
         (
             my_info,
@@ -731,6 +797,11 @@ async def register(app: web.Application):
                 allow_head=False,
             ),
             web.post("/connections/{conn_id}/metadata", connections_metadata_set),
+            web.get(
+                "/connections/{conn_id}/endpoints",
+                connections_endpoints,
+                allow_head=False,
+            ),
             web.post("/connections/create-static", connections_create_static),
             web.post("/connections/create-invitation", connections_create_invitation),
             web.post("/connections/receive-invitation", connections_receive_invitation),
@@ -739,7 +810,8 @@ async def register(app: web.Application):
                 connections_accept_invitation,
             ),
             web.post(
-                "/connections/{conn_id}/accept-request", connections_accept_request
+                "/connections/{conn_id}/accept-request",
+                connections_accept_request,
             ),
             web.post(
                 "/connections/{conn_id}/establish-inbound/{ref_id}",

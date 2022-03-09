@@ -35,6 +35,23 @@ class TestConnRecord(AsyncTestCase):
         assert self.test_conn_record.state == ConnRecord.State.COMPLETED.rfc160
         assert self.test_conn_record.rfc23_state == ConnRecord.State.COMPLETED.rfc23
 
+    def test_get_protocol(self):
+        assert ConnRecord.Protocol.get("test") is None
+        assert (
+            ConnRecord.Protocol.get("didexchange/1.0") is ConnRecord.Protocol.RFC_0023
+        )
+        assert (
+            ConnRecord.Protocol.get(ConnRecord.Protocol.RFC_0023)
+            is ConnRecord.Protocol.RFC_0023
+        )
+        assert (
+            ConnRecord.Protocol.get("connections/1.0") is ConnRecord.Protocol.RFC_0160
+        )
+        assert (
+            ConnRecord.Protocol.get(ConnRecord.Protocol.RFC_0160)
+            is ConnRecord.Protocol.RFC_0160
+        )
+
     async def test_get_enums(self):
         assert ConnRecord.Role.get("Larry") is None
         assert ConnRecord.State.get("a suffusion of yellow") is None
@@ -133,6 +150,12 @@ class TestConnRecord(AsyncTestCase):
         )
         assert result == record
 
+    async def test_from_storage_with_initiator_old(self):
+        record = ConnRecord(my_did=self.test_did, state=ConnRecord.State.COMPLETED)
+        ser = record.serialize()
+        ser["initiator"] = "self"  # old-style ConnectionRecord
+        ConnRecord.from_storage("conn-id", ser)
+
     async def test_retrieve_by_invitation_key(self):
         record = ConnRecord(
             my_did=self.test_did,
@@ -154,6 +177,64 @@ class TestConnRecord(AsyncTestCase):
                 invitation_key="dummy",
                 their_role=ConnRecord.Role.REQUESTER.rfc23,
             )
+
+    async def test_retrieve_by_invitation_msg_id(self):
+        record = ConnRecord(
+            my_did=self.test_did,
+            their_did=self.test_target_did,
+            their_role=ConnRecord.Role.RESPONDER.rfc160,
+            state=ConnRecord.State.INVITATION.rfc160,
+            invitation_msg_id="test123",
+        )
+        await record.save(self.session)
+        result = await ConnRecord.retrieve_by_invitation_msg_id(
+            session=self.session,
+            invitation_msg_id="test123",
+            their_role=ConnRecord.Role.RESPONDER.rfc160,
+        )
+        assert result
+        assert result == record
+        result = await ConnRecord.retrieve_by_invitation_msg_id(
+            session=self.session,
+            invitation_msg_id="test123",
+            their_role=ConnRecord.Role.REQUESTER.rfc160,
+        )
+        assert not result
+
+    async def test_find_existing_connection(self):
+        record_a = ConnRecord(
+            my_did=self.test_did,
+            their_did=self.test_target_did,
+            their_role=ConnRecord.Role.RESPONDER.rfc160,
+            state=ConnRecord.State.COMPLETED.rfc160,
+            invitation_msg_id="test123",
+            their_public_did="test_did_1",
+        )
+        await record_a.save(self.session)
+        record_b = ConnRecord(
+            my_did=self.test_did,
+            their_did=self.test_target_did,
+            their_role=ConnRecord.Role.RESPONDER.rfc160,
+            state=ConnRecord.State.INVITATION.rfc160,
+            invitation_msg_id="test123",
+            their_public_did="test_did_1",
+        )
+        await record_b.save(self.session)
+        record_c = ConnRecord(
+            my_did=self.test_did,
+            their_did=self.test_target_did,
+            their_role=ConnRecord.Role.RESPONDER.rfc160,
+            state=ConnRecord.State.COMPLETED.rfc160,
+            invitation_msg_id="test123",
+        )
+        await record_c.save(self.session)
+        result = await ConnRecord.find_existing_connection(
+            session=self.session,
+            their_public_did="test_did_1",
+        )
+        assert result
+        assert result.state == "active"
+        assert result.their_public_did == "test_did_1"
 
     async def test_retrieve_by_request_id(self):
         record = ConnRecord(
@@ -245,6 +326,32 @@ class TestConnRecord(AsyncTestCase):
         retrieved = await record.retrieve_request(self.session)
         assert isinstance(retrieved, ConnectionRequest)
 
+    async def test_attach_request_abstain_on_alien_deco(self):
+        record = ConnRecord(
+            my_did=self.test_did,
+            state=ConnRecord.State.INVITATION.rfc23,
+        )
+        connection_id = await record.save(self.session)
+
+        req = ConnectionRequest(
+            connection=ConnectionDetail(
+                did=self.test_did, did_doc=DIDDoc(self.test_did)
+            ),
+            label="abc123",
+        )
+        ser = req.serialize()
+        ser["~alien"] = [{"nickname": "profile-image", "data": {"links": ["face.png"]}}]
+        alien_req = ConnectionRequest.deserialize(ser)
+        await record.attach_request(self.session, alien_req)
+        alien_ser = alien_req.serialize()
+        assert "~alien" in alien_ser
+
+        ser["~alien"] = None
+        alien_req = ConnectionRequest.deserialize(ser)
+        await record.attach_request(self.session, alien_req)
+        alien_ser = alien_req.serialize()
+        assert "~alien" not in alien_ser
+
     async def test_ser_rfc23_state_present(self):
         record = ConnRecord(
             state=ConnRecord.State.INVITATION,
@@ -265,6 +372,17 @@ class TestConnRecord(AsyncTestCase):
         deser = ConnRecord.deserialize(ser)
         reser = deser.serialize()
         assert "initiator" not in reser
+
+    async def test_deserialize_connection_protocol(self):
+        record = ConnRecord(
+            state=ConnRecord.State.INIT,
+            my_did=self.test_did,
+            their_role=ConnRecord.Role.REQUESTER,
+            connection_protocol="connections/1.0",
+        )
+        ser = record.serialize()
+        deser = ConnRecord.deserialize(ser)
+        assert deser.connection_protocol == "connections/1.0"
 
     async def test_metadata_set_get(self):
         record = ConnRecord(
@@ -345,3 +463,18 @@ class TestConnRecord(AsyncTestCase):
         )
         await record.save(self.session)
         assert await record.metadata_get_all(self.session) == {}
+
+    async def test_delete_conn_record_deletes_metadata(self):
+        record = ConnRecord(
+            my_did=self.test_did,
+        )
+        await record.save(self.session)
+        await record.metadata_set(self.session, "key", {"test": "value"})
+        await record.delete_record(self.session)
+        storage = self.session.inject(BaseStorage)
+        assert (
+            await storage.find_all_records(
+                ConnRecord.RECORD_TYPE_METADATA, {"connection_id": record.connection_id}
+            )
+            == []
+        )

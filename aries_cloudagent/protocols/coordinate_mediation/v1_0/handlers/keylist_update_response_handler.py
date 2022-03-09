@@ -1,10 +1,9 @@
 """Handler for keylist-update-response message."""
-from .....messaging.base_handler import (
-    BaseHandler,
-    BaseResponder,
-    HandlerException,
-    RequestContext,
-)
+
+from .....messaging.base_handler import BaseHandler, HandlerException
+from .....messaging.request_context import RequestContext
+from .....messaging.responder import BaseResponder
+
 from ..messages.keylist_update_response import KeylistUpdateResponse
 from ..manager import MediationManager
 
@@ -22,8 +21,7 @@ class KeylistUpdateResponseHandler(BaseHandler):
         if not context.connection_ready:
             raise HandlerException("Invalid mediation request: no active connection")
 
-        session = await context.session()
-        mgr = MediationManager(session)
+        mgr = MediationManager(context.profile)
         await mgr.store_update_results(
             context.connection_record.connection_id, context.message.updated
         )

@@ -1,4 +1,5 @@
 import json
+
 from base64 import b64encode
 
 from asynctest import TestCase as AsyncTestCase, mock as async_mock
@@ -8,10 +9,12 @@ from ...protocols.routing.v1_0.message_types import FORWARD
 from ...protocols.didcomm_prefix import DIDCommPrefix
 from ...wallet.base import BaseWallet
 from ...wallet.error import WalletError
+from ...wallet.key_type import KeyType
+from ...wallet.did_method import DIDMethod
 
-from ..error import MessageEncodeError, MessageParseError, RecipientKeysError
-from ..pack_format import PackWireFormat
 from .. import pack_format as test_module
+from ..error import WireFormatEncodeError, WireFormatParseError, RecipientKeysError
+from ..pack_format import PackWireFormat
 
 
 class TestPackWireFormat(AsyncTestCase):
@@ -38,7 +41,7 @@ class TestPackWireFormat(AsyncTestCase):
         bad_values = [None, "", "1", "[]", "{..."]
 
         for message_json in bad_values:
-            with self.assertRaises(MessageParseError):
+            with self.assertRaises(WireFormatParseError):
                 message_dict, delivery = await serializer.parse_message(
                     self.session, message_json
                 )
@@ -55,7 +58,7 @@ class TestPackWireFormat(AsyncTestCase):
             serializer, "unpack", async_mock.CoroutineMock()
         ) as mock_unpack:
             mock_unpack.return_value = "{missing-brace"
-            with self.assertRaises(MessageParseError) as context:
+            with self.assertRaises(WireFormatParseError) as context:
                 await serializer.parse_message(self.session, json.dumps(x_message))
         assert "Message JSON parsing failed" in str(context.exception)
 
@@ -65,11 +68,11 @@ class TestPackWireFormat(AsyncTestCase):
             serializer, "unpack", async_mock.CoroutineMock()
         ) as mock_unpack:
             mock_unpack.return_value = json.dumps([1, 2, 3])
-            with self.assertRaises(MessageParseError) as context:
+            with self.assertRaises(WireFormatParseError) as context:
                 await serializer.parse_message(self.session, json.dumps(x_message))
         assert "Message JSON result is not an object" in str(context.exception)
 
-        with self.assertRaises(MessageParseError):
+        with self.assertRaises(WireFormatParseError):
             await serializer.unpack(
                 InMemoryProfile.test_session(bind={BaseWallet: None}), "...", None
             )
@@ -77,10 +80,10 @@ class TestPackWireFormat(AsyncTestCase):
     async def test_pack_x(self):
         serializer = PackWireFormat()
 
-        with self.assertRaises(MessageEncodeError):
+        with self.assertRaises(WireFormatEncodeError):
             await serializer.pack(self.session, None, None, None, None)
 
-        with self.assertRaises(MessageEncodeError):
+        with self.assertRaises(WireFormatEncodeError):
             await serializer.pack(
                 InMemoryProfile.test_session(bind={BaseWallet: None}),
                 None,
@@ -93,7 +96,7 @@ class TestPackWireFormat(AsyncTestCase):
             pack_message=async_mock.CoroutineMock(side_effect=WalletError())
         )
         session = InMemoryProfile.test_session(bind={BaseWallet: mock_wallet})
-        with self.assertRaises(MessageEncodeError):
+        with self.assertRaises(WireFormatEncodeError):
             await serializer.pack(session, None, ["key"], None, ["key"])
 
         mock_wallet = async_mock.MagicMock(
@@ -108,7 +111,7 @@ class TestPackWireFormat(AsyncTestCase):
             mock_forward.return_value = async_mock.MagicMock(
                 to_json=async_mock.MagicMock()
             )
-            with self.assertRaises(MessageEncodeError):
+            with self.assertRaises(WireFormatEncodeError):
                 await serializer.pack(session, None, ["key"], ["key"], ["key"])
 
     async def test_unpacked(self):
@@ -136,7 +139,9 @@ class TestPackWireFormat(AsyncTestCase):
         assert message_dict == message
 
     async def test_encode_decode(self):
-        local_did = await self.wallet.create_local_did(self.test_seed)
+        local_did = await self.wallet.create_local_did(
+            method=DIDMethod.SOV, key_type=KeyType.ED25519, seed=self.test_seed
+        )
         serializer = PackWireFormat()
         recipient_keys = (local_did.verkey,)
         routing_keys = ()
@@ -168,8 +173,12 @@ class TestPackWireFormat(AsyncTestCase):
         )
 
     async def test_forward(self):
-        local_did = await self.wallet.create_local_did(self.test_seed)
-        router_did = await self.wallet.create_local_did(self.test_routing_seed)
+        local_did = await self.wallet.create_local_did(
+            method=DIDMethod.SOV, key_type=KeyType.ED25519, seed=self.test_seed
+        )
+        router_did = await self.wallet.create_local_did(
+            method=DIDMethod.SOV, key_type=KeyType.ED25519, seed=self.test_routing_seed
+        )
         serializer = PackWireFormat()
         recipient_keys = (local_did.verkey,)
         routing_keys = (router_did.verkey,)

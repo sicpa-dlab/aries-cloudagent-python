@@ -1,9 +1,12 @@
 """Admin server classes."""
 
 import asyncio
+from hmac import compare_digest
 import logging
-from typing import Callable, Coroutine, Sequence, Set
+import re
+from typing import Callable, Coroutine
 import uuid
+import warnings
 
 from aiohttp import web
 from aiohttp_apispec import (
@@ -14,29 +17,42 @@ from aiohttp_apispec import (
 )
 import aiohttp_cors
 import jwt
-
 from marshmallow import fields
 
 from ..config.injection_context import InjectionContext
-from ..core.profile import Profile
+from ..core.event_bus import Event, EventBus
 from ..core.plugin_registry import PluginRegistry
+from ..core.profile import Profile
 from ..ledger.error import LedgerConfigError, LedgerTransactionError
 from ..messaging.models.openapi import OpenAPISchema
 from ..messaging.responder import BaseResponder
-from ..transport.queue.basic import BasicMessageQueue
+from ..multitenant.base import BaseMultitenantManager, MultitenantManagerError
+from ..storage.error import StorageNotFoundError
 from ..transport.outbound.message import OutboundMessage
+from ..transport.outbound.status import OutboundSendStatus
+from ..transport.queue.basic import BasicMessageQueue
 from ..utils.stats import Collector
 from ..utils.task_queue import TaskQueue
 from ..version import __version__
-from ..multitenant.manager import MultitenantManager, MultitenantManagerError
-
-from ..storage.error import StorageNotFoundError
+from ..messaging.valid import UUIDFour
 from .base_server import BaseAdminServer
 from .error import AdminSetupError
 from .request_context import AdminRequestContext
 
-
 LOGGER = logging.getLogger(__name__)
+
+EVENT_PATTERN_WEBHOOK = re.compile("^acapy::webhook::(.*)$")
+EVENT_PATTERN_RECORD = re.compile("^acapy::record::([^:]*)(?:::.*)?$")
+
+EVENT_WEBHOOK_MAPPING = {
+    "acapy::basicmessage::received": "basicmessages",
+    "acapy::problem_report": "problem_report",
+    "acapy::ping::received": "ping",
+    "acapy::ping::response_received": "ping",
+    "acapy::actionmenu::received": "actionmenu",
+    "acapy::actionmenu::get-active-menu": "get-active-menu",
+    "acapy::actionmenu::perform-menu-action": "perform-menu-action",
+}
 
 
 class AdminModulesSchema(OpenAPISchema):
@@ -47,8 +63,23 @@ class AdminModulesSchema(OpenAPISchema):
     )
 
 
+class AdminConfigSchema(OpenAPISchema):
+    """Schema for the config endpoint."""
+
+    config = fields.Dict(description="Configuration settings")
+
+
 class AdminStatusSchema(OpenAPISchema):
     """Schema for the status endpoint."""
+
+    version = fields.Str(description="Version code")
+    label = fields.Str(description="Default label", allow_none=True)
+    timing = fields.Dict(description="Timing results", required=False)
+    conductor = fields.Dict(description="Conductor statistics", required=False)
+
+
+class AdminResetSchema(OpenAPISchema):
+    """Schema for the reset endpoint."""
 
 
 class AdminStatusLivelinessSchema(OpenAPISchema):
@@ -74,7 +105,6 @@ class AdminResponder(BaseResponder):
         self,
         profile: Profile,
         send: Coroutine,
-        webhook: Coroutine,
         **kwargs,
     ):
         """
@@ -87,69 +117,44 @@ class AdminResponder(BaseResponder):
         super().__init__(**kwargs)
         self._profile = profile
         self._send = send
-        self._webhook = webhook
 
-    async def send_outbound(self, message: OutboundMessage):
+    async def send_outbound(self, message: OutboundMessage) -> OutboundSendStatus:
         """
         Send outbound message.
 
         Args:
             message: The `OutboundMessage` to be sent
         """
-        await self._send(self._profile, message)
+        return await self._send(self._profile, message)
 
     async def send_webhook(self, topic: str, payload: dict):
         """
-        Dispatch a webhook.
+        Dispatch a webhook. DEPRECATED: use the event bus instead.
 
         Args:
             topic: the webhook topic identifier
             payload: the webhook payload value
         """
-        await self._webhook(self._profile, topic, payload)
-
-
-class WebhookTarget:
-    """Class for managing webhook target information."""
-
-    def __init__(
-        self,
-        endpoint: str,
-        topic_filter: Sequence[str] = None,
-        max_attempts: int = None,
-    ):
-        """Initialize the webhook target."""
-        self.endpoint = endpoint
-        self.max_attempts = max_attempts
-        self._topic_filter = None
-        self.topic_filter = topic_filter  # call setter
+        warnings.warn(
+            "responder.send_webhook is deprecated; please use the event bus instead.",
+            DeprecationWarning,
+        )
+        await self._profile.notify("acapy::webhook::" + topic, payload)
 
     @property
-    def topic_filter(self) -> Set[str]:
-        """Accessor for the target's topic filter."""
-        return self._topic_filter
-
-    @topic_filter.setter
-    def topic_filter(self, val: Sequence[str]):
-        """Setter for the target's topic filter."""
-        filter = set(val) if val else None
-        if filter and "*" in filter:
-            filter = None
-        self._topic_filter = filter
+    def send_fn(self) -> Coroutine:
+        """Accessor for async function to send outbound message."""
+        return self._send
 
 
 @web.middleware
 async def ready_middleware(request: web.BaseRequest, handler: Coroutine):
     """Only continue if application is ready to take work."""
 
-    if (
-        str(request.rel_url).rstrip("/")
-        in (
-            "/status/live",
-            "/status/ready",
-        )
-        or request.app._state.get("ready")
-    ):
+    if str(request.rel_url).rstrip("/") in (
+        "/status/live",
+        "/status/ready",
+    ) or request.app._state.get("ready"):
         try:
             return await handler(request)
         except (LedgerConfigError, LedgerTransactionError) as e:
@@ -191,6 +196,13 @@ async def debug_middleware(request: web.BaseRequest, handler: Coroutine):
     return await handler(request)
 
 
+def const_compare(string1, string2):
+    """Compare two strings in constant time."""
+    if string1 is None or string2 is None:
+        return False
+    return compare_digest(string1.encode(), string2.encode())
+
+
 class AdminServer(BaseAdminServer):
     """Admin HTTP server class."""
 
@@ -217,6 +229,7 @@ class AdminServer(BaseAdminServer):
             webhook_router: Callable for delivering webhooks
             conductor_stop: Conductor (graceful) stop for shutdown API call
             task_queue: An optional task queue for handlers
+            conductor_stats: Conductor statistics API call
         """
         self.app = None
         self.admin_api_key = context.settings.get("admin.admin_api_key")
@@ -233,10 +246,9 @@ class AdminServer(BaseAdminServer):
         self.root_profile = root_profile
         self.task_queue = task_queue
         self.webhook_router = webhook_router
-        self.webhook_targets = {}
         self.websocket_queues = {}
         self.site = None
-        self.multitenant_manager = context.inject(MultitenantManager, required=False)
+        self.multitenant_manager = context.inject_or(BaseMultitenantManager)
 
         self.server_paths = []
 
@@ -251,16 +263,14 @@ class AdminServer(BaseAdminServer):
         assert self.admin_insecure_mode ^ bool(self.admin_api_key)
 
         def is_unprotected_path(path: str):
-            return (
-                path
-                in [
-                    "/api/doc",
-                    "/api/docs/swagger.json",
-                    "/favicon.ico",
-                    "/ws",  # ws handler checks authentication
-                ]
-                or path.startswith("/static/swagger/")
-            )
+            return path in [
+                "/api/doc",
+                "/api/docs/swagger.json",
+                "/favicon.ico",
+                "/ws",  # ws handler checks authentication
+                "/status/live",
+                "/status/ready",
+            ] or path.startswith("/static/swagger/")
 
         # If admin_api_key is None, then admin_insecure_mode must be set so
         # we can safely enable the admin server with no security
@@ -269,16 +279,24 @@ class AdminServer(BaseAdminServer):
             @web.middleware
             async def check_token(request: web.Request, handler):
                 header_admin_api_key = request.headers.get("x-api-key")
-                valid_key = self.admin_api_key == header_admin_api_key
+                valid_key = const_compare(self.admin_api_key, header_admin_api_key)
 
-                if valid_key or is_unprotected_path(request.path):
+                # We have to allow OPTIONS method access to paths without a key since
+                # browsers performing CORS requests will never include the original
+                # x-api-key header from the method that triggered the preflight
+                # OPTIONS check.
+                if (
+                    valid_key
+                    or is_unprotected_path(request.path)
+                    or (request.method == "OPTIONS")
+                ):
                     return await handler(request)
                 else:
                     raise web.HTTPUnauthorized()
 
             middlewares.append(check_token)
 
-        collector = self.context.inject(Collector, required=False)
+        collector = self.context.inject_or(Collector)
 
         if self.multitenant_manager:
 
@@ -294,6 +312,19 @@ class AdminServer(BaseAdminServer):
                 if authorization_header and is_multitenancy_path:
                     raise web.HTTPUnauthorized()
 
+                base_limited_access_path = (
+                    re.match(
+                        f"^/connections/(?:receive-invitation|{UUIDFour.PATTERN})", path
+                    )
+                    or path.startswith("/out-of-band/receive-invitation")
+                    or path.startswith("/mediation/requests/")
+                    or re.match(
+                        f"/mediation/(?:request/{UUIDFour.PATTERN}|"
+                        f"{UUIDFour.PATTERN}/default-mediator)",
+                        path,
+                    )
+                )
+
                 # base wallet is not allowed to perform ssi related actions.
                 # Only multitenancy and general server actions
                 if (
@@ -301,6 +332,7 @@ class AdminServer(BaseAdminServer):
                     and not is_multitenancy_path
                     and not is_server_path
                     and not is_unprotected_path(path)
+                    and not base_limited_access_path
                 ):
                     raise web.HTTPUnauthorized()
 
@@ -326,7 +358,7 @@ class AdminServer(BaseAdminServer):
                         self.context, token
                     )
                 except MultitenantManagerError as err:
-                    raise web.HTTPUnauthorized(err.roll_up)
+                    raise web.HTTPUnauthorized(reason=err.roll_up)
                 except (jwt.InvalidTokenError, StorageNotFoundError):
                     raise web.HTTPUnauthorized()
 
@@ -334,7 +366,6 @@ class AdminServer(BaseAdminServer):
             responder = AdminResponder(
                 profile,
                 self.outbound_message_router,
-                self.send_webhook,
             )
             profile.context.injector.bind_instance(BaseResponder, responder)
 
@@ -354,12 +385,20 @@ class AdminServer(BaseAdminServer):
 
         middlewares.append(setup_context)
 
-        app = web.Application(middlewares=middlewares)
+        app = web.Application(
+            middlewares=middlewares,
+            client_max_size=(
+                self.context.settings.get("admin.admin_client_max_request_size", 1)
+                * 1024
+                * 1024
+            ),
+        )
 
         server_routes = [
             web.get("/", self.redirect_handler, allow_head=False),
             web.get("/plugins", self.plugins_handler, allow_head=False),
             web.get("/status", self.status_handler, allow_head=False),
+            web.get("/status/config", self.config_handler, allow_head=False),
             web.post("/status/reset", self.status_reset_handler),
             web.get("/status/live", self.liveliness_handler, allow_head=False),
             web.get("/status/ready", self.readiness_handler, allow_head=False),
@@ -371,7 +410,7 @@ class AdminServer(BaseAdminServer):
         self.server_paths = [route.path for route in server_routes]
         app.add_routes(server_routes)
 
-        plugin_registry = self.context.inject(PluginRegistry, required=False)
+        plugin_registry = self.context.inject_or(PluginRegistry)
         if plugin_registry:
             await plugin_registry.register_admin_routes(app)
 
@@ -423,9 +462,26 @@ class AdminServer(BaseAdminServer):
         runner = web.AppRunner(self.app)
         await runner.setup()
 
-        plugin_registry = self.context.inject(PluginRegistry, required=False)
+        plugin_registry = self.context.inject_or(PluginRegistry)
         if plugin_registry:
             plugin_registry.post_process_routes(self.app)
+
+        event_bus = self.context.inject_or(EventBus)
+        if event_bus:
+            event_bus.subscribe(EVENT_PATTERN_WEBHOOK, self._on_webhook_event)
+            event_bus.subscribe(EVENT_PATTERN_RECORD, self._on_record_event)
+
+            # Only include forward webhook events if the option is enabled
+            if self.context.settings.get_bool("monitor_forward", False):
+                EVENT_WEBHOOK_MAPPING["acapy::forward::received"] = "forward"
+
+            for event_topic, webhook_topic in EVENT_WEBHOOK_MAPPING.items():
+                event_bus.subscribe(
+                    re.compile(re.escape(event_topic)),
+                    lambda profile, event, webhook_topic=webhook_topic: self.send_webhook(
+                        profile, webhook_topic, event.payload
+                    ),
+                )
 
         # order tags alphabetically, parameters deterministically and pythonically
         swagger_dict = self.app._state["swagger_dict"]
@@ -509,9 +565,46 @@ class AdminServer(BaseAdminServer):
             The module list response
 
         """
-        registry = self.context.inject(PluginRegistry, required=False)
+        registry = self.context.inject_or(PluginRegistry)
         plugins = registry and sorted(registry.plugin_names) or []
         return web.json_response({"result": plugins})
+
+    @docs(tags=["server"], summary="Fetch the server configuration")
+    @response_schema(AdminConfigSchema(), 200, description="")
+    async def config_handler(self, request: web.BaseRequest):
+        """
+        Request handler for the server configuration.
+
+        Args:
+            request: aiohttp request object
+
+        Returns:
+            The web response
+
+        """
+        config = {
+            k: self.context.settings[k]
+            if (isinstance(self.context.settings[k], (str, int)))
+            else self.context.settings[k].copy()
+            for k in self.context.settings
+            if k
+            not in [
+                "admin.admin_api_key",
+                "multitenant.jwt_secret",
+                "wallet.key",
+                "wallet.rekey",
+                "wallet.seed",
+                "wallet.storage_creds",
+            ]
+        }
+        for index in range(len(config.get("admin.webhook_urls", []))):
+            config["admin.webhook_urls"][index] = re.sub(
+                r"#.*",
+                "",
+                config["admin.webhook_urls"][index],
+            )
+
+        return web.json_response({"config": config})
 
     @docs(tags=["server"], summary="Fetch the server status")
     @response_schema(AdminStatusSchema(), 200, description="")
@@ -528,7 +621,7 @@ class AdminServer(BaseAdminServer):
         """
         status = {"version": __version__}
         status["label"] = self.context.settings.get("default_label")
-        collector = self.context.inject(Collector, required=False)
+        collector = self.context.inject_or(Collector)
         if collector:
             status["timing"] = collector.results
         if self.conductor_stats:
@@ -536,7 +629,7 @@ class AdminServer(BaseAdminServer):
         return web.json_response(status)
 
     @docs(tags=["server"], summary="Reset statistics")
-    @response_schema(AdminStatusSchema(), 200, description="")
+    @response_schema(AdminResetSchema(), 200, description="")
     async def status_reset_handler(self, request: web.BaseRequest):
         """
         Request handler for resetting the timing statistics.
@@ -548,7 +641,7 @@ class AdminServer(BaseAdminServer):
             The web response
 
         """
-        collector = self.context.inject(Collector, required=False)
+        collector = self.context.inject_or(Collector)
         if collector:
             collector.reset()
         return web.json_response({})
@@ -635,7 +728,9 @@ class AdminServer(BaseAdminServer):
         else:
             header_admin_api_key = request.headers.get("x-api-key")
             # authenticated via http header?
-            queue.authenticated = header_admin_api_key == self.admin_api_key
+            queue.authenticated = const_compare(
+                header_admin_api_key, self.admin_api_key
+            )
 
         try:
             self.websocket_queues[socket_id] = queue
@@ -678,7 +773,9 @@ class AdminServer(BaseAdminServer):
                                 LOGGER.exception(
                                     "Exception in websocket receiving task:"
                                 )
-                            if self.admin_api_key and self.admin_api_key == msg_api_key:
+                            if self.admin_api_key and const_compare(
+                                self.admin_api_key, msg_api_key
+                            ):
                                 # authenticated via websocket message
                                 queue.authenticated = True
 
@@ -715,23 +812,19 @@ class AdminServer(BaseAdminServer):
 
         return ws
 
-    def add_webhook_target(
-        self,
-        target_url: str,
-        topic_filter: Sequence[str] = None,
-        max_attempts: int = None,
-    ):
-        """Add a webhook target."""
-        self.webhook_targets[target_url] = WebhookTarget(
-            target_url, topic_filter, max_attempts
-        )
+    async def _on_webhook_event(self, profile: Profile, event: Event):
+        match = EVENT_PATTERN_WEBHOOK.search(event.topic)
+        webhook_topic = match.group(1) if match else None
+        if webhook_topic:
+            await self.send_webhook(profile, webhook_topic, event.payload)
 
-    def remove_webhook_target(self, target_url: str):
-        """Remove a webhook target."""
-        if target_url in self.webhook_targets:
-            del self.webhook_targets[target_url]
+    async def _on_record_event(self, profile: Profile, event: Event):
+        match = EVENT_PATTERN_RECORD.search(event.topic)
+        webhook_topic = match.group(1) if match else None
+        if webhook_topic:
+            await self.send_webhook(profile, webhook_topic, event.payload)
 
-    async def send_webhook(self, profile: Profile, topic: str, payload: dict):
+    async def send_webhook(self, profile: Profile, topic: str, payload: dict = None):
         """Add a webhook to the queue, to send to all registered targets."""
         wallet_id = profile.settings.get("wallet.id")
         webhook_urls = profile.settings.get("admin.webhook_urls")
@@ -741,8 +834,6 @@ class AdminServer(BaseAdminServer):
             metadata = {"x-wallet-id": wallet_id}
 
         if self.webhook_router:
-            # for idx, target in self.webhook_targets.items():
-            #     if not target.topic_filter or topic in target.topic_filter:
             for endpoint in webhook_urls:
                 self.webhook_router(
                     topic,

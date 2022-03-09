@@ -1,14 +1,15 @@
 from aiohttp import web
 from aiohttp.test_utils import AioHTTPTestCase, unittest_run_loop
-from asynctest import mock as async_mock
+from asynctest import mock as async_mock, mock_open
 
-from ..http import fetch, fetch_stream, FetchError, put, PutError
+from ..http import fetch, fetch_stream, FetchError, put_file, PutError
 
 
 class TestTransportUtils(AioHTTPTestCase):
     async def setUpAsync(self):
         self.fail_calls = 0
         self.succeed_calls = 0
+        await super().setUpAsync()
 
     async def get_application(self):
         app = web.Application()
@@ -31,7 +32,6 @@ class TestTransportUtils(AioHTTPTestCase):
         ret = web.json_response([True])
         return ret
 
-    @unittest_run_loop
     async def test_fetch_stream(self):
         server_addr = f"http://localhost:{self.server.port}"
         stream = await fetch_stream(
@@ -41,7 +41,6 @@ class TestTransportUtils(AioHTTPTestCase):
         assert result == b"[true]"
         assert self.succeed_calls == 1
 
-    @unittest_run_loop
     async def test_fetch_stream_default_client(self):
         server_addr = f"http://localhost:{self.server.port}"
         stream = await fetch_stream(f"{server_addr}/succeed")
@@ -49,7 +48,6 @@ class TestTransportUtils(AioHTTPTestCase):
         assert result == b"[true]"
         assert self.succeed_calls == 1
 
-    @unittest_run_loop
     async def test_fetch_stream_fail(self):
         server_addr = f"http://localhost:{self.server.port}"
         with self.assertRaises(FetchError):
@@ -61,7 +59,6 @@ class TestTransportUtils(AioHTTPTestCase):
             )
         assert self.fail_calls == 2
 
-    @unittest_run_loop
     async def test_fetch(self):
         server_addr = f"http://localhost:{self.server.port}"
         result = await fetch(
@@ -70,14 +67,12 @@ class TestTransportUtils(AioHTTPTestCase):
         assert result == [1]
         assert self.succeed_calls == 1
 
-    @unittest_run_loop
     async def test_fetch_default_client(self):
         server_addr = f"http://localhost:{self.server.port}"
         result = await fetch(f"{server_addr}/succeed", json=True)
         assert result == [1]
         assert self.succeed_calls == 1
 
-    @unittest_run_loop
     async def test_fetch_fail(self):
         server_addr = f"http://localhost:{self.server.port}"
         with self.assertRaises(FetchError):
@@ -89,11 +84,10 @@ class TestTransportUtils(AioHTTPTestCase):
             )
         assert self.fail_calls == 2
 
-    @unittest_run_loop
-    async def test_put(self):
+    async def test_put_file(self):
         server_addr = f"http://localhost:{self.server.port}"
-        with async_mock.patch("builtins.open", async_mock.MagicMock()) as mock_open:
-            result = await put(
+        with async_mock.patch("builtins.open", mock_open(read_data="data")):
+            result = await put_file(
                 f"{server_addr}/succeed",
                 {"tails": "/tmp/dummy/path"},
                 {"genesis": "..."},
@@ -103,11 +97,10 @@ class TestTransportUtils(AioHTTPTestCase):
         assert result == [1]
         assert self.succeed_calls == 1
 
-    @unittest_run_loop
-    async def test_put_default_client(self):
+    async def test_put_file_default_client(self):
         server_addr = f"http://localhost:{self.server.port}"
-        with async_mock.patch("builtins.open", async_mock.MagicMock()) as mock_open:
-            result = await put(
+        with async_mock.patch("builtins.open", mock_open(read_data="data")):
+            result = await put_file(
                 f"{server_addr}/succeed",
                 {"tails": "/tmp/dummy/path"},
                 {"genesis": "..."},
@@ -116,12 +109,11 @@ class TestTransportUtils(AioHTTPTestCase):
         assert result == [1]
         assert self.succeed_calls == 1
 
-    @unittest_run_loop
-    async def test_put_fail(self):
+    async def test_put_file_fail(self):
         server_addr = f"http://localhost:{self.server.port}"
-        with async_mock.patch("builtins.open", async_mock.MagicMock()) as mock_open:
+        with async_mock.patch("builtins.open", mock_open(read_data="data")):
             with self.assertRaises(PutError):
-                result = await put(
+                result = await put_file(
                     f"{server_addr}/fail",
                     {"tails": "/tmp/dummy/path"},
                     {"genesis": "..."},

@@ -3,7 +3,10 @@ import pytest
 
 from asynctest import TestCase, mock as async_mock
 
+from ....admin.server import AdminResponder
 from ....core.in_memory import InMemoryProfile
+from ....messaging.responder import BaseResponder
+from ....multitenant.base import BaseMultitenantManager
 from ....multitenant.manager import MultitenantManager
 
 from ...error import WireFormatError
@@ -118,9 +121,11 @@ class TestInboundSession(TestCase):
             return_value=self.profile
         )
         self.profile.context.injector.bind_instance(
-            MultitenantManager, self.multitenant_mgr
+            BaseMultitenantManager, self.multitenant_mgr
         )
         self.profile.context.update_settings({"multitenant.enabled": True})
+        self.base_responder = async_mock.MagicMock(AdminResponder, autospec=True)
+        self.profile.context.injector.bind_instance(BaseResponder, self.base_responder)
 
         sess = InboundSession(
             profile=self.profile,
@@ -149,7 +154,7 @@ class TestInboundSession(TestCase):
             return_value=self.profile
         )
         self.profile.context.injector.bind_instance(
-            MultitenantManager, self.multitenant_mgr
+            BaseMultitenantManager, self.multitenant_mgr
         )
         self.profile.context.update_settings({"multitenant.enabled": True})
 

@@ -22,7 +22,10 @@ class TestWsTransport(AioHTTPTestCase):
         self.message_results = []
         self.port = unused_port()
         self.session = None
-        self.transport = WsTransport("0.0.0.0", self.port, self.create_session)
+        self.profile = InMemoryProfile.test_profile()
+        self.transport = WsTransport(
+            "0.0.0.0", self.port, self.create_session, root_profile=self.profile
+        )
         self.transport.wire_format = JsonWireFormat()
         self.result_event = None
         super().setUp()
@@ -64,7 +67,6 @@ class TestWsTransport(AioHTTPTestCase):
         if self.result_event:
             self.result_event.set()
 
-    @unittest_run_loop
     async def test_start_x(self):
         with async_mock.patch.object(
             test_module.web, "TCPSite", async_mock.MagicMock()
@@ -75,7 +77,6 @@ class TestWsTransport(AioHTTPTestCase):
             with pytest.raises(test_module.InboundTransportSetupError):
                 await self.transport.start()
 
-    @unittest_run_loop
     async def test_message_and_response(self):
         await self.transport.start()
 

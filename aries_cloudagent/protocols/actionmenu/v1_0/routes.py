@@ -14,7 +14,7 @@ from ....messaging.models.openapi import OpenAPISchema
 from ....messaging.valid import UUIDFour
 from ....storage.error import StorageError, StorageNotFoundError
 
-from .messages.menu import Menu
+from .messages.menu import Menu, MenuSchema
 from .messages.menu_request import MenuRequest
 from .messages.perform import Perform
 from .models.menu_option import MenuOptionSchema
@@ -74,7 +74,7 @@ class SendMenuSchema(OpenAPISchema):
     )
 
 
-class ConnIdMatchInfoSchema(OpenAPISchema):
+class MenuConnIdMatchInfoSchema(OpenAPISchema):
     """Path parameters and validators for request taking connection id."""
 
     conn_id = fields.Str(
@@ -82,10 +82,16 @@ class ConnIdMatchInfoSchema(OpenAPISchema):
     )
 
 
+class ActionMenuFetchResultSchema(OpenAPISchema):
+    """Result schema for action-menu fetch."""
+
+    result = fields.Nested(MenuSchema, description="Action menu")
+
+
 @docs(
     tags=["action-menu"], summary="Close the active menu associated with a connection"
 )
-@match_info_schema(ConnIdMatchInfoSchema())
+@match_info_schema(MenuConnIdMatchInfoSchema())
 @response_schema(ActionMenuModulesResultSchema(), 200, description="")
 async def actionmenu_close(request: web.BaseRequest):
     """
@@ -113,8 +119,8 @@ async def actionmenu_close(request: web.BaseRequest):
 
 
 @docs(tags=["action-menu"], summary="Fetch the active menu")
-@match_info_schema(ConnIdMatchInfoSchema())
-@response_schema(ActionMenuModulesResultSchema(), 200, description="")
+@match_info_schema(MenuConnIdMatchInfoSchema())
+@response_schema(ActionMenuFetchResultSchema(), 200, description="")
 async def actionmenu_fetch(request: web.BaseRequest):
     """
     Request handler for fetching the previously-received menu for a connection.
@@ -132,7 +138,7 @@ async def actionmenu_fetch(request: web.BaseRequest):
 
 
 @docs(tags=["action-menu"], summary="Perform an action associated with the active menu")
-@match_info_schema(ConnIdMatchInfoSchema())
+@match_info_schema(MenuConnIdMatchInfoSchema())
 @request_schema(PerformRequestSchema())
 @response_schema(ActionMenuModulesResultSchema(), 200, description="")
 async def actionmenu_perform(request: web.BaseRequest):
@@ -149,7 +155,7 @@ async def actionmenu_perform(request: web.BaseRequest):
     params = await request.json()
 
     try:
-        async with context.session() as session:
+        async with context.profile.session() as session:
             connection = await ConnRecord.retrieve_by_id(session, connection_id)
     except StorageNotFoundError as err:
         raise web.HTTPNotFound(reason=err.roll_up) from err
@@ -163,7 +169,7 @@ async def actionmenu_perform(request: web.BaseRequest):
 
 
 @docs(tags=["action-menu"], summary="Request the active menu")
-@match_info_schema(ConnIdMatchInfoSchema())
+@match_info_schema(MenuConnIdMatchInfoSchema())
 @response_schema(ActionMenuModulesResultSchema(), 200, description="")
 async def actionmenu_request(request: web.BaseRequest):
     """
@@ -178,7 +184,7 @@ async def actionmenu_request(request: web.BaseRequest):
     outbound_handler = request["outbound_message_router"]
 
     try:
-        async with context.session() as session:
+        async with context.profile.session() as session:
             connection = await ConnRecord.retrieve_by_id(session, connection_id)
     except StorageNotFoundError as err:
         LOGGER.debug("Connection not found for action menu request: %s", connection_id)
@@ -193,7 +199,7 @@ async def actionmenu_request(request: web.BaseRequest):
 
 
 @docs(tags=["action-menu"], summary="Send an action menu to a connection")
-@match_info_schema(ConnIdMatchInfoSchema())
+@match_info_schema(MenuConnIdMatchInfoSchema())
 @request_schema(SendMenuSchema())
 @response_schema(ActionMenuModulesResultSchema(), 200, description="")
 async def actionmenu_send(request: web.BaseRequest):
@@ -216,7 +222,7 @@ async def actionmenu_send(request: web.BaseRequest):
         raise web.HTTPBadRequest(reason=err.roll_up) from err
 
     try:
-        async with context.session() as session:
+        async with context.profile.session() as session:
             connection = await ConnRecord.retrieve_by_id(session, connection_id)
     except StorageNotFoundError as err:
         LOGGER.debug(

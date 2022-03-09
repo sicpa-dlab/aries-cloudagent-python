@@ -1,13 +1,13 @@
 """Record for out of band invitations."""
 
-from typing import Any
+from typing import Any, Mapping, Union
 
 from marshmallow import fields
 
 from .....messaging.models.base_record import BaseExchangeRecord, BaseExchangeSchema
 from .....messaging.valid import UUIDFour
 
-from ..messages.invitation import InvitationMessage
+from ..messages.invitation import InvitationMessage, InvitationMessageSchema
 
 
 class InvitationRecord(BaseExchangeRecord):
@@ -20,7 +20,7 @@ class InvitationRecord(BaseExchangeRecord):
 
     RECORD_TYPE = "oob_invitation"
     RECORD_ID_NAME = "invitation_id"
-    WEBHOOK_TOPIC = "oob_invitation"
+    RECORD_TOPIC = "oob_invitation"
     TAG_NAMES = {"invi_msg_id"}
 
     STATE_INITIAL = "initial"
@@ -31,13 +31,12 @@ class InvitationRecord(BaseExchangeRecord):
         self,
         *,
         invitation_id: str = None,
-        invitation_url: str = None,
         state: str = None,
         invi_msg_id: str = None,
-        invitation: dict = None,
+        invitation: Union[InvitationMessage, Mapping] = None,  # invitation message
+        invitation_url: str = None,
+        public_did: str = None,  # backward-compat: BaseRecord.from_storage()
         trace: bool = False,
-        auto_accept: bool = False,
-        multi_use: bool = False,
         **kwargs,
     ):
         """Initialize a new InvitationRecord."""
@@ -45,14 +44,9 @@ class InvitationRecord(BaseExchangeRecord):
         self._id = invitation_id
         self.state = state
         self.invi_msg_id = invi_msg_id
-        self.invitation = invitation
+        self._invitation = InvitationMessage.serde(invitation)
+        self.invitation_url = invitation_url
         self.trace = trace
-        self.auto_accept = auto_accept
-        self.multi_use = multi_use
-
-    def __eq__(self, other: Any) -> bool:
-        """Comparison between records."""
-        return super().__eq__(other)
 
     @property
     def invitation_id(self) -> str:
@@ -60,28 +54,37 @@ class InvitationRecord(BaseExchangeRecord):
         return self._id
 
     @property
-    def invitation_url(self) -> str:
-        """Accessor to the invitation url."""
-        return (
-            InvitationMessage.deserialize(self.invitation).to_url()
-            if self.invitation
-            else None
-        )
+    def invitation(self) -> InvitationMessage:
+        """Accessor; get deserialized view."""
+        return None if self._invitation is None else self._invitation.de
+
+    @invitation.setter
+    def invitation(self, value):
+        """Setter; store de/serialized views."""
+        self._invitation = InvitationMessage.serde(value)
 
     @property
     def record_value(self) -> dict:
         """Accessor for the JSON record value generated for this invitation."""
         return {
-            prop: getattr(self, prop)
-            for prop in (
-                "invitation",
-                "invitation_url",
-                "state",
-                "trace",
-                "auto_accept",
-                "multi_use",
-            )
+            **{
+                prop: getattr(self, prop)
+                for prop in (
+                    "invitation_url",
+                    "state",
+                    "trace",
+                )
+            },
+            **{
+                prop: getattr(self, f"_{prop}").ser
+                for prop in ("invitation",)
+                if getattr(self, prop) is not None
+            },
         }
+
+    def __eq__(self, other: Any) -> bool:
+        """Comparison between records."""
+        return super().__eq__(other)
 
 
 class InvitationRecordSchema(BaseExchangeSchema):
@@ -107,24 +110,16 @@ class InvitationRecordSchema(BaseExchangeSchema):
         description="Invitation message identifier",
         example=UUIDFour.EXAMPLE,
     )
-    invitation = fields.Dict(
+    invitation = fields.Nested(
+        InvitationMessageSchema(),
         required=False,
-        description="Out of band invitation object",
+        description="Out of band invitation message",
     )
     invitation_url = fields.Str(
         required=False,
-        dump_only=True,
         description="Invitation message URL",
         example=(
             "https://example.com/endpoint?"
             "c_i=eyJAdHlwZSI6ICIuLi4iLCAiLi4uIjogIi4uLiJ9XX0="
         ),
-    )
-    auto_accept = fields.Bool(
-        required=False,
-        description="Whether to auto-accept connection request",
-    )
-    multi_use = fields.Bool(
-        required=False,
-        description="Whether invitation is for multiple use",
     )

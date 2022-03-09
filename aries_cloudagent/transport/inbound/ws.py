@@ -3,11 +3,12 @@
 import asyncio
 import logging
 
-from aiohttp import web, WSMessage, WSMsgType
+from aiohttp import WSMessage, WSMsgType, web
 
 from ...messaging.error import MessageParseError
-
+from ..error import WireFormatParseError
 from .base import BaseInboundTransport, InboundTransportSetupError
+
 
 LOGGER = logging.getLogger(__name__)
 
@@ -29,6 +30,12 @@ class WsTransport(BaseInboundTransport):
         self.host = host
         self.port = port
         self.site: web.BaseSite = None
+        self.heartbeat_interval: int = self.root_profile.settings.get_int(
+            "transport.ws.heartbeat_interval"
+        )
+        self.timout_interval: int = self.root_profile.settings.get_int(
+            "transport.ws.timout_interval"
+        )
 
         # TODO: set scheme dynamically based on SSL settings (ws/wss)
 
@@ -81,7 +88,11 @@ class WsTransport(BaseInboundTransport):
 
         """
 
-        ws = web.WebSocketResponse()
+        ws = web.WebSocketResponse(
+            autoping=True,
+            heartbeat=self.heartbeat_interval,
+            receive_timeout=self.timout_interval,
+        )
         await ws.prepare(request)
         loop = asyncio.get_event_loop()
 
@@ -106,12 +117,19 @@ class WsTransport(BaseInboundTransport):
                     if msg.type in (WSMsgType.TEXT, WSMsgType.BINARY):
                         try:
                             await session.receive(msg.data)
-                        except MessageParseError:
+                        except (MessageParseError, WireFormatParseError):
                             await ws.close(1003)  # unsupported data error
                     elif msg.type == WSMsgType.ERROR:
                         LOGGER.error(
                             "Websocket connection closed with exception: %s",
                             ws.exception(),
+                        )
+                    else:
+                        LOGGER.error(
+                            "Unexpected Websocket message type received: %s: %s, %s",
+                            msg.type,
+                            msg.data,
+                            msg.extra,
                         )
                     if not ws.closed:
                         inbound = loop.create_task(ws.receive())

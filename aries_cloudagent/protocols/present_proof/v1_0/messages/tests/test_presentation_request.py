@@ -2,12 +2,13 @@ import json
 from datetime import datetime, timezone
 from unittest import TestCase
 
+from ......indy.models.pres_preview import PRESENTATION_PREVIEW
 from ......messaging.decorators.attach_decorator import AttachDecorator
 from ......messaging.util import str_to_datetime, str_to_epoch
 
 from .....didcomm_prefix import DIDCommPrefix
 
-from ...message_types import ATTACH_DECO_IDS, PRESENTATION_PREVIEW, PRESENTATION_REQUEST
+from ...message_types import ATTACH_DECO_IDS, PRESENTATION_REQUEST
 
 from ..presentation_request import PresentationRequest, PresentationRequestSchema
 
@@ -68,8 +69,8 @@ INDY_PROOF_REQ = json.loads(
 PRES_REQ = PresentationRequest(
     comment="Test",
     request_presentations_attach=[
-        AttachDecorator.from_indy_dict(
-            indy_dict=INDY_PROOF_REQ,
+        AttachDecorator.data_base64(
+            mapping=INDY_PROOF_REQ,
             ident=ATTACH_DECO_IDS[PRESENTATION_REQUEST],
         )
     ],
@@ -81,7 +82,7 @@ class TestPresentationRequest(TestCase):
 
     def test_init(self):
         """Test initializer."""
-        assert PRES_REQ.request_presentations_attach[0].indy_dict == INDY_PROOF_REQ
+        assert PRES_REQ.request_presentations_attach[0].content == INDY_PROOF_REQ
         assert PRES_REQ.indy_proof_request(0) == INDY_PROOF_REQ
 
     def test_type(self):
@@ -95,8 +96,8 @@ class TestPresentationRequest(TestCase):
                 "@type": DIDCommPrefix.qualify_current(PRESENTATION_REQUEST),
                 "comment": "Hello World",
                 "request_presentations~attach": [
-                    AttachDecorator.from_indy_dict(
-                        indy_dict=INDY_PROOF_REQ,
+                    AttachDecorator.data_base64(
+                        mapping=INDY_PROOF_REQ,
                         ident=ATTACH_DECO_IDS[PRESENTATION_REQUEST],
                     ).serialize()
                 ],
@@ -114,8 +115,8 @@ class TestPresentationRequest(TestCase):
         assert pres_req_dict == {
             "@type": DIDCommPrefix.qualify_current(PRESENTATION_REQUEST),
             "request_presentations~attach": [
-                AttachDecorator.from_indy_dict(
-                    indy_dict=INDY_PROOF_REQ,
+                AttachDecorator.data_base64(
+                    mapping=INDY_PROOF_REQ,
                     ident=ATTACH_DECO_IDS[PRESENTATION_REQUEST],
                 ).serialize()
             ],

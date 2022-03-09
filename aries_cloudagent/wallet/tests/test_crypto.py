@@ -1,8 +1,11 @@
-import base64
-import json
 import pytest
+import json
+
 from unittest import mock, TestCase
 
+from ..key_type import KeyType
+from ..error import WalletError
+from ...utils.jwe import JweRecipient
 from ..util import str_to_b64
 from .. import crypto as test_module
 
@@ -11,7 +14,7 @@ SEED = "00000000000000000000000000000000"
 MESSAGE = b"Hello World"
 
 
-class TestUtil(TestCase):
+class TestCrypto(TestCase):
     def test_validate_seed(self):
         assert test_module.validate_seed(None) is None
 
@@ -29,7 +32,9 @@ class TestUtil(TestCase):
     def test_seeds_keys(self):
         assert len(test_module.seed_to_did(SEED)) in (22, 23)
 
-        (public_key, secret_key) = test_module.create_keypair()
+        (public_key, secret_key) = test_module.create_keypair(
+            test_module.KeyType.ED25519
+        )
         assert public_key
         assert secret_key
 
@@ -52,10 +57,22 @@ class TestUtil(TestCase):
                 test_module.decode_pack_message(b"encrypted", lambda x: b"recip_secret")
             assert "Sender public key not provided" in str(excinfo.value)
 
+    def test_did_is_self_certified(self):
+        did = "Av63wJYM7xYR4AiygYq4c3"
+        verkey = "6QSduYdf8Bi6t8PfNm5vNomGWDtXhmMmTRzaciudBXYJ"
+        assert test_module.did_is_self_certified(did, verkey)
+        verkey = "~PKAYz8Ev4yoQgr2LaMAWFx"
+        assert test_module.did_is_self_certified(did, verkey)
+        verkey = "ABUF7uxYTxZ6qYdZ4G9e1Gi"
+        assert not test_module.did_is_self_certified(did, verkey)
+        did = "6YnVN5Qdb6mqimTIQcQmSXrHXKdTEdRn5YHZReezUTvta"
+        verkey = "6QSduYdf8Bi6t8PfNm5vNomGWDtXhmMmTRzaciudBXYJ"
+        assert not test_module.did_is_self_certified(did, verkey)
+
     def test_decode_pack_message_outer_x(self):
         with pytest.raises(ValueError) as excinfo:
             test_module.decode_pack_message_outer(json.dumps({"invalid": "content"}))
-        assert "Invalid packed message" == str(excinfo.value)
+        assert "Invalid packed message" in str(excinfo.value)
 
         recips = str_to_b64(
             json.dumps(
@@ -72,13 +89,13 @@ class TestUtil(TestCase):
                 json.dumps(
                     {
                         "protected": recips,
-                        "iv": "00000000",
-                        "tag": "tag",
-                        "ciphertext": "secret",
+                        "iv": "MTIzNDU",
+                        "tag": "MTIzNDU",
+                        "ciphertext": "MTIzNDU",
                     }
                 )
             )
-        assert "Invalid packed message recipients" == str(excinfo.value)
+        assert "Invalid packed message" in str(excinfo.value)
 
         recips = str_to_b64(
             json.dumps(
@@ -86,7 +103,7 @@ class TestUtil(TestCase):
                     "enc": "xchacha20poly1305_ietf",
                     "typ": "JWM/1.0",
                     "alg": "Quadruple rot-13",
-                    "recipients": [],
+                    "recipients": [{"encrypted_key": "MTIzNDU"}],
                 }
             )
         )
@@ -95,9 +112,9 @@ class TestUtil(TestCase):
                 json.dumps(
                     {
                         "protected": recips,
-                        "iv": "00000000",
-                        "tag": "tag",
-                        "ciphertext": "secret",
+                        "iv": "MTIzNDU",
+                        "tag": "MTIzNDU",
+                        "ciphertext": "MTIzNDU",
                     }
                 )
             )
@@ -105,26 +122,23 @@ class TestUtil(TestCase):
 
     def test_extract_pack_recipients_x(self):
         with pytest.raises(ValueError) as excinfo:
-            test_module.extract_pack_recipients([{"bad": "recipient"}])
-        assert "Invalid recipient header" in str(excinfo.value)
-
-        with pytest.raises(ValueError) as excinfo:
-            test_module.extract_pack_recipients([{"header": {}, "encrypted_key": b""}])
+            test_module.extract_pack_recipients([JweRecipient(encrypted_key=b"")])
         assert "Blank recipient key" in str(excinfo.value)
 
         with pytest.raises(ValueError) as excinfo:
             test_module.extract_pack_recipients(
-                [{"header": {"kid": "4mZ5TYv4oN"}, "encrypted_key": b""}] * 2
+                [JweRecipient(encrypted_key=b"MTIzNDU", header={"kid": "4mZ5TYv4oN"})]
+                * 2
             )
         assert "Duplicate recipient key" in str(excinfo.value)
 
         with pytest.raises(ValueError) as excinfo:
             test_module.extract_pack_recipients(
                 [
-                    {
-                        "header": {"kid": "4mZ5TYv4oN", "sender": "4mZ5TYv4oN"},
-                        "encrypted_key": b"",
-                    }
+                    JweRecipient(
+                        encrypted_key=b"MTIzNDU",
+                        header={"kid": "4mZ5TYv4oN", "sender": "4mZ5TYv4oN"},
+                    )
                 ]
             )
         assert "Missing iv" in str(excinfo.value)
@@ -132,10 +146,38 @@ class TestUtil(TestCase):
         with pytest.raises(ValueError) as excinfo:
             test_module.extract_pack_recipients(
                 [
-                    {
-                        "header": {"kid": "4mZ5TYv4oN", "iv": "00000000"},
-                        "encrypted_key": b"",
-                    }
+                    JweRecipient(
+                        encrypted_key=b"MTIzNDU",
+                        header={"kid": "4mZ5TYv4oN", "iv": "MTIzNDU"},
+                    )
                 ]
             )
         assert "Unexpected iv" in str(excinfo.value)
+
+    def test_sign_ed25519_x_multiple_messages(self):
+        with self.assertRaises(WalletError) as context:
+            test_module.sign_message(
+                [b"message1", b"message2"], b"secret", KeyType.ED25519
+            )
+        assert "ed25519 can only sign a single message" in str(context.exception)
+
+    def test_sign_x_unsupported_key_type(self):
+        with self.assertRaises(WalletError) as context:
+            test_module.sign_message(
+                [b"message1", b"message2"], b"secret", KeyType.BLS12381G1
+            )
+        assert "Unsupported key type: bls12381g1" in str(context.exception)
+
+    def test_verify_ed25519_x_multiple_messages(self):
+        with self.assertRaises(WalletError) as context:
+            test_module.verify_signed_message(
+                [b"message1", b"message2"], b"signature", b"verkey", KeyType.ED25519
+            )
+        assert "ed25519 can only verify a single message" in str(context.exception)
+
+    def test_verify_x_unsupported_key_type(self):
+        with self.assertRaises(WalletError) as context:
+            test_module.verify_signed_message(
+                [b"message1", b"message2"], b"signature", b"verkey", KeyType.BLS12381G1
+            )
+        assert "Unsupported key type: bls12381g1" in str(context.exception)

@@ -2,8 +2,12 @@
 
 from typing import Sequence
 
-from ..core.profile import ProfileSession
-from ..ledger.base import BaseLedger
+from ..core.profile import Profile
+from ..ledger.multiple_ledger.ledger_requests_executor import (
+    GET_CRED_DEF,
+    GET_REVOC_REG_DEF,
+    IndyLedgerRequestsExecutor,
+)
 from ..storage.base import StorageNotFoundError
 
 from .error import RevocationNotSupportedError, RevocationRegistryBadSizeError
@@ -16,14 +20,9 @@ class IndyRevocation:
 
     REV_REG_CACHE = {}
 
-    def __init__(self, session: ProfileSession):
+    def __init__(self, profile: Profile):
         """Initialize the IndyRevocation instance."""
-        self._session = session
-
-    @property
-    def session(self) -> ProfileSession:
-        """Accessor for the current profile session."""
-        return self._session
+        self._profile = profile
 
     async def init_issuer_registry(
         self,
@@ -33,7 +32,13 @@ class IndyRevocation:
         tag: str = None,
     ) -> "IssuerRevRegRecord":
         """Create a new revocation registry record for a credential definition."""
-        ledger = self._session.inject(BaseLedger)
+        ledger_exec_inst = self._profile.inject(IndyLedgerRequestsExecutor)
+        ledger = (
+            await ledger_exec_inst.get_ledger_for_identifier(
+                cred_def_id,
+                txn_record_type=GET_CRED_DEF,
+            )
+        )[1]
         async with ledger:
             cred_def = await ledger.get_credential_definition(cred_def_id)
         if not cred_def:
@@ -56,7 +61,8 @@ class IndyRevocation:
             revoc_def_type=revoc_def_type,
             tag=tag,
         )
-        await record.save(self._session, reason="Init revocation registry")
+        async with self._profile.session() as session:
+            await record.save(session, reason="Init revocation registry")
         return record
 
     async def get_active_issuer_rev_reg_record(
@@ -67,11 +73,12 @@ class IndyRevocation:
         Args:
             cred_def_id: ID of the base credential definition
         """
-        current = sorted(
-            await IssuerRevRegRecord.query_by_cred_def_id(
-                self._session, cred_def_id, IssuerRevRegRecord.STATE_ACTIVE
+        async with self._profile.session() as session:
+            current = sorted(
+                await IssuerRevRegRecord.query_by_cred_def_id(
+                    session, cred_def_id, IssuerRevRegRecord.STATE_ACTIVE
+                )
             )
-        )
         if current:
             return current[0]  # active record is oldest published but not full
         raise StorageNotFoundError(
@@ -86,20 +93,28 @@ class IndyRevocation:
         Args:
             revoc_reg_id: ID of the revocation registry
         """
-        return await IssuerRevRegRecord.retrieve_by_revoc_reg_id(
-            self._session, revoc_reg_id
-        )
+        async with self._profile.session() as session:
+            return await IssuerRevRegRecord.retrieve_by_revoc_reg_id(
+                session, revoc_reg_id
+            )
 
     async def list_issuer_registries(self) -> Sequence["IssuerRevRegRecord"]:
         """List the issuer's current revocation registries."""
-        return await IssuerRevRegRecord.query(self._session)
+        async with self._profile.session() as session:
+            return await IssuerRevRegRecord.query(session)
 
     async def get_ledger_registry(self, revoc_reg_id: str) -> "RevocationRegistry":
         """Get a revocation registry from the ledger, fetching as necessary."""
         if revoc_reg_id in IndyRevocation.REV_REG_CACHE:
             return IndyRevocation.REV_REG_CACHE[revoc_reg_id]
 
-        ledger = self._session.inject(BaseLedger)
+        ledger_exec_inst = self._profile.inject(IndyLedgerRequestsExecutor)
+        ledger = (
+            await ledger_exec_inst.get_ledger_for_identifier(
+                revoc_reg_id,
+                txn_record_type=GET_REVOC_REG_DEF,
+            )
+        )[1]
         async with ledger:
             rev_reg = RevocationRegistry.from_definition(
                 await ledger.get_revoc_reg_def(revoc_reg_id), True

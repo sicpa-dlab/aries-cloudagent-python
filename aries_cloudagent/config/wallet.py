@@ -1,23 +1,38 @@
 """Wallet configuration."""
 
 import logging
+from typing import Tuple
 
 from ..core.error import ProfileNotFoundError
-from ..core.profile import Profile, ProfileManager
-from ..wallet.base import BaseWallet, DIDInfo
+from ..core.profile import Profile, ProfileManager, ProfileSession
+from ..storage.base import BaseStorage
+from ..storage.error import StorageNotFoundError
+from ..version import __version__, RECORD_TYPE_ACAPY_VERSION
+from ..wallet.base import BaseWallet
+from ..wallet.did_info import DIDInfo
 from ..wallet.crypto import seed_to_did
+from ..wallet.key_type import KeyType
+from ..wallet.did_method import DIDMethod
 
 from .base import ConfigError
 from .injection_context import InjectionContext
 
 LOGGER = logging.getLogger(__name__)
 
-CFG_MAP = {"key", "rekey", "name", "storage_config", "storage_creds", "storage_type"}
+CFG_MAP = {
+    "key",
+    "key_derivation_method",
+    "rekey",
+    "name",
+    "storage_config",
+    "storage_creds",
+    "storage_type",
+}
 
 
 async def wallet_config(
     context: InjectionContext, provision: bool = False
-) -> (Profile, DIDInfo):
+) -> Tuple[Profile, DIDInfo]:
     """Initialize the root profile."""
 
     mgr = context.inject(ProfileManager)
@@ -64,7 +79,9 @@ async def wallet_config(
         public_did = public_did_info.did
         if wallet_seed and seed_to_did(wallet_seed) != public_did:
             if context.settings.get("wallet.replace_public_did"):
-                replace_did_info = await wallet.create_local_did(wallet_seed)
+                replace_did_info = await wallet.create_local_did(
+                    method=DIDMethod.SOV, key_type=KeyType.ED25519, seed=wallet_seed
+                )
                 public_did = replace_did_info.did
                 await wallet.set_public_did(public_did)
                 print(f"Created new public DID: {public_did}")
@@ -83,14 +100,19 @@ async def wallet_config(
             metadata = {"endpoint": endpoint} if endpoint else None
 
             local_did_info = await wallet.create_local_did(
-                seed=wallet_seed, metadata=metadata
+                method=DIDMethod.SOV,
+                key_type=KeyType.ED25519,
+                seed=wallet_seed,
+                metadata=metadata,
             )
             local_did = local_did_info.did
             if provision:
                 print(f"Created new local DID: {local_did}")
                 print(f"Verkey: {local_did_info.verkey}")
         else:
-            public_did_info = await wallet.create_public_did(seed=wallet_seed)
+            public_did_info = await wallet.create_public_did(
+                method=DIDMethod.SOV, key_type=KeyType.ED25519, seed=wallet_seed
+            )
             public_did = public_did_info.did
             if provision:
                 print(f"Created new public DID: {public_did}")
@@ -107,9 +129,28 @@ async def wallet_config(
             test_seed = "testseed000000000000000000000001"
     if test_seed:
         await wallet.create_local_did(
-            seed=test_seed, metadata={"endpoint": "1.2.3.4:8021"}
+            method=DIDMethod.SOV,
+            key_type=KeyType.ED25519,
+            seed=test_seed,
+            metadata={"endpoint": "1.2.3.4:8021"},
         )
 
     await txn.commit()
 
     return (profile, public_did_info)
+
+
+async def add_or_update_version_to_storage(session: ProfileSession):
+    """Add or update ACA-Py version StorageRecord."""
+    storage: BaseStorage = session.inject(BaseStorage)
+    try:
+        record = await storage.find_record(RECORD_TYPE_ACAPY_VERSION, {})
+        await storage.update_record(record, f"v{__version__}", {})
+    except StorageNotFoundError:
+        raise ConfigError(
+            (
+                "No wallet storage version found, Run aca-py "
+                "upgrade command with --from-version argument "
+                "to fix this."
+            )
+        )

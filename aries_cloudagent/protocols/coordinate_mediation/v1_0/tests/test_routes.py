@@ -1,13 +1,12 @@
 import json
 
-import asynctest
-from asynctest import TestCase as AsyncTestCase
-from asynctest import mock as async_mock
-
-from aries_cloudagent.config.injection_context import InjectionContext
-from aries_cloudagent.messaging.request_context import RequestContext
+from asynctest import mock as async_mock, TestCase as AsyncTestCase
 
 from .....admin.request_context import AdminRequestContext
+from .....core.in_memory import InMemoryProfile
+from .....config.injection_context import InjectionContext
+from .....messaging.request_context import RequestContext
+
 from .. import routes as test_module
 from ..manager import MediationManager
 from ..models.mediation_record import MediationRecord
@@ -15,8 +14,9 @@ from ..models.mediation_record import MediationRecord
 
 class TestCoordinateMediationRoutes(AsyncTestCase):
     def setUp(self):
-        self.session_inject = {}
-        self.context = AdminRequestContext.test_context(self.session_inject)
+        self.profile = InMemoryProfile.test_profile()
+        self.context = self.profile.context
+        setattr(self.context, "profile", self.profile)
         self.outbound_message_router = async_mock.CoroutineMock()
         self.request_dict = {
             "context": self.context,
@@ -70,39 +70,45 @@ class TestCoordinateMediationRoutes(AsyncTestCase):
 
     async def test_list_mediation_requests(self):
         self.request.query = {}
-        self.context.session = async_mock.CoroutineMock()
         with async_mock.patch.object(
             test_module.MediationRecord,
             "query",
             async_mock.CoroutineMock(return_value=[self.mock_record]),
         ) as mock_query, async_mock.patch.object(
             test_module.web, "json_response"
-        ) as json_response:
+        ) as json_response, async_mock.patch.object(
+            self.context.profile,
+            "session",
+            async_mock.MagicMock(return_value=InMemoryProfile.test_session()),
+        ) as session:
             await test_module.list_mediation_requests(self.request)
             json_response.assert_called_once_with(
-                [self.mock_record.serialize.return_value]
+                {"results": [self.mock_record.serialize.return_value]}
             )
-            mock_query.assert_called_once_with(self.context.session.return_value, {})
+            mock_query.assert_called_once_with(session.return_value, {})
 
     async def test_list_mediation_requests_filters(self):
         self.request.query = {
             "state": MediationRecord.STATE_GRANTED,
             "conn_id": "test-conn-id",
         }
-        self.context.session = async_mock.CoroutineMock()
         with async_mock.patch.object(
             test_module.MediationRecord,
             "query",
             async_mock.CoroutineMock(return_value=[self.mock_record]),
         ) as mock_query, async_mock.patch.object(
             test_module.web, "json_response"
-        ) as json_response:
+        ) as json_response, async_mock.patch.object(
+            self.context.profile,
+            "session",
+            async_mock.MagicMock(return_value=InMemoryProfile.test_session()),
+        ) as session:
             await test_module.list_mediation_requests(self.request)
             json_response.assert_called_once_with(
-                [self.mock_record.serialize.return_value]
+                {"results": [self.mock_record.serialize.return_value]}
             )
             mock_query.assert_called_once_with(
-                self.context.session.return_value,
+                session.return_value,
                 {
                     "connection_id": "test-conn-id",
                     "state": MediationRecord.STATE_GRANTED,
@@ -129,7 +135,7 @@ class TestCoordinateMediationRoutes(AsyncTestCase):
             test_module.web, "json_response"
         ) as mock_response:
             await test_module.list_mediation_requests(self.request)
-            mock_response.assert_called_once_with([])
+            mock_response.assert_called_once_with({"results": []})
 
     async def test_retrieve_mediation_request(self):
         with async_mock.patch.object(
@@ -388,6 +394,7 @@ class TestCoordinateMediationRoutes(AsyncTestCase):
             await test_module.mediation_request_deny(self.request)
 
     async def test_get_keylist(self):
+        session = await self.context.profile.session()
         self.request.query["role"] = MediationRecord.ROLE_SERVER
         self.request.query["conn_id"] = "test-id"
 
@@ -404,32 +411,37 @@ class TestCoordinateMediationRoutes(AsyncTestCase):
             "query",
             async_mock.CoroutineMock(return_value=query_results),
         ) as mock_query, async_mock.patch.object(
-            self.context, "session", async_mock.CoroutineMock()
+            self.context.profile,
+            "session",
+            async_mock.MagicMock(return_value=session),
         ) as mock_session, async_mock.patch.object(
             test_module.web, "json_response"
         ) as mock_response:
             await test_module.get_keylist(self.request)
             mock_response.assert_called_once_with(
-                [{"serialized": "route record"}], status=200
+                {"results": [{"serialized": "route record"}]}, status=200
             )
             mock_query.assert_called_once_with(
                 mock_session.return_value,
-                {"role": MediationRecord.ROLE_SERVER, "connection_id": "test-id"},
+                {"connection_id": "test-id", "role": MediationRecord.ROLE_SERVER},
             )
 
     async def test_get_keylist_no_matching_records(self):
+        session = await self.context.profile.session()
         with async_mock.patch.object(
             test_module.RouteRecord,
             "query",
             async_mock.CoroutineMock(return_value=[]),
         ) as mock_query, async_mock.patch.object(
-            self.context, "session", async_mock.CoroutineMock()
+            self.context.profile,
+            "session",
+            async_mock.MagicMock(return_value=session),
         ) as mock_session, async_mock.patch.object(
             test_module.web, "json_response"
         ) as mock_response:
             await test_module.get_keylist(self.request)
             mock_query.assert_called_once_with(mock_session.return_value, {})
-            mock_response.assert_called_once_with([], status=200)
+            mock_response.assert_called_once_with({"results": []}, status=200)
 
     async def test_get_keylist_storage_error(self):
         with async_mock.patch.object(

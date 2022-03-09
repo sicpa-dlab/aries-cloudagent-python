@@ -1,16 +1,18 @@
 """Credential request message handler."""
 
-from .....messaging.base_handler import (
-    BaseHandler,
-    BaseResponder,
-    HandlerException,
-    RequestContext,
-)
-
-from ..manager import CredentialManager
-from ..messages.credential_request import CredentialRequest
-
+from .....indy.issuer import IndyIssuerError
+from .....ledger.error import LedgerError
+from .....messaging.base_handler import BaseHandler, HandlerException
+from .....messaging.models.base import BaseModelError
+from .....messaging.request_context import RequestContext
+from .....messaging.responder import BaseResponder
+from .....storage.error import StorageError
 from .....utils.tracing import trace_event, get_timer
+
+from .. import problem_report_for_record
+from ..manager import CredentialManager, CredentialManagerError
+from ..messages.credential_problem_report import ProblemReportReason
+from ..messages.credential_request import CredentialRequest
 
 
 class CredentialRequestHandler(BaseHandler):
@@ -26,7 +28,7 @@ class CredentialRequestHandler(BaseHandler):
 
         """
         r_time = get_timer()
-
+        profile = context.profile
         self._logger.debug("CredentialRequestHandler called with context %s", context)
         assert isinstance(context.message, CredentialRequest)
         self._logger.info(
@@ -37,10 +39,10 @@ class CredentialRequestHandler(BaseHandler):
         if not context.connection_ready:
             raise HandlerException("No connection established for credential request")
 
-        credential_manager = CredentialManager(context.profile)
+        credential_manager = CredentialManager(profile)
         cred_ex_record = await credential_manager.receive_request(
             context.message, context.connection_record.connection_id
-        )
+        )  # mgr only finds, saves record: on exception, saving state null is hopeless
 
         r_time = trace_event(
             context.settings,
@@ -50,19 +52,41 @@ class CredentialRequestHandler(BaseHandler):
         )
 
         # If auto_issue is enabled, respond immediately
-        if cred_ex_record.auto_issue:
+        if cred_ex_record and cred_ex_record.auto_issue:
             if (
                 cred_ex_record.credential_proposal_dict
-                and "credential_proposal" in cred_ex_record.credential_proposal_dict
+                and cred_ex_record.credential_proposal_dict.credential_proposal
             ):
-                (
-                    cred_ex_record,
-                    credential_issue_message,
-                ) = await credential_manager.issue_credential(
-                    cred_ex_record=cred_ex_record, comment=context.message.comment
-                )
-
-                await responder.send_reply(credential_issue_message)
+                credential_issue_message = None
+                try:
+                    (
+                        cred_ex_record,
+                        credential_issue_message,
+                    ) = await credential_manager.issue_credential(
+                        cred_ex_record=cred_ex_record,
+                        comment=context.message.comment,
+                    )
+                    await responder.send_reply(credential_issue_message)
+                except (
+                    BaseModelError,
+                    CredentialManagerError,
+                    IndyIssuerError,
+                    LedgerError,
+                    StorageError,
+                ) as err:
+                    self._logger.exception("Error responding to credential request")
+                    if cred_ex_record:
+                        async with profile.session() as session:
+                            await cred_ex_record.save_error_state(
+                                session,
+                                reason=err.roll_up,  # us: be specific
+                            )
+                        await responder.send_reply(  # them: be vague
+                            problem_report_for_record(
+                                cred_ex_record,
+                                ProblemReportReason.ISSUANCE_ABANDONED.value,
+                            )
+                        )
 
                 trace_event(
                     context.settings,

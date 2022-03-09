@@ -3,7 +3,7 @@
 import json
 
 from enum import Enum
-from typing import Any, Union
+from typing import Any, Optional, Union
 
 from marshmallow import fields, validate
 
@@ -19,8 +19,10 @@ from ...protocols.connections.v1_0.messages.connection_invitation import (
     ConnectionInvitation,
 )
 from ...protocols.connections.v1_0.messages.connection_request import ConnectionRequest
+from ...protocols.connections.v1_0.message_types import ARIES_PROTOCOL as CONN_PROTO
 from ...protocols.didcomm_prefix import DIDCommPrefix
 from ...protocols.didexchange.v1_0.messages.request import DIDXRequest
+from ...protocols.didexchange.v1_0.message_types import ARIES_PROTOCOL as DIDX_PROTO
 from ...protocols.out_of_band.v1_0.messages.invitation import (
     InvitationMessage as OOBInvitation,
 )
@@ -36,6 +38,28 @@ class ConnRecord(BaseRecord):
         """ConnRecord metadata."""
 
         schema_class = "ConnRecordSchema"
+
+    class Protocol(Enum):
+        """Supported Protocols for Connection."""
+
+        RFC_0160 = CONN_PROTO
+        RFC_0023 = DIDX_PROTO
+
+        @classmethod
+        def get(cls, label: Union[str, "ConnRecord.Protocol"]):
+            """Get aries protocol enum for label."""
+            if isinstance(label, str):
+                for proto in ConnRecord.Protocol:
+                    if label in proto.value:
+                        return proto
+            elif isinstance(label, ConnRecord.Protocol):
+                return label
+            return None
+
+        @property
+        def aries_protocol(self):
+            """Return used connection protocol."""
+            return self.value
 
     class Role(Enum):
         """RFC 160 (inviter, invitee) = RFC 23 (responder, requester)."""
@@ -141,9 +165,16 @@ class ConnRecord(BaseRecord):
             return self is ConnRecord.State.get(other)
 
     RECORD_ID_NAME = "connection_id"
-    WEBHOOK_TOPIC = "connections"
+    RECORD_TOPIC = "connections"
     LOG_STATE_FLAG = "debug.connections"
-    TAG_NAMES = {"my_did", "their_did", "request_id", "invitation_key"}
+    TAG_NAMES = {
+        "my_did",
+        "their_did",
+        "request_id",
+        "invitation_key",
+        "their_public_did",
+        "invitation_msg_id",
+    }
 
     RECORD_TYPE = "connection"
     RECORD_TYPE_INVITATION = "connection_invitation"
@@ -180,6 +211,10 @@ class ConnRecord(BaseRecord):
         accept: str = None,
         invitation_mode: str = None,
         alias: str = None,
+        their_public_did: str = None,
+        rfc23_state: str = None,  # from state: formalism for base_record.from_storage()
+        initiator: str = None,  # for backward compatibility with old ConnectionRecord
+        connection_protocol: Union[str, "ConnRecord.Protocol"] = None,
         **kwargs,
     ):
         """Initialize a new ConnRecord."""
@@ -207,6 +242,14 @@ class ConnRecord(BaseRecord):
         self.accept = accept or self.ACCEPT_MANUAL
         self.invitation_mode = invitation_mode or self.INVITATION_MODE_ONCE
         self.alias = alias
+        self.their_public_did = their_public_did
+        self.connection_protocol = (
+            ConnRecord.Protocol.get(connection_protocol).aries_protocol
+            if isinstance(connection_protocol, str)
+            else None
+            if connection_protocol is None
+            else connection_protocol.aries_protocol
+        )
 
     @property
     def connection_id(self) -> str:
@@ -233,7 +276,9 @@ class ConnRecord(BaseRecord):
                 "alias",
                 "error_msg",
                 "their_label",
+                "their_public_did",
                 "state",
+                "connection_protocol",
             )
         }
 
@@ -285,6 +330,48 @@ class ConnRecord(BaseRecord):
         return await cls.retrieve_by_tag_filter(session, tag_filter, post_filter)
 
     @classmethod
+    async def retrieve_by_invitation_msg_id(
+        cls, session: ProfileSession, invitation_msg_id: str, their_role: str = None
+    ) -> Optional["ConnRecord"]:
+        """Retrieve a connection record by invitation_msg_id.
+
+        Args:
+            session: The active profile session
+            invitation_msg_id: Invitation message identifier
+            initiator: Filter by the initiator value
+        """
+        tag_filter = {"invitation_msg_id": invitation_msg_id}
+        post_filter = {
+            "state": cls.State.INVITATION.rfc160,
+        }
+        if their_role:
+            post_filter["their_role"] = cls.Role.get(their_role).rfc160
+        try:
+            return await cls.retrieve_by_tag_filter(session, tag_filter, post_filter)
+        except StorageNotFoundError:
+            return None
+
+    @classmethod
+    async def find_existing_connection(
+        cls, session: ProfileSession, their_public_did: str
+    ) -> Optional["ConnRecord"]:
+        """Retrieve existing active connection records (public did).
+
+        Args:
+            session: The active profile session
+            their_public_did: Inviter public DID
+        """
+        tag_filter = {"their_public_did": their_public_did}
+        conn_records = await cls.query(
+            session,
+            tag_filter=tag_filter,
+        )
+        for conn_record in conn_records:
+            if conn_record.state == ConnRecord.State.COMPLETED:
+                return conn_record
+        return None
+
+    @classmethod
     async def retrieve_by_request_id(
         cls, session: ProfileSession, request_id: str
     ) -> "ConnRecord":
@@ -296,6 +383,19 @@ class ConnRecord(BaseRecord):
         """
         tag_filter = {"request_id": request_id}
         return await cls.retrieve_by_tag_filter(session, tag_filter)
+
+    @classmethod
+    async def retrieve_by_alias(
+        cls, session: ProfileSession, alias: str
+    ) -> "ConnRecord":
+        """Retrieve a connection record from an alias.
+
+        Args:
+            session: The active profile session
+            alias: The alias of the connection
+        """
+        post_filter = {"alias": alias}
+        return await cls.query(session, post_filter_positive=post_filter)
 
     async def attach_invitation(
         self,
@@ -310,7 +410,7 @@ class ConnRecord(BaseRecord):
         """
         assert self.connection_id
         record = StorageRecord(
-            self.RECORD_TYPE_INVITATION,
+            self.RECORD_TYPE_INVITATION,  # conn- or oob-invitation, to retrieve easily
             invitation.to_json(),
             {"connection_id": self.connection_id},
         )
@@ -328,7 +428,8 @@ class ConnRecord(BaseRecord):
         assert self.connection_id
         storage = session.inject(BaseStorage)
         result = await storage.find_record(
-            self.RECORD_TYPE_INVITATION, {"connection_id": self.connection_id}
+            self.RECORD_TYPE_INVITATION,
+            {"connection_id": self.connection_id},
         )
         ser = json.loads(result.value)
         return (
@@ -340,7 +441,7 @@ class ConnRecord(BaseRecord):
     async def attach_request(
         self,
         session: ProfileSession,
-        request: ConnectionRequest,  # will be Union[ConnectionRequest, DIDEx Request]
+        request: Union[ConnectionRequest, DIDXRequest],
     ):
         """Persist the related connection request to storage.
 
@@ -350,7 +451,7 @@ class ConnRecord(BaseRecord):
         """
         assert self.connection_id
         record = StorageRecord(
-            self.RECORD_TYPE_REQUEST,
+            self.RECORD_TYPE_REQUEST,  # conn- or didx-request, to retrieve easily
             request.to_json(),
             {"connection_id": self.connection_id},
         )
@@ -403,6 +504,23 @@ class ConnRecord(BaseRecord):
         cache_key = f"connection_target::{self.connection_id}"
         await self.clear_cached_key(session, cache_key)
 
+    async def delete_record(self, session: ProfileSession):
+        """Perform connection record deletion actions.
+
+        Args:
+            session (ProfileSession): session
+
+        """
+        await super().delete_record(session)
+
+        # Delete metadata
+        if self.connection_id:
+            storage = session.inject(BaseStorage)
+            await storage.delete_all_records(
+                self.RECORD_TYPE_METADATA,
+                {"connection_id": self.connection_id},
+            )
+
     async def metadata_get(
         self, session: ProfileSession, key: str, default: Any = None
     ) -> Any:
@@ -412,7 +530,7 @@ class ConnRecord(BaseRecord):
             session (ProfileSession): session used for storage
             key (str): key identifying metadata
             default (Any): default value to get; type should be a JSON
-            compatible value.
+                compatible value.
 
         Returns:
             Any: metadata stored by key
@@ -523,6 +641,12 @@ class ConnRecordSchema(BaseRecordSchema):
         ),
         example=ConnRecord.Role.REQUESTER.rfc23,
     )
+    connection_protocol = fields.Str(
+        required=False,
+        description="Connection protocol used",
+        validate=validate.OneOf([proto.value for proto in ConnRecord.Protocol]),
+        example=ConnRecord.Protocol.RFC_0160.aries_protocol,
+    )
     rfc23_state = fields.Str(
         dump_only=True,
         description="State per RFC 23",
@@ -591,4 +715,9 @@ class ConnRecordSchema(BaseRecordSchema):
         required=False,
         description="Optional alias to apply to connection for later use",
         example="Bob, providing quotes",
+    )
+    their_public_did = fields.Str(
+        required=False,
+        description="Other agent's public DID for connection",
+        example="2cpBmR3FqGKWi5EyUbpRY8",
     )

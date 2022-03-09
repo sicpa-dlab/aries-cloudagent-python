@@ -12,7 +12,9 @@ See the [README](README.md) for details about this repository and information ab
   - [Locally Installed](#locally-installed)
   - [About ACA-Py Command Line Parameters](#about-aca-py-command-line-parameters)
   - [Provisioning a Wallet](#provisioning-a-wallet)
+  - [Mediation](#mediation)
   - [Multi-tenancy](#multi-tenancy)
+  - [JSON-LD Credentials](#json-ld-credentials)
 - [Developing](#developing)
   - [Prerequisites](#prerequisites)
   - [Running Locally](#running-locally)
@@ -26,11 +28,11 @@ See the [README](README.md) for details about this repository and information ab
 
 Aries Cloud Agent Python (ACA-Py) is a configurable, extensible, non-mobile Aries agent that implements an easy way for developers to build decentralized identity services that use verifiable credentials.
 
-The information on this page assumes you are developer with a background in decentralized identity, Indy, Aries and verifiable credentials. If you aren't familiar with those concepts and projects, please use our [Getting Started Guide](docs/GettingStartedAriesDev/README.md) to learn more.
+The information on this page assumes you are developer with a background in decentralized identity, Indy, Aries and verifiable credentials. If you aren't familiar with those concepts and projects, please use our [Getting Started Guide](/docs/GettingStartedAriesDev/README.md) to learn more.
 
 ## Developer Demos
 
-To put ACA-Py through its paces at the command line, checkout our [demos](docs/GettingStartedAriesDev/AriesDeveloperDemos.md) page.
+To put ACA-Py through its paces at the command line, checkout our [demos](/docs/GettingStartedAriesDev/AriesDeveloperDemos.md) page.
 
 ## Running
 
@@ -107,9 +109,19 @@ aca-py provision --wallet-type indy --seed $SEED
 
 For additional `provision` options, execute `aca-py provision --help`.
 
+Additional information about wallet storages can be found [here](Databases.md).
+
+### Mediation
+
+ACA-Py can also run in mediator mode - ACA-Py can be run *as* a mediator (it can mediate connections for other agents), or it can connect to an external mediator to mediate its own connections.  See the [docs on mediation](Mediation.md) for more info.
+
 ### Multi-tenancy
 
 ACA-Py can also be started in multi-tenant mode. This allows the agent to serve multiple tenants, that each have their own wallet. See the [docs on multi-tenancy](Multitenancy.md) for more info.
+
+### JSON-LD Credentials
+
+ACA-Py can issue W3C Verifiable Credentials using Linked Data Proofs. See the [docs on JSON-LD Credentials](JsonLdCredentials.md) for more info.
 
 ## Developing
 
@@ -141,6 +153,10 @@ PORTS="5000:5000 8000:8000 1000:1000" ./scripts/run_docker start --inbound-trans
 
 Refer to [the previous section](#Running) for instructions on how to run the software.
 
+### Logging
+
+You can find more details about logging and log levels [here](Logging.md).
+
 ### Running Tests
 
 To run the ACA-Py test suite, use the following script:
@@ -171,7 +187,7 @@ To run the tests including [Indy SDK](https://github.com/hyperledger/indy-sdk) a
 
 You can run a full suite of integration tests using the [Aries Agent Test Harness (AATH)](https://github.com/hyperledger/aries-agent-test-harness).
 
-Check out and run AATH tests as follows (this tests the aca-py `master` branch):
+Check out and run AATH tests as follows (this tests the aca-py `main` branch):
 
 ```bash
 git clone https://github.com/hyperledger/aries-agent-test-harness.git
@@ -200,7 +216,7 @@ Please also refer to the [contributing guidelines](/CONTRIBUTING.md) and [code o
 
 ## Publishing Releases
 
-The [publishing](https://github.com/hyperledger/aries-cloudagent-python/blob/master/PUBLISHING.md) document provides information on tagging a release and publishing the release artifacts to PyPi.
+The [publishing](https://github.com/hyperledger/aries-cloudagent-python/blob/main/PUBLISHING.md) document provides information on tagging a release and publishing the release artifacts to PyPi.
 
 ## Dynamic Injection of Services
 

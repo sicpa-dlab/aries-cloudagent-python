@@ -5,6 +5,7 @@ import logging
 from abc import ABC, abstractmethod
 from typing import Any, Mapping, Optional, Type
 
+from .event_bus import EventBus, Event
 from ..config.base import InjectionError
 from ..config.injector import BaseInjector, InjectType
 from ..config.injection_context import InjectionContext
@@ -20,8 +21,8 @@ LOGGER = logging.getLogger(__name__)
 class Profile(ABC):
     """Base abstraction for handling identity-related state."""
 
-    BACKEND_NAME = None
-    DEFAULT_NAME = "default"
+    BACKEND_NAME: str = None
+    DEFAULT_NAME: str = "default"
 
     def __init__(
         self,
@@ -77,9 +78,7 @@ class Profile(ABC):
         self,
         base_cls: Type[InjectType],
         settings: Mapping[str, object] = None,
-        *,
-        required: bool = True,
-    ) -> Optional[InjectType]:
+    ) -> InjectType:
         """
         Get the provided instance of a given class identifier.
 
@@ -91,13 +90,39 @@ class Profile(ABC):
             An instance of the base class, or None
 
         """
-        return self._context.inject(base_cls, settings, required=required)
+        return self._context.inject(base_cls, settings)
+
+    def inject_or(
+        self,
+        base_cls: Type[InjectType],
+        settings: Mapping[str, object] = None,
+        default: Optional[InjectType] = None,
+    ) -> Optional[InjectType]:
+        """
+        Get the provided instance of a given class identifier or default if not found.
+
+        Args:
+            base_cls: The base class to retrieve an instance of
+            settings: An optional dict providing configuration to the provider
+            default: default return value if no instance is found
+
+        Returns:
+            An instance of the base class, or None
+
+        """
+        return self._context.inject_or(base_cls, settings, default)
 
     async def close(self):
         """Close the profile instance."""
 
     async def remove(self):
         """Remove the profile."""
+
+    async def notify(self, topic: str, payload: Any):
+        """Signal an event."""
+        event_bus = self.inject_or(EventBus)
+        if event_bus:
+            await event_bus.notify(self, Event(topic, payload))
 
     def __repr__(self) -> str:
         """Get a human readable string."""
@@ -137,6 +162,8 @@ class ProfileSession(ABC):
     ):
         """Initialize a base profile session."""
         self._active = False
+        self._awaited = False
+        self._entered = 0
         self._context = (context or profile.context).start_scope("session", settings)
         self._profile = profile
 
@@ -157,6 +184,7 @@ class ProfileSession(ABC):
             if not self._active:
                 await self._setup()
                 self._active = True
+            self._awaited = True
             return self
 
         return _init().__await__()
@@ -166,11 +194,13 @@ class ProfileSession(ABC):
         if not self._active:
             await self._setup()
             self._active = True
+        self._entered += 1
         return self
 
     async def __aexit__(self, exc_type, exc_val, exc_tb):
         """Async context manager exit."""
-        if self._active:
+        self._entered -= 1
+        if not self._awaited and not self._entered:
             await self._teardown()
             self._active = False
 
@@ -225,9 +255,7 @@ class ProfileSession(ABC):
         self,
         base_cls: Type[InjectType],
         settings: Mapping[str, object] = None,
-        *,
-        required: bool = True,
-    ) -> Optional[InjectType]:
+    ) -> InjectType:
         """
         Get the provided instance of a given class identifier.
 
@@ -241,7 +269,29 @@ class ProfileSession(ABC):
         """
         if not self._active:
             raise ProfileSessionInactiveError()
-        return self._context.inject(base_cls, settings, required=required)
+        return self._context.inject(base_cls, settings)
+
+    def inject_or(
+        self,
+        base_cls: Type[InjectType],
+        settings: Mapping[str, object] = None,
+        default: Optional[InjectType] = None,
+    ) -> Optional[InjectType]:
+        """
+        Get the provided instance of a given class identifier or default if not found.
+
+        Args:
+            base_cls: The base class to retrieve an instance of
+            settings: An optional dict providing configuration to the provider
+            default: default return value if no instance is found
+
+        Returns:
+            An instance of the base class, or None
+
+        """
+        if not self._active:
+            raise ProfileSessionInactiveError()
+        return self._context.inject_or(base_cls, settings, default)
 
     def __repr__(self) -> str:
         """Get a human readable string."""

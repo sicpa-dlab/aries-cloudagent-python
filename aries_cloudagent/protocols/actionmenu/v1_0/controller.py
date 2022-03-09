@@ -16,6 +16,10 @@ class Controller:
     async def determine_roles(self, context: InjectionContext) -> Sequence[str]:
         """Determine what action menu roles are defined."""
 
-        service = context.inject(BaseMenuService, required=False)
+        service = context.inject_or(BaseMenuService)
         if service:
             return ["provider"]
+
+    def determine_goal_codes(self) -> Sequence[str]:
+        """Return defined goal_codes."""
+        return []

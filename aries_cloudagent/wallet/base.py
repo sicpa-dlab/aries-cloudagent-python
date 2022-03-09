@@ -1,16 +1,15 @@
 """Wallet base class."""
 
 from abc import ABC, abstractmethod
-from collections import namedtuple
-from typing import Sequence
+from typing import List, Sequence, Tuple, Union
 
 from ..ledger.base import BaseLedger
 from ..ledger.endpoint_type import EndpointType
+from .error import WalletError
 
-from .did_posture import DIDPosture
-
-KeyInfo = namedtuple("KeyInfo", "verkey metadata")
-DIDInfo = namedtuple("DIDInfo", "did verkey metadata")
+from .did_info import DIDInfo, KeyInfo
+from .key_type import KeyType
+from .did_method import DIDMethod
 
 
 class BaseWallet(ABC):
@@ -18,11 +17,12 @@ class BaseWallet(ABC):
 
     @abstractmethod
     async def create_signing_key(
-        self, seed: str = None, metadata: dict = None
+        self, key_type: KeyType, seed: str = None, metadata: dict = None
     ) -> KeyInfo:
         """Create a new public/private signing keypair.
 
         Args:
+            key_type: Key type to create
             seed: Optional seed allowing deterministic key creation
             metadata: Optional metadata to store with the keypair
 
@@ -88,12 +88,19 @@ class BaseWallet(ABC):
 
     @abstractmethod
     async def create_local_did(
-        self, seed: str = None, did: str = None, metadata: dict = None
+        self,
+        method: DIDMethod,
+        key_type: KeyType,
+        seed: str = None,
+        did: str = None,
+        metadata: dict = None,
     ) -> DIDInfo:
         """
         Create and store a new local DID.
 
         Args:
+            method: The method to use for the DID
+            key_type: The key type to use for the DID
             seed: Optional seed to use for DID
             did: The DID to use
             metadata: Metadata to store with DID
@@ -104,12 +111,15 @@ class BaseWallet(ABC):
         """
 
     async def create_public_did(
-        self, seed: str = None, did: str = None, metadata: dict = {}
+        self,
+        method: DIDMethod,
+        key_type: KeyType,
+        seed: str = None,
+        did: str = None,
+        metadata: dict = {},
     ) -> DIDInfo:
         """
         Create and store a new public DID.
-
-        Implicitly flags all other dids as not public.
 
         Args:
             seed: Optional seed to use for DID
@@ -120,58 +130,32 @@ class BaseWallet(ABC):
             The created `DIDInfo`
 
         """
+        metadata = metadata or {}
+        metadata.setdefault("posted", True)
+        did_info = await self.create_local_did(
+            method=method, key_type=key_type, seed=seed, did=did, metadata=metadata
+        )
+        return await self.set_public_did(did_info)
 
-        metadata = DIDPosture.PUBLIC.metadata
-        dids = await self.get_local_dids()
-        for info in dids:
-            info_meta = info.metadata
-            info_meta["public"] = False
-            await self.replace_local_did_metadata(info.did, info_meta)
-        return await self.create_local_did(seed, did, metadata)
-
+    @abstractmethod
     async def get_public_did(self) -> DIDInfo:
         """
         Retrieve the public DID.
 
         Returns:
-            The created `DIDInfo`
+            The currently public `DIDInfo`, if any
 
         """
 
-        dids = await self.get_local_dids()
-        for info in dids:
-            if info.metadata.get("public"):
-                return info
-
-        return None
-
-    async def set_public_did(self, did: str) -> DIDInfo:
+    @abstractmethod
+    async def set_public_did(self, did: Union[str, DIDInfo]) -> DIDInfo:
         """
         Assign the public DID.
 
         Returns:
-            The created `DIDInfo`
+            The updated `DIDInfo`
 
         """
-
-        # will raise an exception if not found
-        info = None if did is None else await self.get_local_did(did)
-
-        public = await self.get_public_did()
-        if public and info and public.did == info.did:
-            info = public
-        else:
-            if public:
-                metadata = public.metadata.copy()
-                del metadata["public"]
-                await self.replace_local_did_metadata(public.did, metadata)
-
-            if info:
-                metadata = {**info.metadata, **DIDPosture.PUBLIC.metadata}
-                await self.replace_local_did_metadata(info.did, metadata)
-                info = await self.get_local_did(info.did)
-
-        return info
 
     @abstractmethod
     async def get_local_dids(self) -> Sequence[DIDInfo]:
@@ -224,23 +208,21 @@ class BaseWallet(ABC):
 
     async def get_posted_dids(self) -> Sequence[DIDInfo]:
         """
-        Get list of defined posted DIDs, excluding public DID.
+        Get list of defined posted DIDs.
 
         Returns:
             A list of `DIDInfo` instances
 
         """
         return [
-            info
-            for info in await self.get_local_dids()
-            if info.metadata.get("posted") and not info.metadata.get("public")
+            info for info in await self.get_local_dids() if info.metadata.get("posted")
         ]
 
     async def set_did_endpoint(
         self,
         did: str,
         endpoint: str,
-        ledger: BaseLedger,
+        _ledger: BaseLedger,
         endpoint_type: EndpointType = None,
     ):
         """
@@ -255,6 +237,9 @@ class BaseWallet(ABC):
                 'endpoint' affects local wallet
         """
         did_info = await self.get_local_did(did)
+
+        if did_info.method != DIDMethod.SOV:
+            raise WalletError("Setting DID endpoint is only allowed for did:sov DIDs")
         metadata = {**did_info.metadata}
         if not endpoint_type:
             endpoint_type = EndpointType.ENDPOINT
@@ -264,12 +249,14 @@ class BaseWallet(ABC):
         await self.replace_local_did_metadata(did, metadata)
 
     @abstractmethod
-    async def sign_message(self, message: bytes, from_verkey: str) -> bytes:
+    async def sign_message(
+        self, message: Union[List[bytes], bytes], from_verkey: str
+    ) -> bytes:
         """
-        Sign a message using the private key associated with a given verkey.
+        Sign message(s) using the private key associated with a given verkey.
 
         Args:
-            message: The message to sign
+            message: The message(s) to sign
             from_verkey: Sign using the private key related to this verkey
 
         Returns:
@@ -279,7 +266,11 @@ class BaseWallet(ABC):
 
     @abstractmethod
     async def verify_message(
-        self, message: bytes, signature: bytes, from_verkey: str
+        self,
+        message: Union[List[bytes], bytes],
+        signature: bytes,
+        from_verkey: str,
+        key_type: KeyType,
     ) -> bool:
         """
         Verify a signature against the public key of the signer.
@@ -288,6 +279,7 @@ class BaseWallet(ABC):
             message: The message to verify
             signature: The signature to verify
             from_verkey: Verkey to use in verification
+            key_type: The key type to derive the signature verification algorithm from
 
         Returns:
             True if verified, else False
@@ -312,7 +304,7 @@ class BaseWallet(ABC):
         """
 
     @abstractmethod
-    async def unpack_message(self, enc_message: bytes) -> (str, str, str):
+    async def unpack_message(self, enc_message: bytes) -> Tuple[str, str, str]:
         """
         Unpack a message.
 

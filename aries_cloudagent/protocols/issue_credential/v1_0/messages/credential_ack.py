@@ -2,7 +2,7 @@
 
 from marshmallow import EXCLUDE
 
-from .....messaging.ack.message import Ack, AckSchema
+from ....notification.v1_0.messages.ack import V10Ack, V10AckSchema
 
 from ..message_types import CREDENTIAL_ACK, PROTOCOL_PACKAGE
 
@@ -11,22 +11,22 @@ HANDLER_CLASS = (
 )
 
 
-class CredentialAck(Ack):
+class CredentialAck(V10Ack):
     """Class representing a credential ack message."""
 
     class Meta:
-        """Credential metadata."""
+        """Credential ack metadata."""
 
         handler_class = HANDLER_CLASS
         schema_class = "CredentialAckSchema"
         message_type = CREDENTIAL_ACK
 
     def __init__(self, **kwargs):
-        """Initialize credential object."""
+        """Initialize credential ack object."""
         super().__init__(**kwargs)
 
 
-class CredentialAckSchema(AckSchema):
+class CredentialAckSchema(V10AckSchema):
     """Credential ack schema."""
 
     class Meta:
