@@ -26,7 +26,6 @@ from ....wallet.util import bytes_to_b58
 from ...routing.v1_0.manager import RoutingManager
 from ...coordinate_mediation.v1_0.manager import MediationManager
 
-from ...coordinate_mediation.v1_0.models.mediation_record import MediationRecord
 from ...discovery.v2_0.manager import V20DiscoveryMgr
 
 from .message_types import ARIES_PROTOCOL as CONN_PROTO
@@ -285,7 +284,6 @@ class ConnectionManager(BaseConnectionManager):
         auto_accept: bool = None,
         alias: str = None,
         mediation_id: str = None,
-        mediation_record: MediationRecord = None,
     ) -> ConnRecord:
         """
         Create a new connection record to track a received invitation.
