@@ -1,6 +1,7 @@
 """Outbound message representation."""
 
-from typing import Sequence, Union
+from base64 import urlsafe_b64encode
+from typing import Any, Dict, Sequence, Union
 
 from ...connections.models.connection_target import ConnectionTarget
 
@@ -46,3 +47,38 @@ class OutboundMessage:
         """
         items = ("{}={}".format(k, repr(v)) for k, v in self.__dict__.items())
         return "<{}({})>".format(self.__class__.__name__, ", ".join(items))
+
+    def serialize(self) -> Dict[str, Any]:
+        outbound_dict = {
+            prop: getattr(self, prop)
+            for prop in (
+                "connection_id",
+                "endpoint",
+                "reply_session_id",
+                "reply_thread_id",
+                "reply_to_verkey",
+                "reply_from_verkey",
+                "to_session_only",
+            )
+        }
+
+        outbound_dict["payload"] = (
+            urlsafe_b64encode(self.payload)
+            if isinstance(self.payload, bytes)
+            else self.payload
+        )
+        outbound_dict["enc_payload"] = (
+            urlsafe_b64encode(self.enc_payload)
+            if isinstance(self.enc_payload, bytes)
+            else self.enc_payload
+        )
+
+        outbound_dict["target"] = self.target.serialize() if self.target else None
+        outbound_dict["target_list"] = [
+            target.serialize() for target in self.target_list
+        ] or None
+        return outbound_dict
+
+    @classmethod
+    def deserialize(cls, value: dict):
+        pass
