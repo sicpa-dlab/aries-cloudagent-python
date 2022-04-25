@@ -99,7 +99,7 @@ class MediationRecord(BaseRecord):
                 f"must be one of ("
                 f"{MediationRecord.STATE_DENIED}, "
                 f"{MediationRecord.STATE_GRANTED}, "
-                f"{MediationRecord.STATE_REQUEST}"
+                f"{MediationRecord.STATE_REQUEST})"
             )
         self._state = state
 
@@ -159,7 +159,7 @@ class MediationRecord(BaseRecord):
 
 
 class MediationRecordSchema(BaseRecordSchema):
-    """MediationRecordSchema schema."""
+    """MediationRecord schema."""
 
     class Meta:
         """MediationRecordSchema metadata."""

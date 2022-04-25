@@ -1,6 +1,6 @@
 """Outbound message representation."""
 
-from base64 import urlsafe_b64encode
+import copy
 from typing import Any, Dict, Sequence, Union
 
 from ...connections.models.connection_target import ConnectionTarget
@@ -14,7 +14,6 @@ class OutboundMessage:
         *,
         connection_id: str = None,
         enc_payload: Union[str, bytes] = None,
-        endpoint: str = None,
         payload: Union[str, bytes],
         reply_session_id: str = None,
         reply_thread_id: str = None,
@@ -27,7 +26,6 @@ class OutboundMessage:
         """Initialize an outgoing message."""
         self.connection_id = connection_id
         self.enc_payload = enc_payload
-        self._endpoint = endpoint
         self.payload = payload
         self.reply_session_id = reply_session_id
         self.reply_thread_id = reply_thread_id
@@ -49,11 +47,11 @@ class OutboundMessage:
         return "<{}({})>".format(self.__class__.__name__, ", ".join(items))
 
     def serialize(self) -> Dict[str, Any]:
+        """Serialize outbound message object."""
         outbound_dict = {
             prop: getattr(self, prop)
             for prop in (
                 "connection_id",
-                "endpoint",
                 "reply_session_id",
                 "reply_thread_id",
                 "reply_to_verkey",
@@ -63,12 +61,12 @@ class OutboundMessage:
         }
 
         outbound_dict["payload"] = (
-            urlsafe_b64encode(self.payload)
+            self.payload.decode("utf-8")
             if isinstance(self.payload, bytes)
             else self.payload
         )
         outbound_dict["enc_payload"] = (
-            urlsafe_b64encode(self.enc_payload)
+            self.enc_payload.decode("utf-8")
             if isinstance(self.enc_payload, bytes)
             else self.enc_payload
         )
@@ -81,4 +79,14 @@ class OutboundMessage:
 
     @classmethod
     def deserialize(cls, value: dict):
-        pass
+        """Deserialize outbound message object."""
+        value = copy.deepcopy(value)
+        if "target" in value:
+            value["target"] = ConnectionTarget.deserialize(value["target"])
+
+        if "target_list" in value:
+            value["target_list"] = [
+                ConnectionTarget.deserialize(target) for target in value["target_list"]
+            ]
+
+        return cls(**value)
