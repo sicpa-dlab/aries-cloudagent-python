@@ -216,7 +216,11 @@ class ConnectionManager(BaseConnectionManager):
         connection = ConnRecord(
             invitation_key=invitation_key,  # TODO: determine correct key to use
             their_role=ConnRecord.Role.REQUESTER.rfc160,
-            state=ConnRecord.State.INVITATION.rfc160,
+            state=(
+                ConnRecord.State.INIT.rfc160
+                if mediation_record
+                else ConnRecord.State.INVITATION.rfc160
+            ),
             accept=accept,
             invitation_mode=invitation_mode,
             alias=alias,
@@ -348,6 +352,7 @@ class ConnectionManager(BaseConnectionManager):
             request = await self.create_request(connection, mediation_id=mediation_id)
             responder = self.profile.inject_or(BaseResponder)
             if responder:
+                outbound_msg = await responder.create_outbound(request, connection_id=connection.connection_id)
                 await responder.send(request, connection_id=connection.connection_id)
                 # refetch connection for accurate state
                 async with self.profile.session() as session:
@@ -622,7 +627,11 @@ class ConnectionManager(BaseConnectionManager):
                 if self.profile.settings.get("debug.auto_accept_requests")
                 else ConnRecord.ACCEPT_MANUAL
             )
-            connection.state = ConnRecord.State.REQUEST.rfc160
+            connection.state = (
+                new_connection.state
+                if keylist_updates and mediation_record
+                else ConnRecord.State.REQUEST.rfc160
+            )
             connection.connection_protocol = CONN_PROTO
             async with self.profile.session() as session:
                 await connection.save(
@@ -737,7 +746,11 @@ class ConnectionManager(BaseConnectionManager):
             await response.sign_field("connection", connection.invitation_key, wallet)
 
             # Update connection state
-            connection.state = ConnRecord.State.RESPONSE.rfc160
+            connection.state = (
+                connection.state
+                if keylist_updates and mediation_record
+                else ConnRecord.State.RESPONSE.rfc160
+            )
 
             await connection.save(
                 session,
@@ -752,10 +765,6 @@ class ConnectionManager(BaseConnectionManager):
                 keylist_updates, connection_id=mediation_record.connection_id
             )
 
-        # TODO It's possible the mediation request sent here might arrive
-        # before the connection response. This would result in an error condition
-        # difficult to accomodate for without modifying handlers for trust ping
-        # to ensure the connection is active.
         async with self.profile.session() as session:
             send_mediation_request = await connection.metadata_get(
                 session, MediationManager.SEND_REQ_AFTER_CONNECTION
