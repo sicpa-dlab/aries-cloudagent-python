@@ -461,15 +461,15 @@ class TestConnectionManager(AsyncTestCase):
                 )
 
     async def test_create_request(self):
-        conn_req = await self.manager.create_request(
-            ConnRecord(
-                invitation_key=self.test_verkey,
-                their_label="Hello",
-                their_role=ConnRecord.Role.RESPONDER.rfc160,
-                alias="Bob",
-            )
+        record = ConnRecord(
+            invitation_key=self.test_verkey,
+            their_label="Hello",
+            their_role=ConnRecord.Role.RESPONDER.rfc160,
+            alias="Bob",
         )
+        conn_req = await self.manager.create_request(record)
         assert conn_req
+        assert record.state == ConnRecord.State.REQUEST.rfc160
 
     async def test_create_request_my_endpoint(self):
         conn_req = await self.manager.create_request(
@@ -545,6 +545,7 @@ class TestConnectionManager(AsyncTestCase):
                 their_label="Hello",
                 their_role=ConnRecord.Role.RESPONDER.rfc160,
                 alias="Bob",
+                state=ConnRecord.State.INVITATION.rfc160,
             )
 
             # Ensure the path with new did creation is hit
@@ -587,6 +588,7 @@ class TestConnectionManager(AsyncTestCase):
                 "connection_id" in used_kwargs
                 and used_kwargs["connection_id"] == self.test_mediator_conn_id
             )
+            assert record.state == ConnRecord.State.INVITATION.rfc160
 
     async def test_create_request_default_mediator(self):
         async with self.profile.session() as session:
@@ -604,6 +606,7 @@ class TestConnectionManager(AsyncTestCase):
                 their_label="Hello",
                 their_role=ConnRecord.Role.RESPONDER.rfc160,
                 alias="Bob",
+                state=ConnRecord.State.INVITATION.rfc160,
             )
 
             # Ensure the path with new did creation is hit
@@ -647,6 +650,7 @@ class TestConnectionManager(AsyncTestCase):
                 "connection_id" in used_kwargs
                 and used_kwargs["connection_id"] == self.test_mediator_conn_id
             )
+            assert record.state == ConnRecord.State.INVITATION.rfc160
 
     async def test_create_request_bad_mediation(self):
         record, _ = await self.manager.create_invitation(my_endpoint="testendpoint")
