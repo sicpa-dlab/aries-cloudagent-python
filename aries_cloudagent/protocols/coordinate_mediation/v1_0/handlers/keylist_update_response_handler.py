@@ -6,6 +6,9 @@ from .....messaging.responder import BaseResponder
 
 from ..messages.keylist_update_response import KeylistUpdateResponse
 from ..manager import MediationManager
+from ..models.scheduled_message import ScheduledMessage
+from .....connections.models.conn_record import ConnRecord
+from .....storage.error import StorageNotFoundError
 
 
 class KeylistUpdateResponseHandler(BaseHandler):
@@ -25,3 +28,23 @@ class KeylistUpdateResponseHandler(BaseHandler):
         await mgr.store_update_results(
             context.connection_record.connection_id, context.message.updated
         )
+
+        async with context.session() as session:
+            scheduled_messages = await ScheduledMessage.retrieve_by_trigger_thread_id(
+                session, context.message._thread_id
+            )
+            for message in scheduled_messages:
+                await responder.send_outbound(message.message)
+                if message.new_state:
+                    try:
+                        message_recip_rec = await ConnRecord.retrieve_by_id(
+                            session, message.connection_id
+                        )
+                        message_recip_rec.state = message.new_state
+                        await message_recip_rec.save(session)
+                    except StorageNotFoundError:
+                        self._logger.exception(
+                            "Failed to retrieve connection associated with "
+                            "scheduled message: %s",
+                            message.scheduled_message_id,
+                        )

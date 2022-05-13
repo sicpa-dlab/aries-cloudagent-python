@@ -1,5 +1,6 @@
 """Store a message to send after mediation state changes."""
 
+from typing import Sequence
 from marshmallow import fields
 from marshmallow.utils import EXCLUDE
 from .....core.profile import ProfileSession
@@ -53,11 +54,9 @@ class ScheduledMessage(BaseRecord):
     @classmethod
     async def retrieve_by_trigger_thread_id(
         cls, session: ProfileSession, thread_id: str
-    ) -> "ScheduledMessage":
+    ) -> Sequence["ScheduledMessage"]:
         """Retrieve a scheduled message by triggering thread id."""
-        return await cls.retrieve_by_tag_filter(
-            session, {"trigger_thread_id": thread_id}
-        )
+        return await cls.query(session, {"trigger_thread_id": thread_id})
 
 
 class ScheduledMessageSchema(BaseRecordSchema):
