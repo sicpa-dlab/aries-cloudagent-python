@@ -1,6 +1,6 @@
 """Store a message to send after mediation state changes."""
 
-from typing import Sequence
+from typing import Any, Mapping, Sequence
 from marshmallow import fields
 from marshmallow.utils import EXCLUDE
 from .....core.profile import ProfileSession
@@ -49,7 +49,7 @@ class ScheduledMessage(BaseRecord):
 
     @property
     def scheduled_message_id(self) -> str:
-        return self.scheduled_message_id
+        return self._id
 
     @classmethod
     async def retrieve_by_trigger_thread_id(
@@ -57,6 +57,12 @@ class ScheduledMessage(BaseRecord):
     ) -> Sequence["ScheduledMessage"]:
         """Retrieve a scheduled message by triggering thread id."""
         return await cls.query(session, {"trigger_thread_id": thread_id})
+
+    @classmethod
+    def from_storage(cls, record_id: str, record: Mapping[str, Any]):
+        scheduled = super().from_storage(record_id, record)
+        scheduled.message = OutboundMessage.deserialize(record["message"])
+        return scheduled
 
 
 class ScheduledMessageSchema(BaseRecordSchema):
@@ -72,4 +78,8 @@ class ScheduledMessageSchema(BaseRecordSchema):
     trigger_thread_id = fields.Str(required=True)
     connection_id = fields.Str(required=True)
     new_state = fields.Str(required=True)
-    message = fields.Mapping(required=True)
+    message = fields.Function(
+        serialize=lambda obj: obj.message.serialize(),
+        deserialize=lambda value: OutboundMessage.deserialize(value),
+        required=True,
+    )
