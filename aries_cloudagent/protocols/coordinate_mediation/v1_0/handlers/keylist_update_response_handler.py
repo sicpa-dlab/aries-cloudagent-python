@@ -34,6 +34,7 @@ class KeylistUpdateResponseHandler(BaseHandler):
                 session, context.message._thread_id
             )
             for message in scheduled_messages:
+                self._logger.debug("Sending previously scheduled message: %s", message)
                 await responder.send_outbound(message.message)
                 if message.new_state:
                     try:
@@ -42,6 +43,9 @@ class KeylistUpdateResponseHandler(BaseHandler):
                         )
                         message_recip_rec.state = message.new_state
                         await message_recip_rec.save(session)
+                        self._logger.debug(
+                            "Updated state from previously scheduled message", message
+                        )
                     except StorageNotFoundError:
                         self._logger.exception(
                             "Failed to retrieve connection associated with "
