@@ -667,8 +667,6 @@ class TestLedgerConfig(AsyncTestCase):
         }
 
         with async_mock.patch.object(
-            test_module, "use_asyncio_event_loop", async_mock.MagicMock()
-        ) as mock_use_aio_loop, async_mock.patch.object(
             test_module.prompt_toolkit, "prompt", async_mock.CoroutineMock()
         ) as mock_prompt:
             mock_prompt.side_effect = EOFError()
@@ -677,8 +675,6 @@ class TestLedgerConfig(AsyncTestCase):
             )
 
         with async_mock.patch.object(
-            test_module, "use_asyncio_event_loop", async_mock.MagicMock()
-        ) as mock_use_aio_loop, async_mock.patch.object(
             test_module.prompt_toolkit, "prompt", async_mock.CoroutineMock()
         ) as mock_prompt:
             mock_prompt.return_value = "x"
@@ -687,8 +683,6 @@ class TestLedgerConfig(AsyncTestCase):
             )
 
         with async_mock.patch.object(
-            test_module, "use_asyncio_event_loop", async_mock.MagicMock()
-        ) as mock_use_aio_loop, async_mock.patch.object(
             test_module.prompt_toolkit, "prompt", async_mock.CoroutineMock()
         ) as mock_prompt:
             mock_ledger = async_mock.MagicMock(

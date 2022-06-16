@@ -283,7 +283,7 @@ class TestAdminServer(AsyncTestCase):
     async def test_register_external_plugin_x(self):
         context = InjectionContext()
         context.injector.bind_instance(ProtocolRegistry, ProtocolRegistry())
-        with self.assertRaises(ValueError):
+        with self.assertRaises(ImportError):
             builder = DefaultContextBuilder(
                 settings={"external_plugins": "aries_cloudagent.nosuchmodule"}
             )

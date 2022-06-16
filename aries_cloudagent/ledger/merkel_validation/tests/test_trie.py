@@ -1,33 +1,18 @@
-import json
 
 from asynctest import TestCase
 
-from ..domain_txn_handler import (
-    prepare_for_state_read,
-    get_proof_nodes,
-)
-from ..hasher import TreeHasher, HexTreeHasher
-from ..trie import SubTrie
+from ..domain_txn_handler import get_proof_nodes, prepare_for_state_read
+from ..hasher import HexTreeHasher
 from ..merkel_verifier import MerkleVerifier
-
-from .test_data import (
-    GET_REVOC_REG_REPLY_A,
-    GET_REVOC_REG_REPLY_B,
-    GET_ATTRIB_REPLY,
-    GET_CLAIM_DEF_REPLY_INVALID,
-    GET_CLAIM_DEF_REPLY_A,
-    GET_CLAIM_DEF_REPLY_B,
-    GET_REVOC_REG_DEF_REPLY_A,
-    GET_REVOC_REG_DEF_REPLY_B,
-    GET_REVOC_REG_DELTA_REPLY_A,
-    GET_REVOC_REG_DELTA_REPLY_B,
-    GET_REVOC_REG_DELTA_REPLY_C,
-    GET_NYM_REPLY,
-    GET_SCHEMA_REPLY_A,
-    GET_SCHEMA_REPLY_B,
-    RAW_HEX_LEAF,
-    SHA256_AUDIT_PATH,
-)
+from ..trie import SubTrie
+from .test_data import (GET_ATTRIB_REPLY, GET_CLAIM_DEF_REPLY_A,
+                        GET_CLAIM_DEF_REPLY_B, GET_CLAIM_DEF_REPLY_INVALID,
+                        GET_NYM_REPLY, GET_REVOC_REG_DEF_REPLY_A,
+                        GET_REVOC_REG_DEF_REPLY_B, GET_REVOC_REG_DELTA_REPLY_A,
+                        GET_REVOC_REG_DELTA_REPLY_B,
+                        GET_REVOC_REG_DELTA_REPLY_C, GET_REVOC_REG_REPLY_A,
+                        GET_REVOC_REG_REPLY_B, GET_SCHEMA_REPLY_A,
+                        GET_SCHEMA_REPLY_B, RAW_HEX_LEAF, SHA256_AUDIT_PATH)
 
 
 class TestSubTrie(TestCase):
