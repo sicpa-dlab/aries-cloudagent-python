@@ -2,6 +2,7 @@
 
 import asyncio
 import logging
+from typing import Optional
 
 from aiohttp import WSMessage, WSMsgType, web
 
@@ -15,8 +16,6 @@ LOGGER = logging.getLogger(__name__)
 
 class WsTransport(BaseInboundTransport):
     """Websockets Transport class."""
-
-    is_external = False
 
     def __init__(self, host: str, port: int, create_session, **kwargs) -> None:
         """
@@ -32,10 +31,10 @@ class WsTransport(BaseInboundTransport):
         self.host = host
         self.port = port
         self.site: web.BaseSite = None
-        self.heartbeat_interval: int = self.root_profile.settings.get_int(
+        self.heartbeat_interval: Optional[int] = self.root_profile.settings.get_int(
             "transport.ws.heartbeat_interval"
         )
-        self.timout_interval: int = self.root_profile.settings.get_int(
+        self.timout_interval: Optional[int] = self.root_profile.settings.get_int(
             "transport.ws.timout_interval"
         )
 
