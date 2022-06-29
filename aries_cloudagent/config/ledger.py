@@ -210,7 +210,6 @@ async def select_aml_tty(taa_info, provision: bool = False) -> Optional[str]:
         + taa_html
     )
 
-
     prompt_toolkit.print_formatted_text(HTML(taa_html))
 
     opts = []
