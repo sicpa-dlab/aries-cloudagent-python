@@ -321,7 +321,7 @@ class AdminServer(BaseAdminServer):
                     or path.startswith("/mediation/requests/")
                     or re.match(
                         f"/mediation/(?:request/{UUIDFour.PATTERN}|"
-                        f"{UUIDFour.PATTERN}/default-mediator)",
+                        f"{UUIDFour.PATTERN}/default-mediator|keylists/{UUIDFour.PATTERN}/send-keylist-update)",
                         path,
                     )
                     or path.startswith("/mediation/default-mediator")
