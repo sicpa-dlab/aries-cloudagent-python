@@ -1,21 +1,15 @@
 """Wallet admin routes."""
-
 import json
+import logging
 
 from aiohttp import web
-from aiohttp_apispec import (
-    docs,
-    querystring_schema,
-    request_schema,
-    response_schema,
-)
-import logging
+from aiohttp_apispec import docs, querystring_schema, request_schema, response_schema
 from marshmallow import fields, validate
 
 from ..admin.request_context import AdminRequestContext
+from ..connections.models.conn_record import ConnRecord
 from ..core.event_bus import Event, EventBus
 from ..core.profile import Profile
-from ..connections.models.conn_record import ConnRecord
 from ..ledger.base import BaseLedger
 from ..ledger.endpoint_type import EndpointType
 from ..ledger.error import LedgerConfigError, LedgerError
@@ -23,10 +17,10 @@ from ..messaging.models.base import BaseModelError
 from ..messaging.models.openapi import OpenAPISchema
 from ..messaging.valid import (
     DID_POSTURE,
-    INDY_OR_KEY_DID,
-    INDY_DID,
     ENDPOINT,
     ENDPOINT_TYPE,
+    INDY_DID,
+    INDY_OR_KEY_DID,
     INDY_RAW_PUBLIC_KEY,
 )
 from ..multitenant.base import BaseMultitenantManager
@@ -35,15 +29,14 @@ from ..protocols.endorse_transaction.v1_0.manager import (
     TransactionManagerError,
 )
 from ..protocols.endorse_transaction.v1_0.util import (
-    is_author_role,
     get_endorser_connection_id,
+    is_author_role,
 )
-from ..storage.error import StorageNotFoundError, StorageError
-
+from ..storage.error import StorageError, StorageNotFoundError
 from .base import BaseWallet
 from .did_info import DIDInfo
-from .did_posture import DIDPosture
 from .did_method import DIDMethod
+from .did_posture import DIDPosture
 from .error import WalletError, WalletNotFoundError
 from .key_type import KeyType
 from .util import EVENT_LISTENER_PATTERN
@@ -58,27 +51,31 @@ class WalletModuleResponseSchema(OpenAPISchema):
 class DIDSchema(OpenAPISchema):
     """Result schema for a DID."""
 
-    did = fields.Str(description="DID of interest", **INDY_OR_KEY_DID)
-    verkey = fields.Str(description="Public verification key", **INDY_RAW_PUBLIC_KEY)
+    did = fields.Str(metadata={"description": "DID of interest"}, **INDY_OR_KEY_DID)
+    verkey = fields.Str(
+        metadata={"description": "Public verification key"}, **INDY_RAW_PUBLIC_KEY
+    )
     posture = fields.Str(
-        description=(
-            "Whether DID is current public DID, "
-            "posted to ledger but not current public DID, "
-            "or local to the wallet"
-        ),
+        metadata={
+            "description": "Whether DID is current public DID, posted to ledger but not current public DID, or local to the wallet"
+        },
         **DID_POSTURE,
     )
     method = fields.Str(
-        description="Did method associated with the DID",
-        example=DIDMethod.SOV.method_name,
         validate=validate.OneOf([method.method_name for method in DIDMethod]),
+        metadata={
+            "description": "Did method associated with the DID",
+            "example": DIDMethod.SOV.method_name,
+        },
     )
     key_type = fields.Str(
-        description="Key type associated with the DID",
-        example=KeyType.ED25519.key_type,
         validate=validate.OneOf(
             [KeyType.ED25519.key_type, KeyType.BLS12381G2.key_type]
         ),
+        metadata={
+            "description": "Key type associated with the DID",
+            "example": KeyType.ED25519.key_type,
+        },
     )
 
 
@@ -91,22 +88,27 @@ class DIDResultSchema(OpenAPISchema):
 class DIDListSchema(OpenAPISchema):
     """Result schema for connection list."""
 
-    results = fields.List(fields.Nested(DIDSchema()), description="DID list")
+    results = fields.List(
+        fields.Nested(DIDSchema()), metadata={"description": "DID list"}
+    )
 
 
 class DIDEndpointWithTypeSchema(OpenAPISchema):
     """Request schema to set DID endpoint of particular type."""
 
-    did = fields.Str(description="DID of interest", required=True, **INDY_DID)
+    did = fields.Str(
+        required=True, metadata={"description": "DID of interest"}, **INDY_DID
+    )
     endpoint = fields.Str(
-        description="Endpoint to set (omit to delete)", required=False, **ENDPOINT
+        required=False,
+        metadata={"description": "Endpoint to set (omit to delete)"},
+        **ENDPOINT,
     )
     endpoint_type = fields.Str(
-        description=(
-            f"Endpoint type to set (default '{EndpointType.ENDPOINT.w3c}'); "
-            "affects only public or posted DIDs"
-        ),
         required=False,
+        metadata={
+            "description": f"Endpoint type to set (default '{EndpointType.ENDPOINT.w3c}'); affects only public or posted DIDs"
+        },
         **ENDPOINT_TYPE,
     )
 
@@ -114,50 +116,60 @@ class DIDEndpointWithTypeSchema(OpenAPISchema):
 class DIDEndpointSchema(OpenAPISchema):
     """Request schema to set DID endpoint; response schema to get DID endpoint."""
 
-    did = fields.Str(description="DID of interest", required=True, **INDY_DID)
+    did = fields.Str(
+        required=True, metadata={"description": "DID of interest"}, **INDY_DID
+    )
     endpoint = fields.Str(
-        description="Endpoint to set (omit to delete)", required=False, **ENDPOINT
+        required=False,
+        metadata={"description": "Endpoint to set (omit to delete)"},
+        **ENDPOINT,
     )
 
 
 class DIDListQueryStringSchema(OpenAPISchema):
     """Parameters and validators for DID list request query string."""
 
-    did = fields.Str(description="DID of interest", required=False, **INDY_OR_KEY_DID)
+    did = fields.Str(
+        required=False, metadata={"description": "DID of interest"}, **INDY_OR_KEY_DID
+    )
     verkey = fields.Str(
-        description="Verification key of interest",
         required=False,
+        metadata={"description": "Verification key of interest"},
         **INDY_RAW_PUBLIC_KEY,
     )
     posture = fields.Str(
-        description=(
-            "Whether DID is current public DID, "
-            "posted to ledger but current public DID, "
-            "or local to the wallet"
-        ),
         required=False,
+        metadata={
+            "description": "Whether DID is current public DID, posted to ledger but current public DID, or local to the wallet"
+        },
         **DID_POSTURE,
     )
     method = fields.Str(
         required=False,
-        example=DIDMethod.KEY.method_name,
         validate=validate.OneOf([DIDMethod.KEY.method_name, DIDMethod.SOV.method_name]),
-        description="DID method to query for. e.g. sov to only fetch indy/sov DIDs",
+        metadata={
+            "example": DIDMethod.KEY.method_name,
+            "description": "DID method to query for. e.g. sov to only fetch indy/sov DIDs",
+        },
     )
     key_type = fields.Str(
         required=False,
-        example=KeyType.ED25519.key_type,
         validate=validate.OneOf(
             [KeyType.ED25519.key_type, KeyType.BLS12381G2.key_type]
         ),
-        description="Key type to query for.",
+        metadata={
+            "example": KeyType.ED25519.key_type,
+            "description": "Key type to query for.",
+        },
     )
 
 
 class DIDQueryStringSchema(OpenAPISchema):
     """Parameters and validators for set public DID request query string."""
 
-    did = fields.Str(description="DID of interest", required=True, **INDY_DID)
+    did = fields.Str(
+        required=True, metadata={"description": "DID of interest"}, **INDY_DID
+    )
 
 
 class DIDCreateOptionsSchema(OpenAPISchema):
@@ -165,10 +177,10 @@ class DIDCreateOptionsSchema(OpenAPISchema):
 
     key_type = fields.Str(
         required=True,
-        example=KeyType.ED25519.key_type,
         validate=validate.OneOf(
             [KeyType.ED25519.key_type, KeyType.BLS12381G2.key_type]
         ),
+        metadata={"example": KeyType.ED25519.key_type},
     )
 
 
@@ -177,15 +189,14 @@ class DIDCreateSchema(OpenAPISchema):
 
     method = fields.Str(
         required=False,
-        default=DIDMethod.SOV.method_name,
-        example=DIDMethod.SOV.method_name,
+        dump_default=DIDMethod.SOV.method_name,
         validate=validate.OneOf([DIDMethod.KEY.method_name, DIDMethod.SOV.method_name]),
+        metadata={"example": DIDMethod.SOV.method_name},
     )
-
     options = fields.Nested(
         DIDCreateOptionsSchema,
         required=False,
-        description="To define a key type for a did:key",
+        metadata={"description": "To define a key type for a did:key"},
     )
 
 
@@ -193,15 +204,17 @@ class CreateAttribTxnForEndorserOptionSchema(OpenAPISchema):
     """Class for user to input whether to create a transaction for endorser or not."""
 
     create_transaction_for_endorser = fields.Boolean(
-        description="Create Transaction For Endorser's signature",
         required=False,
+        metadata={"description": "Create Transaction For Endorser's signature"},
     )
 
 
 class AttribConnIdMatchInfoSchema(OpenAPISchema):
     """Path parameters and validators for request taking connection id."""
 
-    conn_id = fields.Str(description="Connection identifier", required=False)
+    conn_id = fields.Str(
+        required=False, metadata={"description": "Connection identifier"}
+    )
 
 
 def format_did_info(info: DIDInfo):
@@ -266,7 +279,6 @@ async def wallet_did_list(request: web.BaseRequest):
             try:
                 info = await wallet.get_local_did(filter_did)
             except WalletError:
-                # badly formatted DID or record not found
                 info = None
             if (
                 info
@@ -275,10 +287,8 @@ async def wallet_did_list(request: web.BaseRequest):
                 and (not filter_key_type or info.key_type == filter_key_type)
                 and (
                     filter_posture is None
-                    or (
-                        filter_posture is DIDPosture.WALLET_ONLY
-                        and not info.metadata.get("posted")
-                    )
+                    or filter_posture is DIDPosture.WALLET_ONLY
+                    and not info.metadata.get("posted")
                 )
             ):
                 results.append(format_did_info(info))
@@ -293,10 +303,8 @@ async def wallet_did_list(request: web.BaseRequest):
                 and (not filter_key_type or info.key_type == filter_key_type)
                 and (
                     filter_posture is None
-                    or (
-                        filter_posture is DID_POSTURE.WALLET_ONLY
-                        and not info.metadata.get("posted")
-                    )
+                    or filter_posture is DID_POSTURE.WALLET_ONLY
+                    and not info.metadata.get("posted")
                 )
             ):
                 results.append(format_did_info(info))
@@ -312,11 +320,9 @@ async def wallet_did_list(request: web.BaseRequest):
                 and (not filter_method or info.method == filter_method)
                 and (not filter_key_type or info.key_type == filter_key_type)
             ]
-
     results.sort(
         key=lambda info: (DIDPosture.get(info["posture"]).ordinal, info["did"])
     )
-
     return web.json_response({"results": results})
 
 
@@ -335,25 +341,18 @@ async def wallet_create_did(request: web.BaseRequest):
 
     """
     context: AdminRequestContext = request["context"]
-
     try:
         body = await request.json()
     except Exception:
         body = {}
-
-    # set default method and key type for backwards compat
     key_type = (
         KeyType.from_key_type(body.get("options", {}).get("key_type"))
         or KeyType.ED25519
     )
     method = DIDMethod.from_method(body.get("method")) or DIDMethod.SOV
-
     if not method.supports_key_type(key_type):
         raise web.HTTPForbidden(
-            reason=(
-                f"method {method.method_name} does not"
-                f" support key type {key_type.key_type}"
-            )
+            reason=f"method {method.method_name} does not support key type {key_type.key_type}"
         )
     seed = None
     if context.settings.get("wallet.allow_insecure_seed"):
@@ -365,14 +364,10 @@ async def wallet_create_did(request: web.BaseRequest):
             raise web.HTTPForbidden(reason="No wallet available")
         try:
             info = await wallet.create_local_did(
-                method=method,
-                key_type=key_type,
-                seed=seed,
+                method=method, key_type=key_type, seed=seed
             )
-
         except WalletError as err:
             raise web.HTTPBadRequest(reason=err.roll_up) from err
-
     return web.json_response({"result": format_did_info(info)})
 
 
@@ -399,7 +394,6 @@ async def wallet_get_public_did(request: web.BaseRequest):
             info = await wallet.get_public_did()
         except WalletError as err:
             raise web.HTTPBadRequest(reason=err.roll_up) from err
-
     return web.json_response({"result": format_did_info(info)})
 
 
@@ -421,23 +415,19 @@ async def wallet_set_public_did(request: web.BaseRequest):
     """
     context: AdminRequestContext = request["context"]
     session = await context.session()
-
     outbound_handler = request["outbound_message_router"]
-
     create_transaction_for_endorser = json.loads(
         request.query.get("create_transaction_for_endorser", "false")
     )
     write_ledger = not create_transaction_for_endorser
     connection_id = request.query.get("conn_id")
     attrib_def = None
-
     wallet = session.inject_or(BaseWallet)
     if not wallet:
         raise web.HTTPForbidden(reason="No wallet available")
     did = request.query.get("did")
     if not did:
         raise web.HTTPBadRequest(reason="Request query must include DID")
-
     info: DIDInfo = None
     try:
         info, attrib_def = await promote_wallet_public_did(
@@ -456,10 +446,8 @@ async def wallet_set_public_did(request: web.BaseRequest):
         raise web.HTTPNotFound(reason=err.roll_up) from err
     except (LedgerError, WalletError) as err:
         raise web.HTTPBadRequest(reason=err.roll_up) from err
-
     if not create_transaction_for_endorser:
         return web.json_response({"result": format_did_info(info)})
-
     else:
         transaction_mgr = TransactionManager(context.profile)
         try:
@@ -468,21 +456,14 @@ async def wallet_set_public_did(request: web.BaseRequest):
             )
         except StorageError as err:
             raise web.HTTPBadRequest(reason=err.roll_up) from err
-
-        # if auto-request, send the request to the endorser
         if context.settings.get_value("endorser.auto_request"):
             try:
                 transaction, transaction_request = await transaction_mgr.create_request(
-                    transaction=transaction,
-                    # TODO see if we need to parameterize these params
-                    # expires_time=expires_time,
-                    # endorser_write_txn=endorser_write_txn,
+                    transaction=transaction
                 )
             except (StorageError, TransactionManagerError) as err:
                 raise web.HTTPBadRequest(reason=err.roll_up) from err
-
             await outbound_handler(transaction_request, connection_id=connection_id)
-
         return web.json_response({"txn": transaction.serialize()})
 
 
@@ -495,10 +476,7 @@ async def promote_wallet_public_did(
     connection_id: str = None,
 ) -> DIDInfo:
     """Promote supplied DID to the wallet public DID."""
-
-    # if running in multitenant mode this will be the sub-wallet
     wallet_id = context.settings.get("wallet.id")
-
     info: DIDInfo = None
     endorser_did = None
     ledger = profile.inject_or(BaseLedger)
@@ -507,22 +485,15 @@ async def promote_wallet_public_did(
         if not context.settings.get_value("wallet.type"):
             reason += ": missing wallet-type?"
         raise PermissionError(reason)
-
     async with ledger:
         if not await ledger.get_key_for_did(did):
             raise LookupError(f"DID {did} is not posted to the ledger")
-
-    # check if we need to endorse
     if is_author_role(context.profile):
-        # authors cannot write to the ledger
         write_ledger = False
-
-        # author has not provided a connection id, so determine which to use
         if not connection_id:
             connection_id = await get_endorser_connection_id(context.profile)
         if not connection_id:
             raise web.HTTPBadRequest(reason="No endorser connection found")
-
     if not write_ledger:
         try:
             async with profile.session() as session:
@@ -533,34 +504,27 @@ async def promote_wallet_public_did(
             raise web.HTTPNotFound(reason=err.roll_up) from err
         except BaseModelError as err:
             raise web.HTTPBadRequest(reason=err.roll_up) from err
-
         async with profile.session() as session:
             endorser_info = await connection_record.metadata_get(
                 session, "endorser_info"
             )
         if not endorser_info:
             raise web.HTTPForbidden(
-                reason="Endorser Info is not set up in "
-                "connection metadata for this connection record"
+                reason="Endorser Info is not set up in connection metadata for this connection record"
             )
         if "endorser_did" not in endorser_info.keys():
             raise web.HTTPForbidden(
-                reason=' "endorser_did" is not set in "endorser_info"'
-                " in connection metadata for this connection record"
+                reason=' "endorser_did" is not set in "endorser_info" in connection metadata for this connection record'
             )
         endorser_did = endorser_info["endorser_did"]
-
     did_info: DIDInfo = None
     attrib_def = None
     async with session_fn() as session:
         wallet = session.inject_or(BaseWallet)
         did_info = await wallet.get_local_did(did)
         info = await wallet.set_public_did(did_info)
-
     if info:
-        # Publish endpoint if necessary
         endpoint = did_info.metadata.get("endpoint")
-
         if not endpoint:
             async with session_fn() as session:
                 wallet = session.inject_or(BaseWallet)
@@ -572,18 +536,9 @@ async def promote_wallet_public_did(
                     write_ledger=write_ledger,
                     endorser_did=endorser_did,
                 )
-
-        # Commented the below lines as the function set_did_endpoint
-        # was calling update_endpoint_for_did of ledger
-        # async with ledger:
-        #     await ledger.update_endpoint_for_did(info.did, endpoint)
-
-        # Multitenancy setup
         multitenant_mgr = profile.inject_or(BaseMultitenantManager)
-        # Add multitenant relay mapping so implicit invitations are still routed
         if multitenant_mgr and wallet_id:
             await multitenant_mgr.add_key(wallet_id, info.verkey, skip_if_exists=True)
-
     return info, attrib_def
 
 
@@ -602,16 +557,13 @@ async def wallet_set_did_endpoint(request: web.BaseRequest):
         request: aiohttp request object
     """
     context: AdminRequestContext = request["context"]
-
     outbound_handler = request["outbound_message_router"]
-
     body = await request.json()
     did = body["did"]
     endpoint = body.get("endpoint")
     endpoint_type = EndpointType.get(
         body.get("endpoint_type", EndpointType.ENDPOINT.w3c)
     )
-
     create_transaction_for_endorser = json.loads(
         request.query.get("create_transaction_for_endorser", "false")
     )
@@ -619,18 +571,13 @@ async def wallet_set_did_endpoint(request: web.BaseRequest):
     endorser_did = None
     connection_id = request.query.get("conn_id")
     attrib_def = None
-
-    # check if we need to endorse
     if is_author_role(context.profile):
-        # authors cannot write to the ledger
         write_ledger = False
         create_transaction_for_endorser = True
         if not connection_id:
-            # author has not provided a connection id, so determine which to use
             connection_id = await get_endorser_connection_id(context.profile)
             if not connection_id:
                 raise web.HTTPBadRequest(reason="No endorser connection found")
-
     if not write_ledger:
         try:
             async with context.session() as session:
@@ -641,23 +588,19 @@ async def wallet_set_did_endpoint(request: web.BaseRequest):
             raise web.HTTPNotFound(reason=err.roll_up) from err
         except BaseModelError as err:
             raise web.HTTPBadRequest(reason=err.roll_up) from err
-
         async with context.session() as session:
             endorser_info = await connection_record.metadata_get(
                 session, "endorser_info"
             )
         if not endorser_info:
             raise web.HTTPForbidden(
-                reason="Endorser Info is not set up in "
-                "connection metadata for this connection record"
+                reason="Endorser Info is not set up in connection metadata for this connection record"
             )
         if "endorser_did" not in endorser_info.keys():
             raise web.HTTPForbidden(
-                reason=' "endorser_did" is not set in "endorser_info"'
-                " in connection metadata for this connection record"
+                reason=' "endorser_did" is not set in "endorser_info" in connection metadata for this connection record'
             )
         endorser_did = endorser_info["endorser_did"]
-
     async with context.session() as session:
         wallet = session.inject_or(BaseWallet)
         if not wallet:
@@ -678,7 +621,6 @@ async def wallet_set_did_endpoint(request: web.BaseRequest):
             raise web.HTTPForbidden(reason=err.roll_up) from err
         except (LedgerError, WalletError) as err:
             raise web.HTTPBadRequest(reason=err.roll_up) from err
-
     if not create_transaction_for_endorser:
         return web.json_response({})
     else:
@@ -689,21 +631,14 @@ async def wallet_set_did_endpoint(request: web.BaseRequest):
             )
         except StorageError as err:
             raise web.HTTPBadRequest(reason=err.roll_up) from err
-
-        # if auto-request, send the request to the endorser
         if context.settings.get_value("endorser.auto_request"):
             try:
                 transaction, transaction_request = await transaction_mgr.create_request(
-                    transaction=transaction,
-                    # TODO see if we need to parameterize these params
-                    # expires_time=expires_time,
-                    # endorser_write_txn=endorser_write_txn,
+                    transaction=transaction
                 )
             except (StorageError, TransactionManagerError) as err:
                 raise web.HTTPBadRequest(reason=err.roll_up) from err
-
             await outbound_handler(transaction_request, connection_id=connection_id)
-
         return web.json_response({"txn": transaction.serialize()})
 
 
@@ -729,7 +664,6 @@ async def wallet_get_did_endpoint(request: web.BaseRequest):
         did = request.query.get("did")
         if not did:
             raise web.HTTPBadRequest(reason="Request query must include DID")
-
         try:
             did_info = await wallet.get_local_did(did)
             endpoint = did_info.metadata.get("endpoint")
@@ -737,7 +671,6 @@ async def wallet_get_did_endpoint(request: web.BaseRequest):
             raise web.HTTPNotFound(reason=err.roll_up) from err
         except WalletError as err:
             raise web.HTTPBadRequest(reason=err.roll_up) from err
-
     return web.json_response({"did": did, "endpoint": endpoint})
 
 
@@ -759,7 +692,6 @@ async def wallet_rotate_did_keypair(request: web.BaseRequest):
     did = request.query.get("did")
     if not did:
         raise web.HTTPBadRequest(reason="Request query must include DID")
-
     async with context.session() as session:
         wallet = session.inject_or(BaseWallet)
         if not wallet:
@@ -768,15 +700,13 @@ async def wallet_rotate_did_keypair(request: web.BaseRequest):
             did_info: DIDInfo = None
             did_info = await wallet.get_local_did(did)
             if did_info.metadata.get("posted", False):
-                # call from ledger API instead to propagate through ledger NYM transaction
                 raise web.HTTPBadRequest(reason=f"DID {did} is posted to the ledger")
-            await wallet.rotate_did_keypair_start(did)  # do not take seed over the wire
+            await wallet.rotate_did_keypair_start(did)
             await wallet.rotate_did_keypair_apply(did)
         except WalletNotFoundError as err:
             raise web.HTTPNotFound(reason=err.roll_up) from err
         except WalletError as err:
             raise web.HTTPBadRequest(reason=err.roll_up) from err
-
     return web.json_response({})
 
 
@@ -787,8 +717,6 @@ def register_events(event_bus: EventBus):
 
 async def on_register_nym_event(profile: Profile, event: Event):
     """Handle any events we need to support."""
-
-    # after the nym record is written, promote to wallet public DID
     if is_author_role(profile) and profile.context.settings.get_value(
         "endorser.auto_promote_author_did"
     ):
@@ -799,15 +727,13 @@ async def on_register_nym_event(profile: Profile, event: Event):
                 profile, profile.context, profile.session, did, connection_id
             )
         except Exception:
-            # log the error, but continue
             LOGGER.exception(
-                "Error accepting endorser invitation/configuring endorser connection: %s",
+                "Error accepting endorser invitation/configuring endorser connection: %s"
             )
 
 
 async def register(app: web.Application):
     """Register routes."""
-
     app.add_routes(
         [
             web.get("/wallet/did", wallet_did_list, allow_head=False),
@@ -825,8 +751,6 @@ async def register(app: web.Application):
 
 def post_process_routes(app: web.Application):
     """Amend swagger API."""
-
-    # Add top-level tags description
     if "tags" not in app._state["swagger_dict"]:
         app._state["swagger_dict"]["tags"] = []
     app._state["swagger_dict"]["tags"].append(
@@ -835,10 +759,7 @@ def post_process_routes(app: web.Application):
             "description": "DID and tag policy management",
             "externalDocs": {
                 "description": "Design",
-                "url": (
-                    "https://github.com/hyperledger/indy-sdk/tree/"
-                    "master/docs/design/003-wallet-storage"
-                ),
+                "url": "https://github.com/hyperledger/indy-sdk/tree/master/docs/design/003-wallet-storage",
             },
         }
     )
