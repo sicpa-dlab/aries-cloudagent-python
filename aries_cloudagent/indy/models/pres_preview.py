@@ -1,11 +1,8 @@
 """A presentation preview inner object."""
-
 from enum import Enum
 from time import time
 from typing import Mapping, Sequence
-
 from marshmallow import EXCLUDE, fields
-
 from ...core.profile import Profile
 from ...ledger.multiple_ledger.ledger_requests_executor import (
     GET_CRED_DEF,
@@ -17,13 +14,11 @@ from ...messaging.valid import INDY_CRED_DEF_ID, INDY_PREDICATE
 from ...multitenant.base import BaseMultitenantManager
 from ...protocols.didcomm_prefix import DIDCommPrefix
 from ...wallet.util import b64_to_str
-
 from ..util import generate_pr_nonce
-
 from .non_rev_interval import IndyNonRevocationInterval
 from .predicate import Predicate
 
-PRESENTATION_PREVIEW = "present-proof/1.0/presentation-preview"  # message type
+PRESENTATION_PREVIEW = "present-proof/1.0/presentation-preview"
 
 
 class IndyPresPredSpec(BaseModel):
@@ -41,7 +36,7 @@ class IndyPresPredSpec(BaseModel):
         cred_def_id: str = None,
         predicate: str,
         threshold: int,
-        **kwargs,
+        **kwargs
     ):
         """
         Initialize  preview object.
@@ -61,16 +56,12 @@ class IndyPresPredSpec(BaseModel):
 
     def __eq__(self, other):
         """Equality comparator."""
-
         if canon(self.name) != canon(other.name):
-            return False  # distinct attribute names modulo canonicalization
-
+            return False
         if self.cred_def_id != other.cred_def_id:
             return False
-
         if self.predicate != other.predicate:
             return False
-
         return self.threshold == other.threshold
 
 
@@ -83,18 +74,27 @@ class IndyPresPredSpecSchema(BaseModelSchema):
         model_class = IndyPresPredSpec
         unknown = EXCLUDE
 
-    name = fields.Str(description="Attribute name", required=True, example="high_score")
+    name = fields.Str(
+        required=True,
+        metadata={"description": "Attribute name", "example": "high_score"},
+    )
     cred_def_id = fields.Str(
-        description="Credential definition identifier",
         required=False,
-        **INDY_CRED_DEF_ID,
+        metadata={
+            "description": "Credential definition identifier",
+            **INDY_CRED_DEF_ID,
+        },
     )
     predicate = fields.Str(
-        description="Predicate type ('<', '<=', '>=', or '>')",
         required=True,
-        **INDY_PREDICATE,
+        metadata={
+            "description": "Predicate type ('<', '<=', '>=', or '>')",
+            **INDY_PREDICATE,
+        },
     )
-    threshold = fields.Int(description="Threshold value", required=True, strict=True)
+    threshold = fields.Int(
+        required=True, metadata={"description": "Threshold value", "strict": True}
+    )
 
 
 class IndyPresAttrSpec(BaseModel):
@@ -119,7 +119,7 @@ class IndyPresAttrSpec(BaseModel):
         mime_type: str = None,
         value: str = None,
         referent: str = None,
-        **kwargs,
+        **kwargs
     ):
         """
         Initialize attribute specification object.
@@ -165,30 +165,26 @@ class IndyPresAttrSpec(BaseModel):
     @property
     def posture(self) -> "IndyPresAttrSpec.Posture":
         """Attribute posture: self-attested, revealed claim, or unrevealed claim."""
-
         if self.cred_def_id:
             if self.value:
                 return IndyPresAttrSpec.Posture.REVEALED_CLAIM
             return IndyPresAttrSpec.Posture.UNREVEALED_CLAIM
         if self.value:
             return IndyPresAttrSpec.Posture.SELF_ATTESTED
-
         return None
 
     def b64_decoded_value(self) -> str:
         """Value, base64-decoded if applicable."""
-
         return b64_to_str(self.value) if self.value and self.mime_type else self.value
 
     def satisfies(self, pred_spec: IndyPresPredSpec):
         """Whether current specified attribute satisfies input specified predicate."""
-
         return bool(
             self.value
             and not self.mime_type
             and canon(self.name) == canon(pred_spec.name)
             and not pred_spec.cred_def_id
-            or (self.cred_def_id == pred_spec.cred_def_id)
+            or self.cred_def_id == pred_spec.cred_def_id
             and Predicate.get(pred_spec.predicate).value.yes(
                 self.value, pred_spec.threshold
             )
@@ -196,19 +192,14 @@ class IndyPresAttrSpec(BaseModel):
 
     def __eq__(self, other):
         """Equality comparator."""
-
         if canon(self.name) != canon(other.name):
-            return False  # distinct attribute names
-
+            return False
         if self.cred_def_id != other.cred_def_id:
-            return False  # distinct attribute cred def ids
-
+            return False
         if self.mime_type != other.mime_type:
-            return False  # distinct MIME types
-
+            return False
         if self.referent != other.referent:
-            return False  # distinct credential referents
-
+            return False
         return self.b64_decoded_value() == other.b64_decoded_value()
 
 
@@ -222,18 +213,21 @@ class IndyPresAttrSpecSchema(BaseModelSchema):
         unknown = EXCLUDE
 
     name = fields.Str(
-        description="Attribute name", required=True, example="favourite_drink"
+        required=True,
+        metadata={"description": "Attribute name", "example": "favourite_drink"},
     )
-    cred_def_id = fields.Str(required=False, **INDY_CRED_DEF_ID)
+    cred_def_id = fields.Str(required=False, metadata={**INDY_CRED_DEF_ID})
     mime_type = fields.Str(
-        description="MIME type (default null)",
         required=False,
         data_key="mime-type",
-        example="image/jpeg",
+        metadata={"description": "MIME type (default null)", "example": "image/jpeg"},
     )
-    value = fields.Str(description="Attribute value", required=False, example="martini")
+    value = fields.Str(
+        required=False,
+        metadata={"description": "Attribute value", "example": "martini"},
+    )
     referent = fields.Str(
-        description="Credential referent", required=False, example="0"
+        required=False, metadata={"description": "Credential referent", "example": "0"}
     )
 
 
@@ -252,7 +246,7 @@ class IndyPresPreview(BaseModel):
         _type: str = None,
         attributes: Sequence[IndyPresAttrSpec] = None,
         predicates: Sequence[IndyPresPredSpec] = None,
-        **kwargs,
+        **kwargs
     ):
         """
         Initialize presentation preview object.
@@ -270,7 +264,6 @@ class IndyPresPreview(BaseModel):
     @property
     def _type(self):
         """Accessor for message type."""
-
         return DIDCommPrefix.qualify_current(IndyPresPreview.Meta.message_type)
 
     def has_attr_spec(self, cred_def_id: str, name: str, value: str) -> bool:
@@ -286,7 +279,6 @@ class IndyPresPreview(BaseModel):
             Whether preview contains matching attribute specification.
 
         """
-
         return any(
             canon(a.name) == canon(name)
             and a.value in (value, None)
@@ -322,10 +314,8 @@ class IndyPresPreview(BaseModel):
 
         def non_revoc(cred_def_id: str) -> IndyNonRevocationInterval:
             """Non-revocation interval to use for input cred def id."""
-
             nonlocal epoch_now
             nonlocal non_revoc_intervals
-
             return (non_revoc_intervals or {}).get(
                 cred_def_id, IndyNonRevocationInterval(epoch_now, epoch_now)
             )
@@ -339,7 +329,6 @@ class IndyPresPreview(BaseModel):
             "requested_attributes": {},
             "requested_predicates": {},
         }
-
         attr_specs_names = {}
         for attr_spec in self.attributes:
             if attr_spec.posture == IndyPresAttrSpec.Posture.SELF_ATTESTED:
@@ -347,7 +336,6 @@ class IndyPresPreview(BaseModel):
                     "self_{}_uuid".format(canon(attr_spec.name))
                 ] = {"name": attr_spec.name}
                 continue
-
             cd_id = attr_spec.cred_def_id
             revoc_support = False
             if cd_id:
@@ -359,8 +347,7 @@ class IndyPresPreview(BaseModel):
                         ledger_exec_inst = profile.inject(IndyLedgerRequestsExecutor)
                     ledger = (
                         await ledger_exec_inst.get_ledger_for_identifier(
-                            cd_id,
-                            txn_record_type=GET_CRED_DEF,
+                            cd_id, txn_record_type=GET_CRED_DEF
                         )
                     )[1]
                 if ledger:
@@ -369,7 +356,6 @@ class IndyPresPreview(BaseModel):
                             "value"
                         ].get("revocation")
                 interval = non_revoc(cd_id) if revoc_support else None
-
             if attr_spec.referent:
                 if attr_spec.referent in attr_specs_names:
                     attr_specs_names[attr_spec.referent]["names"].append(attr_spec.name)
@@ -390,8 +376,7 @@ class IndyPresPreview(BaseModel):
             else:
                 proof_req["requested_attributes"][
                     "{}_{}_uuid".format(
-                        len(proof_req["requested_attributes"]),
-                        canon(attr_spec.name),
+                        len(proof_req["requested_attributes"]), canon(attr_spec.name)
                     )
                 ] = {
                     "name": attr_spec.name,
@@ -402,14 +387,12 @@ class IndyPresPreview(BaseModel):
                         if revoc_support
                     },
                 }
-
-        for (reft, attr_spec) in attr_specs_names.items():
+        for reft, attr_spec in attr_specs_names.items():
             proof_req["requested_attributes"][
                 "{}_{}_uuid".format(
                     len(proof_req["requested_attributes"]), canon(attr_spec["names"][0])
                 )
             ] = attr_spec
-
         for pred_spec in self.predicates:
             cd_id = pred_spec.cred_def_id
             revoc_support = False
@@ -422,8 +405,7 @@ class IndyPresPreview(BaseModel):
                         ledger_exec_inst = profile.inject(IndyLedgerRequestsExecutor)
                     ledger = (
                         await ledger_exec_inst.get_ledger_for_identifier(
-                            cd_id,
-                            txn_record_type=GET_CRED_DEF,
+                            cd_id, txn_record_type=GET_CRED_DEF
                         )
                     )[1]
                 if ledger:
@@ -432,7 +414,6 @@ class IndyPresPreview(BaseModel):
                             "value"
                         ].get("revocation")
                 interval = non_revoc(cd_id) if revoc_support else None
-
             proof_req["requested_predicates"][
                 "{}_{}_{}_uuid".format(
                     len(proof_req["requested_predicates"]),
@@ -446,12 +427,10 @@ class IndyPresPreview(BaseModel):
                 **{"restrictions": [{"cred_def_id": cd_id}] for _ in [""] if cd_id},
                 **{"non_revoked": interval.serialize() for _ in [""] if revoc_support},
             }
-
         return proof_req
 
     def __eq__(self, other):
         """Equality comparator."""
-
         for part in vars(self):
             if getattr(self, part, None) != getattr(other, part, None):
                 return False
@@ -468,10 +447,16 @@ class IndyPresPreviewSchema(BaseModelSchema):
         unknown = EXCLUDE
 
     _type = fields.Str(
-        description="Message type identifier",
         required=False,
-        example=DIDCommPrefix.qualify_current(PRESENTATION_PREVIEW),
         data_key="@type",
+        metadata={
+            "description": "Message type identifier",
+            "example": DIDCommPrefix.qualify_current(PRESENTATION_PREVIEW),
+        },
     )
-    attributes = fields.Nested(IndyPresAttrSpecSchema, required=True, many=True)
-    predicates = fields.Nested(IndyPresPredSpecSchema, required=True, many=True)
+    attributes = fields.Nested(
+        IndyPresAttrSpecSchema, required=True, metadata={"many": True}
+    )
+    predicates = fields.Nested(
+        IndyPresPredSpecSchema, required=True, metadata={"many": True}
+    )

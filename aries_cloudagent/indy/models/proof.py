@@ -1,9 +1,6 @@
 """Marshmallow bindings for indy proofs."""
-
 from typing import Mapping, Sequence
-
 from marshmallow import EXCLUDE, fields, validate
-
 from ...messaging.models.base import BaseModel, BaseModelSchema
 from ...messaging.valid import (
     INDY_CRED_DEF_ID,
@@ -14,7 +11,6 @@ from ...messaging.valid import (
     NUM_STR_ANY,
 )
 from ...utils.tracing import AdminAPIMessageTracingSchema
-
 from .predicate import Predicate
 from .requested_creds import (
     IndyRequestedCredsRequestedAttrSchema,
@@ -38,7 +34,7 @@ class IndyEQProof(BaseModel):
         v: str = None,
         m: Mapping[str, str] = None,
         m2: str = None,
-        **kwargs,
+        **kwargs
     ):
         """Initialize equality proof object."""
         super().__init__(**kwargs)
@@ -60,17 +56,21 @@ class IndyEQProofSchema(BaseModelSchema):
         unknown = EXCLUDE
 
     revealed_attrs = fields.Dict(
-        keys=fields.Str(example="preference"),
-        values=fields.Str(**NUM_STR_ANY),
+        metadata={
+            "keys": fields.Str(example="preference"),
+            "values": fields.Str(**NUM_STR_ANY),
+        }
     )
-    a_prime = fields.Str(**NUM_STR_WHOLE)
-    e = fields.Str(**NUM_STR_WHOLE)
-    v = fields.Str(**NUM_STR_WHOLE)
+    a_prime = fields.Str(metadata={**NUM_STR_WHOLE})
+    e = fields.Str(metadata={**NUM_STR_WHOLE})
+    v = fields.Str(metadata={**NUM_STR_WHOLE})
     m = fields.Dict(
-        keys=fields.Str(example="master_secret"),
-        values=fields.Str(**NUM_STR_WHOLE),
+        metadata={
+            "keys": fields.Str(example="master_secret"),
+            "values": fields.Str(**NUM_STR_WHOLE),
+        }
     )
-    m2 = fields.Str(**NUM_STR_WHOLE)
+    m2 = fields.Str(metadata={**NUM_STR_WHOLE})
 
 
 class IndyGEProofPred(BaseModel):
@@ -82,11 +82,7 @@ class IndyGEProofPred(BaseModel):
         schema_class = "IndyGEProofPredSchema"
 
     def __init__(
-        self,
-        attr_name: str = None,
-        p_type: str = None,
-        value: int = None,
-        **kwargs,
+        self, attr_name: str = None, p_type: str = None, value: int = None, **kwargs
     ):
         """Initialize indy GE proof predicate."""
         super().__init__(**kwargs)
@@ -104,12 +100,16 @@ class IndyGEProofPredSchema(BaseModelSchema):
         model_class = IndyGEProofPred
         unknown = EXCLUDE
 
-    attr_name = fields.Str(description="Attribute name, indy-canonicalized")
-    p_type = fields.Str(
-        description="Predicate type",
-        validate=validate.OneOf([p.fortran for p in Predicate]),
+    attr_name = fields.Str(
+        metadata={"description": "Attribute name, indy-canonicalized"}
     )
-    value = fields.Integer(strict=True, description="Predicate threshold value")
+    p_type = fields.Str(
+        validate=validate.OneOf([p.fortran for p in Predicate]),
+        metadata={"description": "Predicate type"},
+    )
+    value = fields.Integer(
+        metadata={"strict": True, "description": "Predicate threshold value"}
+    )
 
 
 class IndyGEProof(BaseModel):
@@ -128,7 +128,7 @@ class IndyGEProof(BaseModel):
         alpha: str = None,
         t: Mapping[str, str] = None,
         predicate: IndyGEProofPred = None,
-        **kwargs,
+        **kwargs
     ):
         """Initialize GE proof object."""
         super().__init__(**kwargs)
@@ -149,11 +149,17 @@ class IndyGEProofSchema(BaseModelSchema):
         model_class = IndyGEProof
         unknown = EXCLUDE
 
-    u = fields.Dict(keys=fields.Str(), values=fields.Str(**NUM_STR_WHOLE))
-    r = fields.Dict(keys=fields.Str(), values=fields.Str(**NUM_STR_WHOLE))
-    mj = fields.Str(**NUM_STR_WHOLE)
-    alpha = fields.Str(**NUM_STR_WHOLE)
-    t = fields.Dict(keys=fields.Str(), values=fields.Str(**NUM_STR_WHOLE))
+    u = fields.Dict(
+        metadata={"keys": fields.Str(), "values": fields.Str(**NUM_STR_WHOLE)}
+    )
+    r = fields.Dict(
+        metadata={"keys": fields.Str(), "values": fields.Str(**NUM_STR_WHOLE)}
+    )
+    mj = fields.Str(metadata={**NUM_STR_WHOLE})
+    alpha = fields.Str(metadata={**NUM_STR_WHOLE})
+    t = fields.Dict(
+        metadata={"keys": fields.Str(), "values": fields.Str(**NUM_STR_WHOLE)}
+    )
     predicate = fields.Nested(IndyGEProofPredSchema)
 
 
@@ -169,7 +175,7 @@ class IndyPrimaryProof(BaseModel):
         self,
         eq_proof: IndyEQProof = None,
         ge_proofs: Sequence[IndyGEProof] = None,
-        **kwargs,
+        **kwargs
     ):
         """Initialize indy primary proof."""
         super().__init__(**kwargs)
@@ -187,13 +193,14 @@ class IndyPrimaryProofSchema(BaseModelSchema):
         unknown = EXCLUDE
 
     eq_proof = fields.Nested(
-        IndyEQProofSchema, allow_none=True, description="Indy equality proof"
+        IndyEQProofSchema,
+        allow_none=True,
+        metadata={"description": "Indy equality proof"},
     )
     ge_proofs = fields.Nested(
         IndyGEProofSchema,
-        many=True,
         allow_none=True,
-        description="Indy GE proofs",
+        metadata={"many": True, "description": "Indy GE proofs"},
     )
 
 
@@ -205,12 +212,7 @@ class IndyNonRevocProof(BaseModel):
 
         schema_class = "IndyNonRevocProofSchema"
 
-    def __init__(
-        self,
-        x_list: Mapping = None,
-        c_list: Mapping = None,
-        **kwargs,
-    ):
+    def __init__(self, x_list: Mapping = None, c_list: Mapping = None, **kwargs):
         """Initialize indy non-revocation proof."""
         super().__init__(**kwargs)
         self.x_list = x_list
@@ -226,8 +228,8 @@ class IndyNonRevocProofSchema(BaseModelSchema):
         model_class = IndyNonRevocProof
         unknown = EXCLUDE
 
-    x_list = fields.Dict(keys=fields.Str(), values=fields.Str())
-    c_list = fields.Dict(keys=fields.Str(), values=fields.Str())
+    x_list = fields.Dict(metadata={"keys": fields.Str(), "values": fields.Str()})
+    c_list = fields.Dict(metadata={"keys": fields.Str(), "values": fields.Str()})
 
 
 class IndyProofProofProofsProof(BaseModel):
@@ -242,7 +244,7 @@ class IndyProofProofProofsProof(BaseModel):
         self,
         primary_proof: IndyPrimaryProof = None,
         non_revoc_proof: IndyNonRevocProof = None,
-        **kwargs,
+        **kwargs
     ):
         """Initialize proof.proof.proofs constituent proof."""
         super().__init__(**kwargs)
@@ -260,13 +262,12 @@ class IndyProofProofProofsProofSchema(BaseModelSchema):
         unknown = EXCLUDE
 
     primary_proof = fields.Nested(
-        IndyPrimaryProofSchema,
-        description="Indy primary proof",
+        IndyPrimaryProofSchema, metadata={"description": "Indy primary proof"}
     )
     non_revoc_proof = fields.Nested(
         IndyNonRevocProofSchema,
         allow_none=True,
-        description="Indy non-revocation proof",
+        metadata={"description": "Indy non-revocation proof"},
     )
 
 
@@ -279,10 +280,7 @@ class IndyProofProofAggregatedProof(BaseModel):
         schema_class = "IndyProofProofAggregatedProofSchema"
 
     def __init__(
-        self,
-        c_hash: str = None,
-        c_list: Sequence[Sequence[int]] = None,
-        **kwargs,
+        self, c_hash: str = None, c_list: Sequence[Sequence[int]] = None, **kwargs
     ):
         """Initialize indy proof.proof agreggated proof."""
         super().__init__(**kwargs)
@@ -299,10 +297,9 @@ class IndyProofProofAggregatedProofSchema(BaseModelSchema):
         model_class = IndyProofProofAggregatedProof
         unknown = EXCLUDE
 
-    c_hash = fields.Str(description="c_hash value")
+    c_hash = fields.Str(metadata={"description": "c_hash value"})
     c_list = fields.List(
-        fields.List(fields.Int(strict=True)),
-        description="c_list value",
+        fields.List(fields.Int(strict=True)), metadata={"description": "c_list value"}
     )
 
 
@@ -318,7 +315,7 @@ class IndyProofProof(BaseModel):
         self,
         proofs: Sequence[IndyProofProofProofsProof] = None,
         aggregated_proof: IndyProofProofAggregatedProof = None,
-        **kwargs,
+        **kwargs
     ):
         """Initialize indy proof.proof content."""
         super().__init__(**kwargs)
@@ -337,12 +334,11 @@ class IndyProofProofSchema(BaseModelSchema):
 
     proofs = fields.Nested(
         IndyProofProofProofsProofSchema,
-        many=True,
-        description="Indy proof proofs",
+        metadata={"many": True, "description": "Indy proof proofs"},
     )
     aggregated_proof = fields.Nested(
         IndyProofProofAggregatedProofSchema,
-        description="Indy proof aggregated proof",
+        metadata={"description": "Indy proof aggregated proof"},
     )
 
 
@@ -354,12 +350,7 @@ class RawEncoded(BaseModel):
 
         schema_class = "RawEncodedSchema"
 
-    def __init__(
-        self,
-        raw: str = None,
-        encoded: str = None,
-        **kwargs,
-    ):
+    def __init__(self, raw: str = None, encoded: str = None, **kwargs):
         """Initialize raw and encoded attribute values."""
         super().__init__(**kwargs)
         self.raw = raw
@@ -375,8 +366,8 @@ class RawEncodedSchema(BaseModelSchema):
         model_class = RawEncoded
         unknown = EXCLUDE
 
-    raw = fields.Str(description="Raw value")
-    encoded = fields.Str(description="Encoded value", **NUM_STR_ANY)
+    raw = fields.Str(metadata={"description": "Raw value"})
+    encoded = fields.Str(metadata={"description": "Encoded value", **NUM_STR_ANY})
 
 
 class IndyProofRequestedProofRevealedAttr(RawEncoded):
@@ -387,11 +378,7 @@ class IndyProofRequestedProofRevealedAttr(RawEncoded):
 
         schema_class = "IndyProofRequestedProofRevealedAttrSchema"
 
-    def __init__(
-        self,
-        sub_proof_index: int = None,
-        **kwargs,
-    ):
+    def __init__(self, sub_proof_index: int = None, **kwargs):
         """Initialize indy proof requested proof revealed attr."""
         super().__init__(**kwargs)
         self.sub_proof_index = sub_proof_index
@@ -406,7 +393,9 @@ class IndyProofRequestedProofRevealedAttrSchema(RawEncodedSchema):
         model_class = IndyProofRequestedProofRevealedAttr
         unknown = EXCLUDE
 
-    sub_proof_index = fields.Int(strict=True, description="Sub-proof index")
+    sub_proof_index = fields.Int(
+        metadata={"strict": True, "description": "Sub-proof index"}
+    )
 
 
 class IndyProofRequestedProofRevealedAttrGroup(BaseModel):
@@ -421,7 +410,7 @@ class IndyProofRequestedProofRevealedAttrGroup(BaseModel):
         self,
         sub_proof_index: int = None,
         values: Mapping[str, RawEncoded] = None,
-        **kwargs,
+        **kwargs
     ):
         """Initialize indy proof requested proof revealed attr."""
         super().__init__(**kwargs)
@@ -438,11 +427,15 @@ class IndyProofRequestedProofRevealedAttrGroupSchema(BaseModelSchema):
         model_class = IndyProofRequestedProofRevealedAttrGroup
         unknown = EXCLUDE
 
-    sub_proof_index = fields.Int(strict=True, description="Sub-proof index")
+    sub_proof_index = fields.Int(
+        metadata={"strict": True, "description": "Sub-proof index"}
+    )
     values = fields.Dict(
-        keys=fields.Str(),
-        values=fields.Nested(RawEncodedSchema),
-        description="Indy proof requested proof revealed attr groups group value",
+        metadata={
+            "keys": fields.Str(),
+            "values": fields.Nested(RawEncodedSchema),
+            "description": "Indy proof requested proof revealed attr groups group value",
+        }
     )
 
 
@@ -454,11 +447,7 @@ class IndyProofRequestedProofPredicate(BaseModel):
 
         schema_class = "IndyProofRequestedProofPredicateSchema"
 
-    def __init__(
-        self,
-        sub_proof_index: int = None,
-        **kwargs,
-    ):
+    def __init__(self, sub_proof_index: int = None, **kwargs):
         """Initialize indy proof requested proof predicate."""
         super().__init__(**kwargs)
         self.sub_proof_index = sub_proof_index
@@ -473,7 +462,9 @@ class IndyProofRequestedProofPredicateSchema(BaseModelSchema):
         model_class = IndyProofRequestedProofPredicate
         unknown = EXCLUDE
 
-    sub_proof_index = fields.Int(strict=True, description="Sub-proof index")
+    sub_proof_index = fields.Int(
+        metadata={"strict": True, "description": "Sub-proof index"}
+    )
 
 
 class IndyProofRequestedProof(BaseModel):
@@ -488,13 +479,12 @@ class IndyProofRequestedProof(BaseModel):
         self,
         revealed_attrs: Mapping[str, IndyProofRequestedProofRevealedAttr] = None,
         revealed_attr_groups: Mapping[
-            str,
-            IndyProofRequestedProofRevealedAttrGroup,
+            str, IndyProofRequestedProofRevealedAttrGroup
         ] = None,
         self_attested_attrs: Mapping = None,
         unrevealed_attrs: Mapping = None,
         predicates: Mapping[str, IndyProofRequestedProofPredicate] = None,
-        **kwargs,
+        **kwargs
     ):
         """Initialize indy proof requested proof."""
         super().__init__(**kwargs)
@@ -515,27 +505,31 @@ class IndyProofRequestedProofSchema(BaseModelSchema):
         unknown = EXCLUDE
 
     revealed_attrs = fields.Dict(
-        keys=fields.Str(),
-        values=fields.Nested(IndyProofRequestedProofRevealedAttrSchema),
         allow_none=True,
-        description="Proof requested proof revealed attributes",
+        metadata={
+            "keys": fields.Str(),
+            "values": fields.Nested(IndyProofRequestedProofRevealedAttrSchema),
+            "description": "Proof requested proof revealed attributes",
+        },
     )
     revealed_attr_groups = fields.Dict(
-        keys=fields.Str(),
-        values=fields.Nested(IndyProofRequestedProofRevealedAttrGroupSchema),
         allow_none=True,
-        description="Proof requested proof revealed attribute groups",
+        metadata={
+            "keys": fields.Str(),
+            "values": fields.Nested(IndyProofRequestedProofRevealedAttrGroupSchema),
+            "description": "Proof requested proof revealed attribute groups",
+        },
     )
     self_attested_attrs = fields.Dict(
-        description="Proof requested proof self-attested attributes"
+        metadata={"description": "Proof requested proof self-attested attributes"}
     )
-    unrevealed_attrs = fields.Dict(description="Unrevealed attributes")
+    unrevealed_attrs = fields.Dict(metadata={"description": "Unrevealed attributes"})
     predicates = fields.Dict(
-        keys=fields.Str(),
-        values=fields.Nested(
-            IndyProofRequestedProofPredicateSchema,
-        ),
-        description="Proof requested proof predicates.",
+        metadata={
+            "keys": fields.Str(),
+            "values": fields.Nested(IndyProofRequestedProofPredicateSchema),
+            "description": "Proof requested proof predicates.",
+        }
     )
 
 
@@ -553,7 +547,7 @@ class IndyProofIdentifier(BaseModel):
         cred_def_id: str = None,
         rev_reg_id: str = None,
         timestamp: int = None,
-        **kwargs,
+        **kwargs
     ):
         """Initialize indy proof identifier."""
         super().__init__(**kwargs)
@@ -572,21 +566,25 @@ class IndyProofIdentifierSchema(BaseModelSchema):
         model_class = IndyProofIdentifier
         unknown = EXCLUDE
 
-    schema_id = fields.Str(description="Schema identifier", **INDY_SCHEMA_ID)
+    schema_id = fields.Str(
+        metadata={"description": "Schema identifier", **INDY_SCHEMA_ID}
+    )
     cred_def_id = fields.Str(
-        description="Credential definition identifier",
-        **INDY_CRED_DEF_ID,
+        metadata={
+            "description": "Credential definition identifier",
+            **INDY_CRED_DEF_ID,
+        }
     )
     rev_reg_id = fields.Str(
-        description="Revocation registry identifier",
         allow_none=True,
-        **INDY_REV_REG_ID,
+        metadata={
+            "description": "Revocation registry identifier",
+            **INDY_REV_REG_ID,
+        },
     )
     timestamp = fields.Int(
-        strict=True,
         allow_none=True,
-        description="Timestamp epoch",
-        **INT_EPOCH,
+        metadata={"strict": True, "description": "Timestamp epoch", **INT_EPOCH},
     )
 
 
@@ -603,7 +601,7 @@ class IndyProof(BaseModel):
         proof: IndyProofProof = None,
         requested_proof: IndyProofRequestedProof = None,
         identifiers: Sequence[IndyProofIdentifier] = None,
-        **kwargs,
+        **kwargs
     ):
         """Initialize indy proof."""
         super().__init__(**kwargs)
@@ -622,17 +620,15 @@ class IndyProofSchema(BaseModelSchema):
         unknown = EXCLUDE
 
     proof = fields.Nested(
-        IndyProofProofSchema,
-        description="Indy proof.proof content",
+        IndyProofProofSchema, metadata={"description": "Indy proof.proof content"}
     )
     requested_proof = fields.Nested(
         IndyProofRequestedProofSchema,
-        description="Indy proof.requested_proof content",
+        metadata={"description": "Indy proof.requested_proof content"},
     )
     identifiers = fields.Nested(
         IndyProofIdentifierSchema,
-        many=True,
-        description="Indy proof.identifiers content",
+        metadata={"many": True, "description": "Indy proof.identifiers content"},
     )
 
 
@@ -640,37 +636,38 @@ class IndyPresSpecSchema(AdminAPIMessageTracingSchema):
     """Request schema for indy proof specification to send as presentation."""
 
     self_attested_attributes = fields.Dict(
-        description="Self-attested attributes to build into proof",
         required=True,
-        keys=fields.Str(example="attr_name"),  # marshmallow/apispec v3.0 ignores
-        values=fields.Str(
-            example="self_attested_value",
-            description=(
-                "Self-attested attribute values to use in requested-credentials "
-                "structure for proof construction"
+        metadata={
+            "description": "Self-attested attributes to build into proof",
+            "keys": fields.Str(metadata={"example": "attr_name"}),
+            "values": fields.Str(
+                metadata={
+                    "example": "self_attested_value",
+                    "description": "Self-attested attribute values to use in requested-credentials structure for proof construction",
+                }
             ),
-        ),
+        },
     )
     requested_attributes = fields.Dict(
-        description=(
-            "Nested object mapping proof request attribute referents to "
-            "requested-attribute specifiers"
-        ),
         required=True,
-        keys=fields.Str(example="attr_referent"),  # marshmallow/apispec v3.0 ignores
-        values=fields.Nested(IndyRequestedCredsRequestedAttrSchema),
+        metadata={
+            "description": "Nested object mapping proof request attribute referents to requested-attribute specifiers",
+            "keys": fields.Str(metadata={"example": "attr_referent"}),
+            "values": fields.Nested(IndyRequestedCredsRequestedAttrSchema),
+        },
     )
     requested_predicates = fields.Dict(
-        description=(
-            "Nested object mapping proof request predicate referents to "
-            "requested-predicate specifiers"
-        ),
         required=True,
-        keys=fields.Str(example="pred_referent"),  # marshmallow/apispec v3.0 ignores
-        values=fields.Nested(IndyRequestedCredsRequestedPredSchema),
+        metadata={
+            "description": "Nested object mapping proof request predicate referents to requested-predicate specifiers",
+            "keys": fields.Str(metadata={"example": "pred_referent"}),
+            "values": fields.Nested(IndyRequestedCredsRequestedPredSchema),
+        },
     )
     trace = fields.Bool(
-        description="Whether to trace event (default false)",
         required=False,
-        example=False,
+        metadata={
+            "description": "Whether to trace event (default false)",
+            "example": False,
+        },
     )

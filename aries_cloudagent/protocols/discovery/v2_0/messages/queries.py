@@ -1,11 +1,8 @@
 """Represents a feature discovery queries message."""
-
 from typing import Sequence
 from marshmallow import EXCLUDE, fields, validate
-
 from .....messaging.agent_message import AgentMessage, AgentMessageSchema
 from .....messaging.models.base import BaseModel, BaseModelSchema
-
 from ..message_types import PROTOCOL_PACKAGE, QUERIES
 
 HANDLER_CLASS = f"{PROTOCOL_PACKAGE}.handlers.queries_handler.QueriesHandler"
@@ -19,12 +16,7 @@ class QueryItem(BaseModel):
 
         schema_class = "QueryItemSchema"
 
-    def __init__(
-        self,
-        *,
-        feature_type: str,
-        match: str,
-    ):
+    def __init__(self, *, feature_type: str, match: str):
         """Initialize QueryItem."""
         self.feature_type = feature_type
         self.match = match
@@ -41,11 +33,11 @@ class QueryItemSchema(BaseModelSchema):
 
     feature_type = fields.Str(
         required=True,
-        description="feature type",
         data_key="feature-type",
         validate=validate.OneOf(["protocol", "goal-code"]),
+        metadata={"description": "feature type"},
     )
-    match = fields.Str(required=True, description="match")
+    match = fields.Str(required=True, metadata={"description": "match"})
 
 
 class Queries(AgentMessage):

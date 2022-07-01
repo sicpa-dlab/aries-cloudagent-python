@@ -1,9 +1,6 @@
 """Represents an explicit RFC 15 ack message, adopted into present-proof protocol."""
-
 from marshmallow import EXCLUDE, fields, validate
-
 from ....notification.v1_0.messages.ack import V10Ack, V10AckSchema
-
 from ..message_types import PRESENTATION_ACK, PROTOCOL_PACKAGE
 
 HANDLER_CLASS = (
@@ -44,7 +41,9 @@ class PresentationAckSchema(V10AckSchema):
 
     verification_result = fields.Str(
         required=False,
-        description="Whether presentation is verified: true or false",
-        example="true",
         validate=validate.OneOf(["true", "false"]),
+        metadata={
+            "description": "Whether presentation is verified: true or false",
+            "example": "true",
+        },
     )

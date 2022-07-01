@@ -1,66 +1,55 @@
 import asyncio
-from datetime import datetime
-import pytest
-
-from asynctest import mock as async_mock
 from copy import deepcopy
+from datetime import datetime
 from uuid import uuid4
+
+import pytest
+from asynctest import mock as async_mock
 
 from .....core.in_memory import InMemoryProfile
 from .....did.did_key import DIDKey
-from .....resolver.did_resolver_registry import DIDResolverRegistry
 from .....resolver.did_resolver import DIDResolver
+from .....resolver.did_resolver_registry import DIDResolverRegistry
 from .....storage.vc_holder.vc_record import VCRecord
+from .....vc.ld_proofs import BbsBlsSignature2020, BbsBlsSignatureProof2020
+from .....vc.ld_proofs.constants import SECURITY_CONTEXT_BBS_URL
+from .....vc.ld_proofs.document_loader import DocumentLoader
+from .....vc.ld_proofs.error import LinkedDataProofException
+from .....vc.tests.data import BBS_NESTED_VC_REVEAL_DOCUMENT_MATTR, BBS_SIGNED_VC_MATTR
+from .....vc.tests.document_loader import custom_document_loader
 from .....wallet.base import BaseWallet, DIDInfo
 from .....wallet.crypto import KeyType
 from .....wallet.did_method import DIDMethod
 from .....wallet.error import WalletNotFoundError
-from .....vc.ld_proofs import (
-    BbsBlsSignatureProof2020,
-    BbsBlsSignature2020,
-)
-from .....vc.ld_proofs.document_loader import DocumentLoader
-from .....vc.ld_proofs.error import LinkedDataProofException
-from .....vc.ld_proofs.constants import SECURITY_CONTEXT_BBS_URL
-from .....vc.tests.document_loader import custom_document_loader
-from .....vc.tests.data import (
-    BBS_SIGNED_VC_MATTR,
-    BBS_NESTED_VC_REVEAL_DOCUMENT_MATTR,
-)
-
 from .. import pres_exch_handler as test_module
 from ..pres_exch import (
-    PresentationDefinition,
-    Requirement,
-    Filter,
-    SchemaInputDescriptor,
-    SchemasInputDescriptorFilter,
     Constraints,
     DIFField,
+    Filter,
+    PresentationDefinition,
+    Requirement,
+    SchemaInputDescriptor,
+    SchemasInputDescriptorFilter,
 )
-from ..pres_exch_handler import (
-    DIFPresExchHandler,
-    DIFPresExchError,
-)
-
+from ..pres_exch_handler import DIFPresExchError, DIFPresExchHandler
 from .test_data import (
-    get_test_data,
-    edd_jsonld_creds,
-    bbs_bls_number_filter_creds,
-    bbs_signed_cred_no_credsubjectid,
-    bbs_signed_cred_credsubjectid,
-    creds_with_no_id,
-    is_holder_pd,
-    is_holder_pd_multiple_fields_excluded,
-    is_holder_pd_multiple_fields_included,
     EXPANDED_CRED_FHIR_TYPE_1,
     EXPANDED_CRED_FHIR_TYPE_2,
     TEST_CRED_DICT,
     TEST_CRED_WILDCARD,
+    bbs_bls_number_filter_creds,
+    bbs_signed_cred_credsubjectid,
+    bbs_signed_cred_no_credsubjectid,
+    creds_with_no_id,
+    edd_jsonld_creds,
+    get_test_data,
+    is_holder_pd,
+    is_holder_pd_multiple_fields_excluded,
+    is_holder_pd_multiple_fields_included,
 )
 
 
-@pytest.yield_fixture(scope="class")
+@pytest.fixture(scope="class")
 def event_loop(request):
     loop = asyncio.get_event_loop_policy().new_event_loop()
     yield loop

@@ -1,18 +1,13 @@
 """Credential issue message."""
-
 from typing import Sequence
-
 from marshmallow import EXCLUDE, fields, validates_schema, ValidationError
-
 from .....messaging.agent_message import AgentMessage, AgentMessageSchema
 from .....messaging.decorators.attach_decorator import (
     AttachDecorator,
     AttachDecoratorSchema,
 )
 from .....messaging.valid import UUIDFour
-
 from ..message_types import CRED_20_ISSUE, PROTOCOL_PACKAGE
-
 from .cred_format import V20CredFormat, V20CredFormatSchema
 
 HANDLER_CLASS = f"{PROTOCOL_PACKAGE}.handlers.cred_issue_handler.V20CredIssueHandler"
@@ -90,26 +85,28 @@ class V20CredIssueSchema(AgentMessageSchema):
         unknown = EXCLUDE
 
     replacement_id = fields.Str(
-        description="Issuer-unique identifier to coordinate credential replacement",
         required=False,
         allow_none=False,
-        example=UUIDFour.EXAMPLE,
+        metadata={
+            "description": "Issuer-unique identifier to coordinate credential replacement",
+            "example": UUIDFour.EXAMPLE,
+        },
     )
     comment = fields.Str(
-        description="Human-readable comment", required=False, allow_none=True
+        required=False,
+        allow_none=True,
+        metadata={"description": "Human-readable comment"},
     )
     formats = fields.Nested(
         V20CredFormatSchema,
-        many=True,
         required=True,
-        description="Acceptable attachment formats",
+        metadata={"many": True, "description": "Acceptable attachment formats"},
     )
     credentials_attach = fields.Nested(
         AttachDecoratorSchema,
-        many=True,
         required=True,
         data_key="credentials~attach",
-        description="Credential attachments",
+        metadata={"many": True, "description": "Credential attachments"},
     )
 
     @validates_schema
@@ -127,10 +124,8 @@ class V20CredIssueSchema(AgentMessageSchema):
         attachments = data.get("credentials_attach") or []
         if len(formats) != len(attachments):
             raise ValidationError("Formats/attachments length mismatch")
-
         for fmt in formats:
             atch = get_attach_by_id(fmt.attach_id)
             cred_format = V20CredFormat.Format.get(fmt.format)
-
             if cred_format:
                 cred_format.validate_fields(CRED_20_ISSUE, atch.content)

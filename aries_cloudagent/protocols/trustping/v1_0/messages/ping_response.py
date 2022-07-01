@@ -42,7 +42,6 @@ class PingResponseSchema(AgentMessageSchema):
 
     comment = fields.Str(
         required=False,
-        description="Optional comment to include",
-        example="Hello",
+        metadata={"description": "Optional comment to include", "example": "Hello"},
         allow_none=True,
     )

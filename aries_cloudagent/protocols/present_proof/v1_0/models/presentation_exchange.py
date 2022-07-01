@@ -1,7 +1,6 @@
 """Aries#0037 v1.0 presentation exchange information with non-secrets storage."""
 
 import logging
-
 from typing import Any, Mapping, Optional, Union
 
 from marshmallow import fields, validate
@@ -12,7 +11,6 @@ from .....indy.models.proof_request import IndyProofRequest, IndyProofRequestSch
 from .....messaging.models.base_record import BaseExchangeRecord, BaseExchangeSchema
 from .....messaging.valid import UUIDFour
 from .....storage.base import StorageError
-
 from ..messages.presentation_proposal import (
     PresentationProposal,
     PresentationProposalSchema,
@@ -21,7 +19,6 @@ from ..messages.presentation_request import (
     PresentationRequest,
     PresentationRequestSchema,
 )
-
 from . import UNENCRYPTED_TAGS
 
 LOGGER = logging.getLogger(__name__)

@@ -1,7 +1,5 @@
 """Model for representing a stored verifiable credential."""
-
 import logging
-
 from typing import Mapping, Sequence
 from uuid import uuid4
 
@@ -24,16 +22,16 @@ class VCRecord(BaseModel):
     def __init__(
         self,
         *,
-        contexts: Sequence[str],  # context is required by spec
-        expanded_types: Sequence[str],  # expanded type from contexts and types
-        issuer_id: str,  # issuer ID is required by spec
-        subject_ids: Sequence[str],  # one or more subject IDs may be present
-        schema_ids: Sequence[str],  # one or more credential schema IDs may be present
-        proof_types: Sequence[str],  # one or more proof types may be present
-        cred_value: Mapping,  # the credential value as a JSON-serializable mapping
-        given_id: str = None,  # value of the credential 'id' property, if any
-        cred_tags: Mapping = None,  # tags for retrieval (derived from attribute values)
-        record_id: str = None,  # specify the storage record ID
+        contexts: Sequence[str],
+        expanded_types: Sequence[str],
+        issuer_id: str,
+        subject_ids: Sequence[str],
+        schema_ids: Sequence[str],
+        proof_types: Sequence[str],
+        cred_value: Mapping,
+        given_id: str = None,
+        cred_tags: Mapping = None,
+        record_id: str = None
     ):
         """Initialize some defaults on record."""
         super().__init__()
@@ -59,12 +57,10 @@ class VCRecord(BaseModel):
             A dict representation of this model, or a JSON string if as_string is True
 
         """
-
         list_coercion = VCRecord(**{k: v for k, v in vars(self).items()})
         for k, v in vars(self).items():
             if isinstance(v, set):
                 setattr(list_coercion, k, list(v))
-
         return super(VCRecord, list_coercion).serialize(as_string=as_string)
 
     def __eq__(self, other: object) -> bool:
@@ -94,42 +90,60 @@ class VCRecordSchema(BaseModelSchema):
         model_class = VCRecord
         unknown = EXCLUDE
 
-    contexts = fields.List(fields.Str(description="Context", **ENDPOINT))
+    contexts = fields.List(fields.Str(metadata={"description": "Context", **ENDPOINT}))
     expanded_types = fields.List(
         fields.Str(
-            description="JSON-LD expanded type extracted from type and context",
-            example="https://w3id.org/citizenship#PermanentResidentCard",
-        ),
+            metadata={
+                "description": "JSON-LD expanded type extracted from type and context",
+                "example": "https://w3id.org/citizenship#PermanentResidentCard",
+            }
+        )
     )
     schema_ids = fields.List(
         fields.Str(
-            description="Schema identifier",
-            example="https://example.org/examples/degree.json",
+            metadata={
+                "description": "Schema identifier",
+                "example": "https://example.org/examples/degree.json",
+            }
         )
     )
     issuer_id = fields.Str(
-        description="Issuer identifier",
-        example="https://example.edu/issuers/14",
+        metadata={
+            "description": "Issuer identifier",
+            "example": "https://example.edu/issuers/14",
+        }
     )
     subject_ids = fields.List(
         fields.Str(
-            description="Subject identifier",
-            example="did:example:ebfeb1f712ebc6f1c276e12ec21",
+            metadata={
+                "description": "Subject identifier",
+                "example": "did:example:ebfeb1f712ebc6f1c276e12ec21",
+            }
         )
     )
     proof_types = fields.List(
         fields.Str(
-            description="Signature suite used for proof", example="Ed25519Signature2018"
+            metadata={
+                "description": "Signature suite used for proof",
+                "example": "Ed25519Signature2018",
+            }
         )
     )
-
-    cred_value = fields.Dict(description="(JSON-serializable) credential value")
+    cred_value = fields.Dict(
+        metadata={"description": "(JSON-serializable) credential value"}
+    )
     given_id = fields.Str(
-        description="Credential identifier",
-        example="http://example.edu/credentials/3732",
+        metadata={
+            "description": "Credential identifier",
+            "example": "http://example.edu/credentials/3732",
+        }
     )
     cred_tags = fields.Dict(
-        keys=fields.Str(description="Retrieval tag name"),
-        values=fields.Str(description="Retrieval tag value"),
+        metadata={
+            "keys": fields.Str(metadata={"description": "Retrieval tag name"}),
+            "values": fields.Str(metadata={"description": "Retrieval tag value"}),
+        }
     )
-    record_id = fields.Str(description="Record identifier", example=UUIDFour.EXAMPLE)
+    record_id = fields.Str(
+        metadata={"description": "Record identifier", "example": UUIDFour.EXAMPLE}
+    )

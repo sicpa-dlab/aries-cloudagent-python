@@ -1,15 +1,9 @@
 """Wallet record."""
-
 from typing import Any, Optional, Sequence
-
 from marshmallow import fields
 from marshmallow import validate
 from marshmallow.utils import EXCLUDE
-
-from ...messaging.models.base_record import (
-    BaseRecord,
-    BaseRecordSchema,
-)
+from ...messaging.models.base_record import BaseRecord, BaseRecordSchema
 from ...messaging.valid import UUIDFour
 from ..error import WalletSettingsError
 
@@ -24,9 +18,7 @@ class WalletRecord(BaseRecord):
 
     RECORD_TYPE = "wallet_record"
     RECORD_ID_NAME = "wallet_id"
-
     TAG_NAMES = {"wallet_name"}
-
     MODE_MANAGED = "managed"
     MODE_UNMANAGED = "unmanaged"
 
@@ -36,11 +28,9 @@ class WalletRecord(BaseRecord):
         wallet_id: str = None,
         key_management_mode: str = None,
         settings: dict = None,
-        # MTODO: how to make this a tag without making it
-        # a constructor param
         wallet_name: str = None,
         jwt_iat: Optional[int] = None,
-        **kwargs,
+        **kwargs
     ):
         """Initialize a new WalletRecord."""
         super().__init__(wallet_id, **kwargs)
@@ -104,14 +94,10 @@ class WalletRecord(BaseRecord):
     @property
     def requires_external_key(self) -> bool:
         """Accessor to check if the wallet requires an external key."""
-
-        # Key not required for in_memory wallets
         if self.wallet_type == "in_memory":
             return False
-        # Managed wallets have the key stored in the wallet
         elif self.is_managed:
             return False
-        # All other cases the key is required
         else:
             return True
 
@@ -137,17 +123,15 @@ class WalletRecordSchema(BaseRecordSchema):
 
     wallet_id = fields.Str(
         required=True,
-        description="Wallet record ID",
-        example=UUIDFour.EXAMPLE,
+        metadata={"description": "Wallet record ID", "example": UUIDFour.EXAMPLE},
     )
     key_management_mode = fields.Str(
         required=True,
-        description="Mode regarding management of wallet key",
         validate=validate.OneOf(
-            [
-                WalletRecord.MODE_MANAGED,
-                WalletRecord.MODE_UNMANAGED,
-            ]
+            [WalletRecord.MODE_MANAGED, WalletRecord.MODE_UNMANAGED]
         ),
+        metadata={"description": "Mode regarding management of wallet key"},
     )
-    settings = fields.Dict(required=False, description="Settings for this wallet.")
+    settings = fields.Dict(
+        required=False, metadata={"description": "Settings for this wallet."}
+    )

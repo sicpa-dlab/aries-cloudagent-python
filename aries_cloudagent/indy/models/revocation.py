@@ -1,9 +1,6 @@
 """Revocation artifacts."""
-
 from typing import Sequence
-
 from marshmallow import EXCLUDE, fields, validate
-
 from ...messaging.models.base import BaseModel, BaseModelSchema
 from ...messaging.valid import (
     BASE58_SHA256_HASH,
@@ -24,7 +21,6 @@ class IndyRevRegDefValuePublicKeysAccumKey(BaseModel):
 
     def __init__(self, z: str = None):
         """Initialize."""
-
         self.z = z
 
 
@@ -38,7 +34,10 @@ class IndyRevRegDefValuePublicKeysAccumKeySchema(BaseModelSchema):
         unknown = EXCLUDE
 
     z = fields.Str(
-        description="Value for z", example="1 120F522F81E6B7 1 09F7A59005C4939854"
+        metadata={
+            "description": "Value for z",
+            "example": "1 120F522F81E6B7 1 09F7A59005C4939854",
+        }
     )
 
 
@@ -52,7 +51,6 @@ class IndyRevRegDefValuePublicKeys(BaseModel):
 
     def __init__(self, accum_key: IndyRevRegDefValuePublicKeysAccumKey = None):
         """Initialize."""
-
         self.accum_key = accum_key
 
 
@@ -106,27 +104,27 @@ class IndyRevRegDefValueSchema(BaseModelSchema):
     issuance_type = fields.Str(
         validate=validate.OneOf(["ISSUANCE_ON_DEMAND", "ISSUANCE_BY_DEFAULT"]),
         data_key="issuanceType",
-        description="Issuance type",
+        metadata={"description": "Issuance type"},
     )
     max_cred_num = fields.Int(
-        description="Maximum number of credentials; registry size",
-        strict=True,
         data_key="maxCredNum",
-        **NATURAL_NUM,
+        metadata={
+            "description": "Maximum number of credentials; registry size",
+            "strict": True,
+            **NATURAL_NUM,
+        },
     )
     public_keys = fields.Nested(
         IndyRevRegDefValuePublicKeysSchema(),
         data_key="publicKeys",
-        description="Public keys",
+        metadata={"description": "Public keys"},
     )
     tails_hash = fields.Str(
         data_key="tailsHash",
-        description="Tails hash value",
-        **BASE58_SHA256_HASH,
+        metadata={"description": "Tails hash value", **BASE58_SHA256_HASH},
     )
     tails_location = fields.Str(
-        description="Tails file location",
-        data_key="tailsLocation",
+        data_key="tailsLocation", metadata={"description": "Tails file location"}
     )
 
 
@@ -148,7 +146,6 @@ class IndyRevRegDef(BaseModel):
         value: IndyRevRegDefValue = None,
     ):
         """Initialize."""
-
         self.ver = ver
         self.id_ = id_
         self.revoc_def_type = revoc_def_type
@@ -167,28 +164,37 @@ class IndyRevRegDefSchema(BaseModelSchema):
         unknown = EXCLUDE
 
     ver = fields.Str(
-        description="Version of revocation registry definition",
-        **INDY_VERSION,
+        metadata={
+            "description": "Version of revocation registry definition",
+            **INDY_VERSION,
+        }
     )
     id_ = fields.Str(
-        description="Indy revocation registry identifier",
         data_key="id",
-        **INDY_REV_REG_ID,
+        metadata={
+            "description": "Indy revocation registry identifier",
+            **INDY_REV_REG_ID,
+        },
     )
     revoc_def_type = fields.Str(
-        description="Revocation registry type (specify CL_ACCUM)",
         data_key="revocDefType",
-        example="CL_ACCUM",
         validate=validate.Equal("CL_ACCUM"),
+        metadata={
+            "description": "Revocation registry type (specify CL_ACCUM)",
+            "example": "CL_ACCUM",
+        },
     )
-    tag = fields.Str(description="Revocation registry tag")
+    tag = fields.Str(metadata={"description": "Revocation registry tag"})
     cred_def_id = fields.Str(
         data_key="credDefId",
-        description="Credential definition identifier",
-        **INDY_CRED_DEF_ID,
+        metadata={
+            "description": "Credential definition identifier",
+            **INDY_CRED_DEF_ID,
+        },
     )
     value = fields.Nested(
-        IndyRevRegDefValueSchema(), description="Revocation registry definition value"
+        IndyRevRegDefValueSchema(),
+        metadata={"description": "Revocation registry definition value"},
     )
 
 
@@ -201,10 +207,7 @@ class IndyRevRegEntryValue(BaseModel):
         schema_class = "IndyRevRegEntryValueSchema"
 
     def __init__(
-        self,
-        prev_accum: str = None,
-        accum: str = None,
-        revoked: Sequence[int] = None,
+        self, prev_accum: str = None, accum: str = None, revoked: Sequence[int] = None
     ):
         """Initialize."""
         self.prev_accum = prev_accum
@@ -222,19 +225,23 @@ class IndyRevRegEntryValueSchema(BaseModelSchema):
         unknown = EXCLUDE
 
     prev_accum = fields.Str(
-        description="Previous accumulator value",
         data_key="prevAccum",
         required=False,
-        example="21 137AC810975E4 6 76F0384B6F23",
+        metadata={
+            "description": "Previous accumulator value",
+            "example": "21 137AC810975E4 6 76F0384B6F23",
+        },
     )
     accum = fields.Str(
-        description="Accumulator value",
-        example="21 11792B036AED0AAA12A4 4 298B2571FFC63A737",
+        metadata={
+            "description": "Accumulator value",
+            "example": "21 11792B036AED0AAA12A4 4 298B2571FFC63A737",
+        }
     )
     revoked = fields.List(
         fields.Int(strict=True),
         required=False,
-        description="Revoked credential revocation identifiers",
+        metadata={"description": "Revoked credential revocation identifiers"},
     )
 
 
@@ -248,7 +255,6 @@ class IndyRevRegEntry(BaseModel):
 
     def __init__(self, ver: str = None, value: IndyRevRegEntryValue = None):
         """Initialize."""
-
         self.ver = ver
         self.value = value
 
@@ -263,10 +269,12 @@ class IndyRevRegEntrySchema(BaseModelSchema):
         unknown = EXCLUDE
 
     ver = fields.Str(
-        description="Version of revocation registry entry",
-        **INDY_VERSION,
+        metadata={
+            "description": "Version of revocation registry entry",
+            **INDY_VERSION,
+        }
     )
     value = fields.Nested(
         IndyRevRegEntryValueSchema(),
-        description="Revocation registry entry value",
+        metadata={"description": "Revocation registry entry value"},
     )

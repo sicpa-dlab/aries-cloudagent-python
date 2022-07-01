@@ -1,9 +1,6 @@
 """Admin routes for presentations."""
-
 from typing import Mapping
-
 from marshmallow import EXCLUDE, fields
-
 from ...messaging.models.base import BaseModel, BaseModelSchema
 from ...messaging.models.openapi import OpenAPISchema
 from ...messaging.valid import (
@@ -13,7 +10,6 @@ from ...messaging.valid import (
     INDY_SCHEMA_ID,
     UUIDFour,
 )
-
 from .non_rev_interval import IndyNonRevocationIntervalSchema
 
 
@@ -53,31 +49,37 @@ class IndyCredInfoSchema(BaseModelSchema):
         unknown = EXCLUDE
 
     referent = fields.Str(
-        description="Wallet referent",
-        example=UUIDFour.EXAMPLE,  # typically but not necessarily a UUID4
+        metadata={"description": "Wallet referent", "example": UUIDFour.EXAMPLE}
     )
     attrs = fields.Dict(
-        description="Attribute names and value",
-        keys=fields.Str(example="userid"),  # marshmallow/apispec v3.0 ignores
-        values=fields.Str(example="alice"),
+        metadata={
+            "description": "Attribute names and value",
+            "keys": fields.Str(example="userid"),
+            "values": fields.Str(example="alice"),
+        }
     )
     schema_id = fields.Str(
-        description="Schema identifier",
-        **INDY_SCHEMA_ID,
+        metadata={"description": "Schema identifier", **INDY_SCHEMA_ID}
     )
     cred_def_id = fields.Str(
-        description="Credential definition identifier",
-        **INDY_CRED_DEF_ID,
+        metadata={
+            "description": "Credential definition identifier",
+            **INDY_CRED_DEF_ID,
+        }
     )
     rev_reg_id = fields.Str(
-        description="Revocation registry identifier",
-        **INDY_REV_REG_ID,
         allow_none=True,
+        metadata={
+            "description": "Revocation registry identifier",
+            **INDY_REV_REG_ID,
+        },
     )
     cred_rev_id = fields.Str(
-        description="Credential revocation identifier",
-        **INDY_CRED_REV_ID,
         allow_none=True,
+        metadata={
+            "description": "Credential revocation identifier",
+            **INDY_CRED_REV_ID,
+        },
     )
 
 
@@ -85,16 +87,12 @@ class IndyCredPrecisSchema(OpenAPISchema):
     """Schema for precis that indy credential search returns (and aca-py augments)."""
 
     cred_info = fields.Nested(
-        IndyCredInfoSchema(),
-        description="Credential info",
+        IndyCredInfoSchema(), metadata={"description": "Credential info"}
     )
     interval = fields.Nested(
         IndyNonRevocationIntervalSchema(),
-        description="Non-revocation interval from presentation request",
+        metadata={"description": "Non-revocation interval from presentation request"},
     )
-    presentation_referents = fields.List(  # aca-py augments with pres_referents
-        fields.Str(
-            description="presentation referent",
-            example="1_age_uuid",
-        ),
+    presentation_referents = fields.List(
+        fields.Str(description="presentation referent", example="1_age_uuid")
     )

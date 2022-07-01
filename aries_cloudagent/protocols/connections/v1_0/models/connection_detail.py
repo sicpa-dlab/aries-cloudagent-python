@@ -1,7 +1,5 @@
 """An object for containing the connection request/response DID information."""
-
 from marshmallow import EXCLUDE, fields
-
 from .....connections.models.diddoc import DIDDoc
 from .....messaging.models.base import BaseModel, BaseModelSchema
 from .....messaging.valid import INDY_DID
@@ -93,11 +91,10 @@ class ConnectionDetailSchema(BaseModelSchema):
     did = fields.Str(
         data_key="DID",
         required=False,
-        description="DID for connection detail",
-        **INDY_DID
+        metadata={"description": "DID for connection detail", **INDY_DID},
     )
     did_doc = DIDDocWrapper(
         data_key="DIDDoc",
         required=False,
-        description="DID document for connection detail",
+        metadata={"description": "DID document for connection detail"},
     )

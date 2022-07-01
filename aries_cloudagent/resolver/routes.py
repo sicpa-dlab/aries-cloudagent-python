@@ -78,7 +78,7 @@ _W3cDID = {"validate": W3cDID(), "example": W3cDID.EXAMPLE}
 class DIDMatchInfoSchema(OpenAPISchema):
     """Path parameters and validators for request taking DID."""
 
-    did = fields.Str(description="DID", required=True, **_W3cDID)
+    did = fields.Str(metadata={"description": "DID", **_W3cDID}, required=True)
 
 
 @docs(tags=["resolver"], summary="Retrieve doc for requested did")

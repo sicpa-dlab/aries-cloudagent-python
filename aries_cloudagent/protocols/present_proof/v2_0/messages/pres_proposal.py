@@ -1,16 +1,12 @@
 """A presentation proposal content message."""
-
 from marshmallow import EXCLUDE, fields, validates_schema, ValidationError
 from typing import Sequence
-
 from .....messaging.agent_message import AgentMessage, AgentMessageSchema
 from .....messaging.decorators.attach_decorator import (
     AttachDecorator,
     AttachDecoratorSchema,
 )
-
 from ..message_types import PRES_20_PROPOSAL, PROTOCOL_PACKAGE
-
 from .pres_format import V20PresFormat, V20PresFormatSchema
 
 HANDLER_CLASS = (
@@ -85,19 +81,22 @@ class V20PresProposalSchema(AgentMessageSchema):
         model_class = V20PresProposal
         unknown = EXCLUDE
 
-    comment = fields.Str(description="Human-readable comment", required=False)
+    comment = fields.Str(
+        required=False, metadata={"description": "Human-readable comment"}
+    )
     formats = fields.Nested(
         V20PresFormatSchema,
-        many=True,
         required=True,
-        descrption="Acceptable attachment formats",
+        metadata={"many": True, "descrption": "Acceptable attachment formats"},
     )
     proposals_attach = fields.Nested(
         AttachDecoratorSchema,
-        many=True,
         required=True,
         data_key="proposals~attach",
-        description="Attachment per acceptable format on corresponding identifier",
+        metadata={
+            "many": True,
+            "description": "Attachment per acceptable format on corresponding identifier",
+        },
     )
 
     @validates_schema
@@ -115,10 +114,8 @@ class V20PresProposalSchema(AgentMessageSchema):
         attachments = data.get("proposals_attach") or []
         if len(formats) != len(attachments):
             raise ValidationError("Formats/attachments length mismatch")
-
         for fmt in formats:
             atch = get_attach_by_id(fmt.attach_id)
             pres_format = V20PresFormat.Format.get(fmt.format)
-
             if pres_format:
                 pres_format.validate_fields(PRES_20_PROPOSAL, atch.content)

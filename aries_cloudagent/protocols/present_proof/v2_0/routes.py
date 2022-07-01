@@ -1,6 +1,7 @@
 """Admin routes for presentations."""
 
 import json
+from typing import Mapping, Sequence, Tuple
 
 from aiohttp import web
 from aiohttp_apispec import (
@@ -10,8 +11,7 @@ from aiohttp_apispec import (
     request_schema,
     response_schema,
 )
-from marshmallow import fields, validate, validates_schema, ValidationError
-from typing import Mapping, Sequence, Tuple
+from marshmallow import ValidationError, fields, validate, validates_schema
 
 from ....admin.request_context import AdminRequestContext
 from ....connections.models.conn_record import ConnRecord
@@ -28,24 +28,19 @@ from ....messaging.valid import (
     INDY_EXTRA_WQL,
     NUM_STR_NATURAL,
     NUM_STR_WHOLE,
-    UUIDFour,
     UUID4,
+    UUIDFour,
 )
-from ....storage.error import StorageError, StorageNotFoundError
 from ....storage.base import BaseStorage
+from ....storage.error import StorageError, StorageNotFoundError
 from ....storage.vc_holder.base import VCHolder
 from ....storage.vc_holder.vc_record import VCRecord
-from ....utils.tracing import trace_event, get_timer, AdminAPIMessageTracingSchema
+from ....utils.tracing import AdminAPIMessageTracingSchema, get_timer, trace_event
 from ....vc.ld_proofs import BbsBlsSignature2020, Ed25519Signature2018
 from ....wallet.error import WalletNotFoundError
-
-from ..dif.pres_exch import InputDescriptors, ClaimFormat, SchemaInputDescriptor
+from ..dif.pres_exch import ClaimFormat, InputDescriptors, SchemaInputDescriptor
 from ..dif.pres_proposal_schema import DIFProofProposalSchema
-from ..dif.pres_request_schema import (
-    DIFProofRequestSchema,
-    DIFPresSpecSchema,
-)
-
+from ..dif.pres_request_schema import DIFPresSpecSchema, DIFProofRequestSchema
 from . import problem_report_for_record, report_problem
 from .formats.handler import V20PresFormatHandlerError
 from .manager import V20PresManager
@@ -70,36 +65,44 @@ class V20PresExRecordListQueryStringSchema(OpenAPISchema):
     """Parameters and validators for presentation exchange list query."""
 
     connection_id = fields.UUID(
-        description="Connection identifier",
         required=False,
-        example=UUIDFour.EXAMPLE,  # typically but not necessarily a UUID4
+        metadata={
+            "description": "Connection identifier",
+            "example": UUIDFour.EXAMPLE,  # typically but not necessarily a UUID4
+        },
     )
     thread_id = fields.UUID(
-        description="Thread identifier",
         required=False,
-        example=UUIDFour.EXAMPLE,  # typically but not necessarily a UUID4
+        metadata={
+            "description": "Thread identifier",
+            "example": UUIDFour.EXAMPLE,  # typically but not necessarily a UUID4
+        },
     )
     role = fields.Str(
-        description="Role assigned in presentation exchange",
         required=False,
-        validate=validate.OneOf(
-            [
-                getattr(V20PresExRecord, m)
-                for m in vars(V20PresExRecord)
-                if m.startswith("ROLE_")
-            ]
-        ),
+        metadata={
+            "description": "Role assigned in presentation exchange",
+            "validate": validate.OneOf(
+                [
+                    getattr(V20PresExRecord, m)
+                    for m in vars(V20PresExRecord)
+                    if m.startswith("ROLE_")
+                ]
+            ),
+        },
     )
     state = fields.Str(
-        description="Presentation exchange state",
+        metadata={
+            "description": "Presentation exchange state",
+            "validate": validate.OneOf(
+                [
+                    getattr(V20PresExRecord, m)
+                    for m in vars(V20PresExRecord)
+                    if m.startswith("STATE_")
+                ]
+            ),
+        },
         required=False,
-        validate=validate.OneOf(
-            [
-                getattr(V20PresExRecord, m)
-                for m in vars(V20PresExRecord)
-                if m.startswith("STATE_")
-            ]
-        ),
     )
 
 
@@ -138,7 +141,7 @@ class V20PresProposalByFormatSchema(OpenAPISchema):
             ValidationError: if data has no formats
 
         """
-        if not any(f.api in data for f in V20PresFormat.Format):
+        if all(f.api not in data for f in V20PresFormat.Format):
             raise ValidationError(
                 "V20PresProposalByFormatSchema requires indy, dif, or both"
             )
@@ -148,10 +151,13 @@ class V20PresProposalRequestSchema(AdminAPIMessageTracingSchema):
     """Request schema for sending a presentation proposal admin message."""
 
     connection_id = fields.UUID(
-        description="Connection identifier", required=True, example=UUIDFour.EXAMPLE
+        metadata={"description": "Connection identifier", "example": UUIDFour.EXAMPLE},
+        required=True,
     )
     comment = fields.Str(
-        description="Human-readable comment", required=False, allow_none=True
+        metadata={"description": "Human-readable comment"},
+        required=False,
+        allow_none=True,
     )
     presentation_proposal = fields.Nested(
         V20PresProposalByFormatSchema(),
@@ -198,7 +204,7 @@ class V20PresRequestByFormatSchema(OpenAPISchema):
             ValidationError: if data has no formats
 
         """
-        if not any(f.api in data for f in V20PresFormat.Format):
+        if all(f.api not in data for f in V20PresFormat.Format):
             raise ValidationError(
                 "V20PresRequestByFormatSchema requires indy, dif, or both"
             )
@@ -225,7 +231,8 @@ class V20PresSendRequestRequestSchema(V20PresCreateRequestRequestSchema):
     """Request schema for sending a proof request on a connection."""
 
     connection_id = fields.UUID(
-        description="Connection identifier", required=True, example=UUIDFour.EXAMPLE
+        metadata={"description": "Connection identifier", "example": UUIDFour.EXAMPLE},
+        required=True,
     )
 
 
@@ -283,25 +290,26 @@ class V20CredentialsFetchQueryStringSchema(OpenAPISchema):
     """Parameters and validators for credentials fetch request query string."""
 
     referent = fields.Str(
-        description="Proof request referents of interest, comma-separated",
+        metadata={
+            "description": "Proof request referents of interest, comma-separated",
+            "example": "1_name_uuid,2_score_uuid",
+        },
         required=False,
-        example="1_name_uuid,2_score_uuid",
     )
     start = fields.Str(
-        description="Start index",
+        metadata={"description": "Start index", **NUM_STR_WHOLE, "strict": True},
         required=False,
-        strict=True,
-        **NUM_STR_WHOLE,
     )
     count = fields.Str(
-        description="Maximum number to retrieve",
+        metadata={"description": "Maximum number to retrieve", **NUM_STR_NATURAL},
         required=False,
-        **NUM_STR_NATURAL,
     )
     extra_query = fields.Str(
-        description="(JSON) object mapping referents to extra WQL queries",
+        metadata={
+            "description": "(JSON) object mapping referents to extra WQL queries",
+            **INDY_EXTRA_WQL,
+        },
         required=False,
-        **INDY_EXTRA_WQL,
     )
 
 
@@ -315,7 +323,8 @@ class V20PresExIdMatchInfoSchema(OpenAPISchema):
     """Path parameters for request taking presentation exchange id."""
 
     pres_ex_id = fields.Str(
-        description="Presentation exchange identifier", required=True, **UUID4
+        metadata={"description": "Presentation exchange identifier", **UUID4},
+        required=True,
     )
 
 

@@ -1,15 +1,9 @@
 """A credential preview inner object."""
-
-
 from typing import Sequence
-
 from marshmallow import EXCLUDE, fields
-
 from ......messaging.models.base import BaseModel, BaseModelSchema
 from ......wallet.util import b64_to_str
-
 from .....didcomm_prefix import DIDCommPrefix
-
 from ...message_types import CREDENTIAL_PREVIEW
 
 
@@ -33,7 +27,6 @@ class CredAttrSpec(BaseModel):
 
         """
         super().__init__(**kwargs)
-
         self.name = name
         self.value = value
         self.mime_type = mime_type.lower() if mime_type else None
@@ -54,18 +47,14 @@ class CredAttrSpec(BaseModel):
 
     def b64_decoded_value(self) -> str:
         """Value, base64-decoded if applicable."""
-
         return b64_to_str(self.value) if self.value and self.mime_type else self.value
 
     def __eq__(self, other):
         """Equality comparator."""
-
         if self.name != other.name:
-            return False  # distinct attribute names
-
+            return False
         if self.mime_type != other.mime_type:
-            return False  # distinct MIME types
-
+            return False
         return self.b64_decoded_value() == other.b64_decoded_value()
 
 
@@ -79,19 +68,24 @@ class CredAttrSpecSchema(BaseModelSchema):
         unknown = EXCLUDE
 
     name = fields.Str(
-        description="Attribute name", required=True, example="favourite_drink"
+        required=True,
+        metadata={"description": "Attribute name", "example": "favourite_drink"},
     )
     mime_type = fields.Str(
-        description="MIME type: omit for (null) default",
         required=False,
         data_key="mime-type",
-        example="image/jpeg",
         allow_none=True,
+        metadata={
+            "description": "MIME type: omit for (null) default",
+            "example": "image/jpeg",
+        },
     )
     value = fields.Str(
-        description="Attribute value: base64-encode if MIME type is present",
         required=True,
-        example="martini",
+        metadata={
+            "description": "Attribute value: base64-encode if MIME type is present",
+            "example": "martini",
+        },
     )
 
 
@@ -141,11 +135,10 @@ class CredentialPreview(BaseModel):
             decode: whether first to decode attributes with MIME type
 
         """
-
         return {
-            attr.name: b64_to_str(attr.value)
-            if attr.mime_type and decode
-            else attr.value
+            attr.name: (
+                b64_to_str(attr.value) if attr.mime_type and decode else attr.value
+            )
             for attr in self.attributes
         }
 
@@ -169,11 +162,16 @@ class CredentialPreviewSchema(BaseModelSchema):
         unknown = EXCLUDE
 
     _type = fields.Str(
-        description="Message type identifier",
         required=False,
-        example=CREDENTIAL_PREVIEW,
         data_key="@type",
+        metadata={
+            "description": "Message type identifier",
+            "example": CREDENTIAL_PREVIEW,
+        },
     )
     attributes = fields.Nested(
-        CredAttrSpecSchema, many=True, required=True, data_key="attributes"
+        CredAttrSpecSchema,
+        required=True,
+        data_key="attributes",
+        metadata={"many": True},
     )

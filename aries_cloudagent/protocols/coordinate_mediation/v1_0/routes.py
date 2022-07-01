@@ -1,5 +1,4 @@
 """coordinate mediation admin routes."""
-
 from aiohttp import web
 from aiohttp_apispec import (
     docs,
@@ -9,17 +8,14 @@ from aiohttp_apispec import (
     response_schema,
 )
 from marshmallow import fields, validate
-
 from ....admin.request_context import AdminRequestContext
 from ....connections.models.conn_record import ConnRecord
 from ....messaging.models.base import BaseModelError
 from ....messaging.models.openapi import OpenAPISchema
 from ....messaging.valid import UUIDFour
 from ....storage.error import StorageError, StorageNotFoundError
-
 from ...connections.v1_0.routes import ConnectionsConnIdMatchInfoSchema
 from ...routing.v1_0.models.route_record import RouteRecord, RouteRecordSchema
-
 from .manager import MediationManager, MediationManagerError
 from .message_types import SPEC_URI
 from .messages.inner.keylist_update_rule import (
@@ -32,22 +28,17 @@ from .messages.mediate_deny import MediationDenySchema
 from .messages.mediate_grant import MediationGrantSchema
 from .models.mediation_record import MediationRecord, MediationRecordSchema
 
-
 CONNECTION_ID_SCHEMA = fields.UUID(
-    description="Connection identifier (optional)",
     required=False,
-    example=UUIDFour.EXAMPLE,
+    metadata={
+        "description": "Connection identifier (optional)",
+        "example": UUIDFour.EXAMPLE,
+    },
 )
-
-
 MEDIATION_ID_SCHEMA = fields.UUID(
-    description="Mediation record identifier",
-    example=UUIDFour.EXAMPLE,
+    metadata={"description": "Mediation record identifier", "example": UUIDFour.EXAMPLE}
 )
-
-
 MEDIATION_STATE_SCHEMA = fields.Str(
-    description="Mediation state (optional)",
     required=False,
     validate=validate.OneOf(
         [
@@ -56,29 +47,24 @@ MEDIATION_STATE_SCHEMA = fields.Str(
             if m.startswith("STATE_")
         ]
     ),
-    example=MediationRecord.STATE_GRANTED,
+    metadata={
+        "description": "Mediation state (optional)",
+        "example": MediationRecord.STATE_GRANTED,
+    },
 )
-
-
 MEDIATOR_TERMS_SCHEMA = fields.List(
     fields.Str(
-        description=(
-            "Indicate terms to which the mediator requires the recipient to agree"
-        )
+        description="Indicate terms to which the mediator requires the recipient to agree"
     ),
     required=False,
-    description="List of mediator rules for recipient",
+    metadata={"description": "List of mediator rules for recipient"},
 )
-
-
 RECIPIENT_TERMS_SCHEMA = fields.List(
     fields.Str(
-        description=(
-            "Indicate terms to which the recipient requires the mediator to agree"
-        )
+        description="Indicate terms to which the recipient requires the mediator to agree"
     ),
     required=False,
-    description="List of recipient rules for mediation",
+    metadata={"description": "List of recipient rules for mediation"},
 )
 
 
@@ -87,7 +73,7 @@ class MediationListSchema(OpenAPISchema):
 
     results = fields.List(
         fields.Nested(MediationRecordSchema),
-        description="List of mediation records",
+        metadata={"description": "List of mediation records"},
     )
 
 
@@ -125,14 +111,14 @@ class GetKeylistQuerySchema(OpenAPISchema):
 
     conn_id = CONNECTION_ID_SCHEMA
     role = fields.Str(
-        description=f"Filer on role, '{MediationRecord.ROLE_CLIENT}' for keys \
-        mediated by other agents, '{MediationRecord.ROLE_SERVER}' for keys \
-        mediated by this agent",
         validate=validate.OneOf(
             [MediationRecord.ROLE_CLIENT, MediationRecord.ROLE_SERVER]
         ),
-        missing=MediationRecord.ROLE_SERVER,
+        load_default=MediationRecord.ROLE_SERVER,
         required=False,
+        metadata={
+            "description": f"Filer on role, '{MediationRecord.ROLE_CLIENT}' for keys         mediated by other agents, '{MediationRecord.ROLE_SERVER}' for keys         mediated by this agent"
+        },
     )
 
 
@@ -141,7 +127,7 @@ class KeylistSchema(OpenAPISchema):
 
     results = fields.List(
         fields.Nested(RouteRecordSchema),
-        description="List of keylist records",
+        metadata={"description": "List of keylist records"},
     )
 
 
@@ -149,8 +135,7 @@ class KeylistQueryFilterRequestSchema(OpenAPISchema):
     """Request schema for keylist query filtering."""
 
     filter = fields.Dict(
-        required=False,
-        description="Filter for keylist query",
+        required=False, metadata={"description": "Filter for keylist query"}
     )
 
 
@@ -158,10 +143,14 @@ class KeylistQueryPaginateQuerySchema(OpenAPISchema):
     """Query string schema for keylist query pagination."""
 
     paginate_limit = fields.Int(
-        required=False, missing=-1, description="limit number of results"
+        required=False,
+        load_default=-1,
+        metadata={"description": "limit number of results"},
     )
     paginate_offset = fields.Int(
-        required=False, missing=0, description="offset to use in pagination"
+        required=False,
+        load_default=0,
+        metadata={"description": "offset to use in pagination"},
     )
 
 
@@ -177,7 +166,7 @@ def mediation_sort_key(mediation: dict):
         pfx = "2"
     elif mediation["state"] == MediationRecord.STATE_REQUEST:
         pfx = "1"
-    else:  # GRANTED
+    else:
         pfx = "0"
     return pfx + mediation["created_at"]
 
@@ -193,13 +182,11 @@ async def list_mediation_requests(request: web.BaseRequest):
     context: AdminRequestContext = request["context"]
     conn_id = request.query.get("conn_id")
     state = request.query.get("state")
-
     tag_filter = {}
     if conn_id:
         tag_filter["connection_id"] = conn_id
     if state:
         tag_filter["state"] = state
-
     try:
         async with context.profile.session() as session:
             records = await MediationRecord.query(session, tag_filter)
@@ -216,7 +203,6 @@ async def list_mediation_requests(request: web.BaseRequest):
 async def retrieve_mediation_request(request: web.BaseRequest):
     """Retrieve a single mediation request."""
     context: AdminRequestContext = request["context"]
-
     mediation_id = request.match_info["mediation_id"]
     try:
         async with context.profile.session() as session:
@@ -228,7 +214,6 @@ async def retrieve_mediation_request(request: web.BaseRequest):
         raise web.HTTPNotFound(reason=err.roll_up) from err
     except (BaseModelError, StorageError) as err:
         raise web.HTTPBadRequest(reason=err.roll_up) from err
-
     return web.json_response(result)
 
 
@@ -238,7 +223,6 @@ async def retrieve_mediation_request(request: web.BaseRequest):
 async def delete_mediation_request(request: web.BaseRequest):
     """Delete a mediation request by ID."""
     context: AdminRequestContext = request["context"]
-
     mediation_id = request.match_info["mediation_id"]
     try:
         async with context.profile.session() as session:
@@ -252,7 +236,6 @@ async def delete_mediation_request(request: web.BaseRequest):
         raise web.HTTPNotFound(reason=err.roll_up) from err
     except (BaseModelError, StorageError) as err:
         raise web.HTTPBadRequest(reason=err.roll_up) from err
-
     return web.json_response(result)
 
 
@@ -265,26 +248,20 @@ async def request_mediation(request: web.BaseRequest):
     context: AdminRequestContext = request["context"]
     profile = context.profile
     outbound_message_router = request["outbound_message_router"]
-
     conn_id = request.match_info["conn_id"]
-
     body = await request.json()
     mediator_terms = body.get("mediator_terms")
     recipient_terms = body.get("recipient_terms")
-
     try:
         async with profile.session() as session:
             connection_record = await ConnRecord.retrieve_by_id(session, conn_id)
-
         if not connection_record.is_ready:
             raise web.HTTPBadRequest(reason="requested connection is not ready")
-
         async with profile.session() as session:
             if await MediationRecord.exists_for_connection_id(session, conn_id):
                 raise web.HTTPBadRequest(
                     reason=f"MediationRecord already exists for connection {conn_id}"
                 )
-
         mediation_record, mediation_request = await MediationManager(
             profile
         ).prepare_request(
@@ -292,15 +269,12 @@ async def request_mediation(request: web.BaseRequest):
             mediator_terms=mediator_terms,
             recipient_terms=recipient_terms,
         )
-
         result = mediation_record.serialize()
     except StorageNotFoundError as err:
         raise web.HTTPNotFound(reason=err.roll_up) from err
     except (StorageError, BaseModelError) as err:
         raise web.HTTPBadRequest(reason=err.roll_up) from err
-
     await outbound_message_router(mediation_request, connection_id=conn_id)
-
     return web.json_response(result, status=201)
 
 
@@ -350,15 +324,11 @@ async def mediation_request_deny(request: web.BaseRequest):
         raise web.HTTPNotFound(reason=err.roll_up) from err
     except (MediationManagerError, StorageError, BaseModelError) as err:
         raise web.HTTPBadRequest(reason=err.roll_up) from err
-
     await outbound_handler(deny_request, connection_id=record.connection_id)
     return web.json_response(result, status=201)
 
 
-@docs(
-    tags=["mediation"],
-    summary="Retrieve keylists by connection or role",
-)
+@docs(tags=["mediation"], summary="Retrieve keylists by connection or role")
 @querystring_schema(GetKeylistQuerySchema())
 @response_schema(KeylistSchema(), 200)
 async def get_keylist(request: web.BaseRequest):
@@ -366,13 +336,11 @@ async def get_keylist(request: web.BaseRequest):
     context: AdminRequestContext = request["context"]
     connection_id = request.query.get("conn_id")
     role = request.query.get("role")
-
     tag_filter = {}
     if connection_id:
         tag_filter["connection_id"] = connection_id
     if role:
         tag_filter["role"] = role
-
     try:
         async with context.profile.session() as session:
             keylists = await RouteRecord.query(session, tag_filter)
@@ -382,10 +350,7 @@ async def get_keylist(request: web.BaseRequest):
     return web.json_response({"results": results}, status=200)
 
 
-@docs(
-    tags=["mediation"],
-    summary="Send keylist query to mediator",
-)
+@docs(tags=["mediation"], summary="Send keylist query to mediator")
 @match_info_schema(MediationIdMatchInfoSchema())
 @querystring_schema(KeylistQueryPaginateQuerySchema())
 @request_schema(KeylistQueryFilterRequestSchema())
@@ -395,15 +360,11 @@ async def send_keylist_query(request: web.BaseRequest):
     context: AdminRequestContext = request["context"]
     profile = context.profile
     outbound_handler = request["outbound_message_router"]
-
     mediation_id = request.match_info["mediation_id"]
-
     body = await request.json()
     filter_ = body.get("filter")
-
     paginate_limit = request.query.get("paginate_limit")
     paginate_offset = request.query.get("paginate_offset")
-
     try:
         async with profile.session() as session:
             record = await MediationRecord.retrieve_by_id(session, mediation_id)
@@ -417,7 +378,6 @@ async def send_keylist_query(request: web.BaseRequest):
         raise web.HTTPNotFound(reason=err.roll_up) from err
     except (StorageError, BaseModelError) as err:
         raise web.HTTPBadRequest(reason=err.roll_up) from err
-
     await outbound_handler(keylist_query_request, connection_id=record.connection_id)
     return web.json_response(keylist_query_request.serialize(), status=201)
 
@@ -430,17 +390,12 @@ async def send_keylist_update(request: web.BaseRequest):
     """Send keylist update to mediator."""
     context: AdminRequestContext = request["context"]
     profile = context.profile
-
     outbound_handler = request["outbound_message_router"]
-
     mediation_id = request.match_info["mediation_id"]
-
     body = await request.json()
     updates = body.get("updates")
-
     if not updates:
         raise web.HTTPBadRequest(reason="Updates cannot be empty.")
-
     mediation_mgr = MediationManager(profile)
     keylist_updates = None
     for update in updates:
@@ -454,12 +409,11 @@ async def send_keylist_update(request: web.BaseRequest):
             )
         else:
             raise web.HTTPBadRequest(reason="Invalid action for keylist update.")
-
     try:
         async with profile.session() as session:
             record = await MediationRecord.retrieve_by_id(session, mediation_id)
         if record.state != MediationRecord.STATE_GRANTED:
-            raise web.HTTPBadRequest(reason=("mediation is not granted."))
+            raise web.HTTPBadRequest(reason="mediation is not granted.")
         results = keylist_updates.serialize()
     except StorageNotFoundError as err:
         raise web.HTTPNotFound(reason=err.roll_up) from err
@@ -518,7 +472,6 @@ async def clear_default_mediator(request: web.BaseRequest):
 
 async def register(app: web.Application):
     """Register routes."""
-
     app.add_routes(
         [
             web.get("/mediation/requests", list_mediation_requests, allow_head=False),
@@ -529,8 +482,7 @@ async def register(app: web.Application):
             ),
             web.delete("/mediation/requests/{mediation_id}", delete_mediation_request),
             web.post(
-                "/mediation/requests/{mediation_id}/grant",
-                mediation_request_grant,
+                "/mediation/requests/{mediation_id}/grant", mediation_request_grant
             ),
             web.post("/mediation/requests/{mediation_id}/deny", mediation_request_deny),
             web.post("/mediation/request/{conn_id}", request_mediation),
@@ -554,8 +506,6 @@ async def register(app: web.Application):
 
 def post_process_routes(app: web.Application):
     """Amend swagger API."""
-
-    # Add top-level tags description
     if "tags" not in app._state["swagger_dict"]:
         app._state["swagger_dict"]["tags"] = []
     app._state["swagger_dict"]["tags"].append(

@@ -1,15 +1,12 @@
 """Feature discovery v2 admin routes."""
-
 from aiohttp import web
 from aiohttp_apispec import docs, querystring_schema, response_schema
 from marshmallow import fields
-
 from ....admin.request_context import AdminRequestContext
 from ....messaging.models.base import BaseModelError
 from ....messaging.models.openapi import OpenAPISchema
 from ....messaging.valid import UUIDFour
 from ....storage.error import StorageNotFoundError, StorageError
-
 from .manager import V20DiscoveryMgr
 from .message_types import SPEC_URI
 from .models.discovery_record import (
@@ -23,7 +20,7 @@ class V20DiscoveryExchangeResultSchema(OpenAPISchema):
 
     results = fields.Nested(
         V20DiscoveryRecordSchema,
-        description="Discover Features v2.0 exchange record",
+        metadata={"description": "Discover Features v2.0 exchange record"},
     )
 
 
@@ -42,18 +39,19 @@ class QueryFeaturesQueryStringSchema(OpenAPISchema):
     """Query string parameters for feature query."""
 
     query_protocol = fields.Str(
-        description="Protocol feature-type query", required=False, example="*"
+        required=False,
+        metadata={"description": "Protocol feature-type query", "example": "*"},
     )
     query_goal_code = fields.Str(
-        description="Goal-code feature-type query", required=False, example="*"
+        required=False,
+        metadata={"description": "Goal-code feature-type query", "example": "*"},
     )
     connection_id = fields.Str(
-        description=(
-            "Connection identifier, if none specified, "
-            "then the query will provide features for this agent."
-        ),
-        example=UUIDFour.EXAMPLE,
         required=False,
+        metadata={
+            "description": "Connection identifier, if none specified, then the query will provide features for this agent.",
+            "example": UUIDFour.EXAMPLE,
+        },
     )
 
 
@@ -61,16 +59,12 @@ class QueryDiscoveryExchRecordsSchema(OpenAPISchema):
     """Query string parameter for Discover Features v2.0 exchange record."""
 
     connection_id = fields.Str(
-        description="Connection identifier",
-        example=UUIDFour.EXAMPLE,
         required=False,
+        metadata={"description": "Connection identifier", "example": UUIDFour.EXAMPLE},
     )
 
 
-@docs(
-    tags=["discover-features v2.0"],
-    summary="Query supported features",
-)
+@docs(tags=["discover-features v2.0"], summary="Query supported features")
 @querystring_schema(QueryFeaturesQueryStringSchema())
 @response_schema(V20DiscoveryExchangeResultSchema(), 200, description="")
 async def query_features(request: web.BaseRequest):
@@ -98,10 +92,7 @@ async def query_features(request: web.BaseRequest):
     return web.json_response(result.serialize())
 
 
-@docs(
-    tags=["discover-features v2.0"],
-    summary="Discover Features v2.0 records",
-)
+@docs(tags=["discover-features v2.0"], summary="Discover Features v2.0 records")
 @querystring_schema(QueryDiscoveryExchRecordsSchema())
 @response_schema(V20DiscoveryExchangeListResultSchema(), 200, description="")
 async def query_records(request: web.BaseRequest):
@@ -130,7 +121,6 @@ async def query_records(request: web.BaseRequest):
                 record = await V20DiscoveryExchangeRecord.retrieve_by_connection_id(
                     session=session, connection_id=connection_id
                 )
-            # There should only be one record for a connection
             results = [record.serialize()]
         except (StorageError, BaseModelError, StorageNotFoundError) as err:
             raise web.HTTPBadRequest(reason=err.roll_up) from err
@@ -139,7 +129,6 @@ async def query_records(request: web.BaseRequest):
 
 async def register(app: web.Application):
     """Register routes."""
-
     app.add_routes(
         [
             web.get("/discover-features-2.0/queries", query_features, allow_head=False),
@@ -150,8 +139,6 @@ async def register(app: web.Application):
 
 def post_process_routes(app: web.Application):
     """Amend swagger API."""
-
-    # Add top-level tags description
     if "tags" not in app._state["swagger_dict"]:
         app._state["swagger_dict"]["tags"] = []
     app._state["swagger_dict"]["tags"].append(

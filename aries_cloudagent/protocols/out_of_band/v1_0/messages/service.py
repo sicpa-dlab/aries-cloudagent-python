@@ -1,9 +1,6 @@
 """Record used to represent a service block of an out of band invitation."""
-
 from typing import Sequence
-
 from marshmallow import EXCLUDE, fields, post_dump
-
 from .....messaging.models.base import BaseModel, BaseModelSchema
 from .....messaging.valid import DID_KEY, INDY_DID
 
@@ -24,7 +21,7 @@ class Service(BaseModel):
         did: str = None,
         recipient_keys: Sequence[str] = None,
         routing_keys: Sequence[str] = None,
-        service_endpoint: str = None,
+        service_endpoint: str = None
     ):
         """
         Initialize a Service instance.
@@ -54,36 +51,39 @@ class ServiceSchema(BaseModelSchema):
         model_class = Service
         unknown = EXCLUDE
 
-    _id = fields.Str(required=True, description="Service identifier", data_key="id")
-    _type = fields.Str(required=True, description="Service type", data_key="type")
-    did = fields.Str(required=False, description="Service DID", **INDY_DID)
-
+    _id = fields.Str(
+        required=True, data_key="id", metadata={"description": "Service identifier"}
+    )
+    _type = fields.Str(
+        required=True, data_key="type", metadata={"description": "Service type"}
+    )
+    did = fields.Str(
+        required=False, metadata={"description": "Service DID", **INDY_DID}
+    )
     recipient_keys = fields.List(
-        fields.Str(description="Recipient public key", **DID_KEY),
+        fields.Str(metadata={"description": "Recipient public key", **DID_KEY}),
         data_key="recipientKeys",
         required=False,
-        description="List of recipient keys",
+        metadata={"description": "List of recipient keys"},
     )
-
     routing_keys = fields.List(
-        fields.Str(description="Routing key", **DID_KEY),
+        fields.Str(metadata={"description": "Routing key", **DID_KEY}),
         data_key="routingKeys",
         required=False,
-        description="List of routing keys",
+        metadata={"description": "List of routing keys"},
     )
-
     service_endpoint = fields.Str(
         data_key="serviceEndpoint",
         required=False,
-        description="Service endpoint at which to reach this agent",
-        example="http://192.168.56.101:8020",
+        metadata={
+            "description": "Service endpoint at which to reach this agent",
+            "example": "http://192.168.56.101:8020",
+        },
     )
 
     @post_dump
     def post_dump(self, data, **kwargs):
         """Post dump hook."""
-
         if "routingKeys" in data and not data["routingKeys"]:
             del data["routingKeys"]
-
         return data

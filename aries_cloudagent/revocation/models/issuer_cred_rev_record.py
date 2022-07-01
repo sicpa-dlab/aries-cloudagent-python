@@ -1,9 +1,6 @@
 """Issuer credential revocation information."""
-
 from typing import Any, Sequence
-
 from marshmallow import fields
-
 from ...core.profile import ProfileSession
 from ...messaging.models.base_record import BaseRecord, BaseRecordSchema
 from ...messaging.valid import (
@@ -25,14 +22,7 @@ class IssuerCredRevRecord(BaseRecord):
     RECORD_TYPE = "issuer_cred_rev"
     RECORD_ID_NAME = "record_id"
     RECORD_TOPIC = "issuer_cred_rev"
-    TAG_NAMES = {
-        "cred_ex_id",
-        "cred_def_id",
-        "rev_reg_id",
-        "cred_rev_id",
-        "state",
-    }
-
+    TAG_NAMES = {"cred_ex_id", "cred_def_id", "rev_reg_id", "cred_rev_id", "state"}
     STATE_ISSUED = "issued"
     STATE_REVOKED = "revoked"
 
@@ -44,7 +34,7 @@ class IssuerCredRevRecord(BaseRecord):
         cred_ex_id: str = None,
         rev_reg_id: str = None,
         cred_rev_id: str = None,
-        cred_def_id: str = None,  # Marshmallow formalism: leave None
+        cred_def_id: str = None,
         **kwargs,
     ):
         """Initialize a new IssuerCredRevRecord."""
@@ -81,7 +71,6 @@ class IssuerCredRevRecord(BaseRecord):
             **{"rev_reg_id": rev_reg_id for _ in [""] if rev_reg_id},
             **{"state": state for _ in [""] if state},
         }
-
         return await cls.query(session, tag_filter)
 
     @classmethod
@@ -103,9 +92,7 @@ class IssuerCredRevRecord(BaseRecord):
 
     @classmethod
     async def retrieve_by_cred_ex_id(
-        cls,
-        session: ProfileSession,
-        cred_ex_id: str,
+        cls, session: ProfileSession, cred_ex_id: str
     ) -> "IssuerCredRevRecord":
         """Retrieve an issuer cred rev record by rev reg id and cred rev id."""
         return await cls.retrieve_by_tag_filter(session, {"cred_ex_id": cred_ex_id})
@@ -130,31 +117,43 @@ class IssuerCredRevRecordSchema(BaseRecordSchema):
 
     record_id = fields.Str(
         required=False,
-        description="Issuer credential revocation record identifier",
-        example=UUIDFour.EXAMPLE,
+        metadata={
+            "description": "Issuer credential revocation record identifier",
+            "example": UUIDFour.EXAMPLE,
+        },
     )
     state = fields.Str(
         required=False,
-        description="Issue credential revocation record state",
-        example=IssuerCredRevRecord.STATE_ISSUED,
+        metadata={
+            "description": "Issue credential revocation record state",
+            "example": IssuerCredRevRecord.STATE_ISSUED,
+        },
     )
     cred_ex_id = fields.Str(
         required=False,
-        description="Credential exchange record identifier at credential issue",
-        example=UUIDFour.EXAMPLE,
+        metadata={
+            "description": "Credential exchange record identifier at credential issue",
+            "example": UUIDFour.EXAMPLE,
+        },
     )
     rev_reg_id = fields.Str(
         required=False,
-        description="Revocation registry identifier",
-        **INDY_REV_REG_ID,
+        metadata={
+            "description": "Revocation registry identifier",
+            **INDY_REV_REG_ID,
+        },
     )
     cred_def_id = fields.Str(
         required=False,
-        description="Credential definition identifier",
-        **INDY_CRED_DEF_ID,
+        metadata={
+            "description": "Credential definition identifier",
+            **INDY_CRED_DEF_ID,
+        },
     )
     cred_rev_id = fields.Str(
         required=False,
-        description="Credential revocation identifier",
-        **INDY_CRED_REV_ID,
+        metadata={
+            "description": "Credential revocation identifier",
+            **INDY_CRED_REV_ID,
+        },
     )

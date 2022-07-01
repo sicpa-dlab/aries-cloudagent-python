@@ -1,11 +1,9 @@
 """Credential format inner object."""
-
 from collections import namedtuple
 from enum import Enum
 from marshmallow import EXCLUDE, fields
 from typing import Mapping, Sequence, Type, Union, TYPE_CHECKING
 from uuid import uuid4
-
 from .....messaging.decorators.attach_decorator import AttachDecorator
 from .....messaging.models.base import BaseModel, BaseModelSchema
 from .....messaging.valid import UUIDFour
@@ -13,8 +11,6 @@ from .....utils.classloader import DeferLoad
 
 if TYPE_CHECKING:
     from ..formats.handler import V20PresFormatHandler
-
-# aries prefix
 FormatSpec = namedtuple("FormatSpec", "aries handler")
 
 
@@ -32,15 +28,13 @@ class V20PresFormat(BaseModel):
         INDY = FormatSpec(
             "hlindy/",
             DeferLoad(
-                "aries_cloudagent.protocols.present_proof.v2_0"
-                ".formats.indy.handler.IndyPresExchangeHandler"
+                "aries_cloudagent.protocols.present_proof.v2_0.formats.indy.handler.IndyPresExchangeHandler"
             ),
         )
         DIF = FormatSpec(
             "dif/",
             DeferLoad(
-                "aries_cloudagent.protocols.present_proof.v2_0"
-                ".formats.dif.handler.DIFPresFormatHandler"
+                "aries_cloudagent.protocols.present_proof.v2_0.formats.dif.handler.DIFPresFormatHandler"
             ),
         )
 
@@ -53,7 +47,6 @@ class V20PresFormat(BaseModel):
                         return fmt
             elif isinstance(label, V20PresFormat.Format):
                 return label
-
             return None
 
         @property
@@ -87,19 +80,12 @@ class V20PresFormat(BaseModel):
                     break
             else:
                 return None
-
             for atch in attachments:
                 if atch.ident == attach_id:
                     return atch.content
-
             return None
 
-    def __init__(
-        self,
-        *,
-        attach_id: str = None,
-        format_: str = None,
-    ):
+    def __init__(self, *, attach_id: str = None, format_: str = None):
         """Initialize present-proof protocol message attachment format."""
         self.attach_id = attach_id or uuid4()
         self.format_ = format_
@@ -122,13 +108,14 @@ class V20PresFormatSchema(BaseModelSchema):
     attach_id = fields.Str(
         required=True,
         allow_none=False,
-        description="Attachment identifier",
-        example=UUIDFour.EXAMPLE,
+        metadata={"description": "Attachment identifier", "example": UUIDFour.EXAMPLE},
     )
     format_ = fields.Str(
         required=True,
         allow_none=False,
-        description="Attachment format specifier",
         data_key="format",
-        example="dif/presentation-exchange/submission@v1.0",
+        metadata={
+            "description": "Attachment format specifier",
+            "example": "dif/presentation-exchange/submission@v1.0",
+        },
     )

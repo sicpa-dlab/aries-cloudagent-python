@@ -1,9 +1,7 @@
 """Handler for mediate-request message."""
-
 from .....messaging.base_handler import BaseHandler, HandlerException
 from .....messaging.request_context import RequestContext
 from .....messaging.responder import BaseResponder
-
 from ..manager import MediationManager, MediationAlreadyExists
 from ..messages.mediate_request import MediationRequest
 from ..messages.problem_report import CMProblemReport, ProblemReportReason
@@ -18,10 +16,8 @@ class MediationRequestHandler(BaseHandler):
             "%s called with context %s", self.__class__.__name__, context
         )
         assert isinstance(context.message, MediationRequest)
-
         if not context.connection_ready:
             raise HandlerException("Invalid mediation request: no active connection")
-
         mgr = MediationManager(context.profile)
         try:
             record = await mgr.receive_request(

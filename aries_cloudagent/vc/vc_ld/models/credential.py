@@ -1,11 +1,8 @@
 """Verifiable Credential marshmallow schema classes."""
-
 from datetime import datetime
 from pytz import utc
 from typing import List, Optional, Union
-
 from marshmallow import INCLUDE, fields, post_dump, ValidationError
-
 from ....messaging.models.base import BaseModel, BaseModelSchema
 from ....messaging.valid import (
     CREDENTIAL_CONTEXT,
@@ -22,10 +19,7 @@ from ...ld_proofs.constants import (
     CREDENTIALS_CONTEXT_V1_URL,
     VERIFIABLE_CREDENTIAL_TYPE,
 )
-from .linked_data_proof import (
-    LDProof,
-    LinkedDataProofSchema,
-)
+from .linked_data_proof import LDProof, LinkedDataProofSchema
 
 
 class VerifiableCredential(BaseModel):
@@ -46,7 +40,7 @@ class VerifiableCredential(BaseModel):
         expiration_date: Optional[str] = None,
         credential_subject: Optional[Union[dict, List[dict]]] = None,
         proof: Optional[Union[dict, LDProof]] = None,
-        **kwargs,
+        **kwargs
     ) -> None:
         """Initialize the VerifiableCredential instance."""
         self._context = context or [CREDENTIALS_CONTEXT_V1_URL]
@@ -54,13 +48,9 @@ class VerifiableCredential(BaseModel):
         self._type = type or [VERIFIABLE_CREDENTIAL_TYPE]
         self._issuer = issuer
         self._credential_subject = credential_subject
-
-        # TODO: proper date parsing
         self._issuance_date = issuance_date
         self._expiration_date = expiration_date
-
         self._proof = proof
-
         self.extra = kwargs
 
     @property
@@ -75,7 +65,6 @@ class VerifiableCredential(BaseModel):
         First item must be credentials v1 url
         """
         assert context[0] == CREDENTIALS_CONTEXT_V1_URL
-
         self._context = context
 
     def add_context(self, context: Union[str, dict]):
@@ -99,7 +88,6 @@ class VerifiableCredential(BaseModel):
         First item must be VerifiableCredential
         """
         assert VERIFIABLE_CREDENTIAL_TYPE in type
-
         self._type = type
 
     def add_type(self, type: str):
@@ -117,7 +105,6 @@ class VerifiableCredential(BaseModel):
         if id:
             uri_validator = Uri()
             uri_validator(id)
-
         self._id = id
 
     @property
@@ -127,7 +114,6 @@ class VerifiableCredential(BaseModel):
             return None
         elif type(self._issuer) is str:
             return self._issuer
-
         return self._issuer.get("id")
 
     @issuer_id.setter
@@ -135,8 +121,6 @@ class VerifiableCredential(BaseModel):
         """Setter for issuer id."""
         uri_validator = Uri()
         uri_validator(issuer_id)
-
-        # Use simple string variant if possible
         if not self._issuer or isinstance(self._issuer, str):
             self._issuer = issuer_id
         else:
@@ -151,13 +135,10 @@ class VerifiableCredential(BaseModel):
     def issuer(self, issuer: Union[str, dict]):
         """Setter for issuer."""
         uri_validator = Uri()
-
         issuer_id = issuer if isinstance(issuer, str) else issuer.get("id")
-
         if not issuer_id:
             raise ValidationError("Issuer id is required")
         uri_validator(issuer_id)
-
         self._issuer = issuer
 
     @property
@@ -172,7 +153,6 @@ class VerifiableCredential(BaseModel):
             if not date.tzinfo:
                 date = utc.localize(date)
             date = date.isoformat()
-
         self._issuance_date = date
 
     @property
@@ -187,7 +167,6 @@ class VerifiableCredential(BaseModel):
             if not date.tzinfo:
                 date = utc.localize(date)
             date = date.isoformat()
-
         self._expiration_date = date
 
     @property
@@ -197,7 +176,6 @@ class VerifiableCredential(BaseModel):
             return []
         elif type(self._credential_subject) is dict:
             subject_id = self._credential_subject.get("id")
-
             return [subject_id] if subject_id else []
         else:
             return [
@@ -214,20 +192,15 @@ class VerifiableCredential(BaseModel):
     @credential_subject.setter
     def credential_subject(self, credential_subject: Union[dict, List[dict]]):
         """Setter for credential subject."""
-
         uri_validator = Uri()
-
         subjects = (
             [credential_subject]
             if isinstance(credential_subject, dict)
             else credential_subject
         )
-
-        # loop trough all credential subjects and check for valid id uri
         for subject in subjects:
             if subject.get("id"):
                 uri_validator(subject.get("id"))
-
         self._credential_subject = credential_subject
 
     @property
@@ -254,7 +227,6 @@ class VerifiableCredential(BaseModel):
                 and self.proof == o.proof
                 and self.extra == o.extra
             )
-
         return False
 
 
@@ -272,83 +244,69 @@ class CredentialSchema(BaseModelSchema):
         model_class = VerifiableCredential
 
     context = fields.List(
-        UriOrDictField(
-            required=True,
-        ),
+        UriOrDictField(required=True),
         data_key="@context",
         required=True,
-        description="The JSON-LD context of the credential",
-        **CREDENTIAL_CONTEXT,
+        metadata={
+            "description": "The JSON-LD context of the credential",
+            **CREDENTIAL_CONTEXT,
+        },
     )
-
     id = fields.Str(
         required=False,
-        desscription="The ID of the credential",
-        example="http://example.edu/credentials/1872",
         validate=Uri(),
+        metadata={
+            "desscription": "The ID of the credential",
+            "example": "http://example.edu/credentials/1872",
+        },
     )
-
     type = fields.List(
         fields.Str(required=True),
         required=True,
-        description="The JSON-LD type of the credential",
-        **CREDENTIAL_TYPE,
+        metadata={
+            "description": "The JSON-LD type of the credential",
+            **CREDENTIAL_TYPE,
+        },
     )
-
     issuer = StrOrDictField(
         required=True,
-        description=(
-            "The JSON-LD Verifiable Credential Issuer."
-            " Either string of object with id field."
-        ),
-        example=DIDKey.EXAMPLE,
+        metadata={
+            "description": "The JSON-LD Verifiable Credential Issuer. Either string of object with id field.",
+            "example": DIDKey.EXAMPLE,
+        },
     )
-
     issuance_date = fields.Str(
         data_key="issuanceDate",
         required=True,
-        description="The issuance date",
-        **RFC3339_DATETIME,
+        metadata={"description": "The issuance date", **RFC3339_DATETIME},
     )
-
     expiration_date = fields.Str(
         data_key="expirationDate",
         required=False,
-        description="The expiration date",
-        **RFC3339_DATETIME,
+        metadata={"description": "The expiration date", **RFC3339_DATETIME},
     )
-
     credential_subject = DictOrDictListField(
-        required=True,
-        data_key="credentialSubject",
-        **CREDENTIAL_SUBJECT,
+        required=True, data_key="credentialSubject", metadata={**CREDENTIAL_SUBJECT}
     )
-
     proof = fields.Nested(
         LinkedDataProofSchema(),
         required=False,
-        description="The proof of the credential",
-        example={
-            "type": "Ed25519Signature2018",
-            "verificationMethod": (
-                "did:key:z6Mkgg342Ycpuk263R9d8Aq6MUaxPn1DDeHyG"
-                "o38EefXmgDL#z6Mkgg342Ycpuk263R9d8Aq6MUaxPn1DDeHyGo38EefXmgDL"
-            ),
-            "created": "2019-12-11T03:50:55",
-            "proofPurpose": "assertionMethod",
-            "jws": (
-                "eyJhbGciOiAiRWREU0EiLCAiYjY0IjogZmFsc2UsICJjcml0JiNjQiXX0..lKJU0Df"
-                "_keblRKhZAS9Qq6zybm-HqUXNVZ8vgEPNTAjQKBhQDxvXNo7nvtUBb_Eq1Ch6YBKY5qBQ"
-            ),
+        metadata={
+            "description": "The proof of the credential",
+            "example": {
+                "type": "Ed25519Signature2018",
+                "verificationMethod": "did:key:z6Mkgg342Ycpuk263R9d8Aq6MUaxPn1DDeHyGo38EefXmgDL#z6Mkgg342Ycpuk263R9d8Aq6MUaxPn1DDeHyGo38EefXmgDL",
+                "created": "2019-12-11T03:50:55",
+                "proofPurpose": "assertionMethod",
+                "jws": "eyJhbGciOiAiRWREU0EiLCAiYjY0IjogZmFsc2UsICJjcml0JiNjQiXX0..lKJU0Df_keblRKhZAS9Qq6zybm-HqUXNVZ8vgEPNTAjQKBhQDxvXNo7nvtUBb_Eq1Ch6YBKY5qBQ",
+            },
         },
     )
 
     @post_dump(pass_original=True)
     def add_unknown_properties(self, data: dict, original, **kwargs):
         """Add back unknown properties before outputting."""
-
         data.update(original.extra)
-
         return data
 
 
@@ -362,18 +320,14 @@ class VerifiableCredentialSchema(CredentialSchema):
     proof = fields.Nested(
         LinkedDataProofSchema(),
         required=True,
-        description="The proof of the credential",
-        example={
-            "type": "Ed25519Signature2018",
-            "verificationMethod": (
-                "did:key:z6Mkgg342Ycpuk263R9d8Aq6MUaxPn1DDeHyG"
-                "o38EefXmgDL#z6Mkgg342Ycpuk263R9d8Aq6MUaxPn1DDeHyGo38EefXmgDL"
-            ),
-            "created": "2019-12-11T03:50:55",
-            "proofPurpose": "assertionMethod",
-            "jws": (
-                "eyJhbGciOiAiRWREU0EiLCAiYjY0IjogZmFsc2UsICJjcml0JiNjQiXX0..lKJU0Df"
-                "_keblRKhZAS9Qq6zybm-HqUXNVZ8vgEPNTAjQKBhQDxvXNo7nvtUBb_Eq1Ch6YBKY5qBQ"
-            ),
+        metadata={
+            "description": "The proof of the credential",
+            "example": {
+                "type": "Ed25519Signature2018",
+                "verificationMethod": "did:key:z6Mkgg342Ycpuk263R9d8Aq6MUaxPn1DDeHyGo38EefXmgDL#z6Mkgg342Ycpuk263R9d8Aq6MUaxPn1DDeHyGo38EefXmgDL",
+                "created": "2019-12-11T03:50:55",
+                "proofPurpose": "assertionMethod",
+                "jws": "eyJhbGciOiAiRWREU0EiLCAiYjY0IjogZmFsc2UsICJjcml0JiNjQiXX0..lKJU0Df_keblRKhZAS9Qq6zybm-HqUXNVZ8vgEPNTAjQKBhQDxvXNo7nvtUBb_Eq1Ch6YBKY5qBQ",
+            },
         },
     )

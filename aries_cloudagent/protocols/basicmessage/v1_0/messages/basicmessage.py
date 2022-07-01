@@ -1,14 +1,10 @@
 """Basic message."""
-
 from datetime import datetime
 from typing import Union
-
 from marshmallow import EXCLUDE, fields
-
 from .....messaging.agent_message import AgentMessage, AgentMessageSchema
 from .....messaging.util import datetime_now, datetime_to_str
 from .....messaging.valid import INDY_ISO8601_DATETIME
-
 from ..message_types import BASIC_MESSAGE, PROTOCOL_PACKAGE
 
 HANDLER_CLASS = f"{PROTOCOL_PACKAGE}.handlers.basicmessage_handler.BasicMessageHandler"
@@ -61,7 +57,11 @@ class BasicMessageSchema(AgentMessageSchema):
 
     sent_time = fields.Str(
         required=False,
-        description="Time message was sent, ISO8601 with space date/time separator",
-        **INDY_ISO8601_DATETIME,
+        metadata={
+            "description": "Time message was sent, ISO8601 with space date/time separator",
+            **INDY_ISO8601_DATETIME,
+        },
     )
-    content = fields.Str(required=True, description="Message content", example="Hello")
+    content = fields.Str(
+        required=True, metadata={"description": "Message content", "example": "Hello"}
+    )

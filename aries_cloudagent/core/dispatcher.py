@@ -4,18 +4,13 @@ The Dispatcher.
 The dispatcher is responsible for coordinating data flow between handlers, providing
 lifecycle hook callbacks storing state for message threads, etc.
 """
-
 import asyncio
 import logging
 import os
 import warnings
-
 from typing import Callable, Coroutine, Union
 import weakref
-
 from aiohttp.web import HTTPException
-
-
 from ..connections.models.conn_record import ConnRecord
 from ..core.profile import Profile
 from ..messaging.agent_message import AgentMessage
@@ -33,7 +28,6 @@ from ..transport.outbound.status import OutboundSendStatus
 from ..utils.stats import Collector
 from ..utils.task_queue import CompletedTask, PendingTask, TaskQueue
 from ..utils.tracing import get_timer, trace_event
-
 from .error import ProtocolMinorVersionNotSupported
 from .protocol_registry import ProtocolRegistry
 
@@ -81,7 +75,6 @@ class Dispatcher:
     def log_task(self, task: CompletedTask):
         """Log a completed task using the stats collector."""
         if task.exc_info and not issubclass(task.exc_info[0], HTTPException):
-            # skip errors intentionally returned to HTTP clients
             LOGGER.exception(
                 "Handler error: %s", task.ident or "", exc_info=task.exc_info
             )
@@ -115,8 +108,7 @@ class Dispatcher:
 
         """
         return self.put_task(
-            self.handle_message(profile, inbound_message, send_outbound),
-            complete,
+            self.handle_message(profile, inbound_message, send_outbound), complete
         )
 
     async def handle_message(
@@ -138,34 +130,25 @@ class Dispatcher:
 
         """
         r_time = get_timer()
-
         error_result = None
         message = None
         try:
             message = await self.make_message(inbound_message.payload)
         except ProblemReportParseError:
-            pass  # avoid problem report recursion
+            pass
         except MessageParseError as e:
             LOGGER.error(f"Message parsing failed: {str(e)}, sending problem report")
             error_result = ProblemReport(
-                description={
-                    "en": str(e),
-                    "code": "message-parse-failure",
-                }
+                description={"en": str(e), "code": "message-parse-failure"}
             )
             if inbound_message.receipt.thread_id:
                 error_result.assign_thread_id(inbound_message.receipt.thread_id)
-
         trace_event(
-            self.profile.settings,
-            message,
-            outcome="Dispatcher.handle_message.START",
+            self.profile.settings, message, outcome="Dispatcher.handle_message.START"
         )
-
         context = RequestContext(profile)
         context.message = message
         context.message_receipt = inbound_message.receipt
-
         responder = DispatcherResponder(
             context,
             inbound_message,
@@ -173,11 +156,7 @@ class Dispatcher:
             reply_session_id=inbound_message.session_id,
             reply_to_verkey=inbound_message.receipt.sender_verkey,
         )
-
         context.injector.bind_instance(BaseResponder, responder)
-
-        # When processing oob attach message we supply the connection id
-        # associated with the inbound message
         if inbound_message.connection_id:
             async with self.profile.session() as session:
                 connection = await ConnRecord.retrieve_by_id(
@@ -189,25 +168,20 @@ class Dispatcher:
                 inbound_message.receipt
             )
             del connection_mgr
-
         if connection:
             inbound_message.connection_id = connection.connection_id
-
         context.connection_ready = connection and connection.is_ready
         context.connection_record = connection
         responder.connection_id = connection and connection.connection_id
-
         if error_result:
             await responder.send_reply(error_result)
         elif context.message:
             context.injector.bind_instance(BaseResponder, responder)
-
             handler_cls = context.message.Handler
             handler = handler_cls().handle
             if self.collector:
                 handler = self.collector.wrap_coro(handler, [handler.__qualname__])
             await handler(context, responder)
-
         trace_event(
             self.profile.settings,
             context.message,
@@ -237,26 +211,21 @@ class Dispatcher:
         if not isinstance(parsed_msg, dict):
             raise MessageParseError("Expected a JSON object")
         message_type = parsed_msg.get("@type")
-
         if not message_type:
             raise MessageParseError("Message does not contain '@type' parameter")
-
         registry: ProtocolRegistry = self.profile.inject(ProtocolRegistry)
         try:
             message_cls = registry.resolve_message_class(message_type)
         except ProtocolMinorVersionNotSupported as e:
             raise MessageParseError(f"Problem parsing message type. {e}")
-
         if not message_cls:
             raise MessageParseError(f"Unrecognized message type {message_type}")
-
         try:
             instance = message_cls.deserialize(parsed_msg)
         except BaseModelError as e:
             if "/problem-report" in message_type:
                 raise ProblemReportParseError("Error parsing problem report message")
             raise MessageParseError(f"Error deserializing message: {e}") from e
-
         return instance
 
     async def complete(self, timeout: float = 0.1):
@@ -284,9 +253,6 @@ class DispatcherResponder(BaseResponder):
 
         """
         super().__init__(**kwargs)
-        # Weakly hold the context so it can be properly garbage collected.
-        # Binding this DispatcherResponder into the context creates a circular
-        # reference.
         self._context = weakref.ref(context)
         self._inbound_message = inbound_message
         self._send = send_outbound
@@ -303,16 +269,13 @@ class DispatcherResponder(BaseResponder):
         context = self._context()
         if not context:
             raise RuntimeError("weakref to context has expired")
-
         if isinstance(message, AgentMessage) and context.settings.get("timing.enabled"):
-            # Inject the timing decorator
             in_time = context.message_receipt and context.message_receipt.in_time
             if not message._decorators.get("timing"):
                 message._decorators["timing"] = {
                     "in_time": in_time,
                     "out_time": datetime_now(),
                 }
-
         return await super().create_outbound(message, **kwargs)
 
     async def send_outbound(self, message: OutboundMessage) -> OutboundSendStatus:
@@ -325,7 +288,6 @@ class DispatcherResponder(BaseResponder):
         context = self._context()
         if not context:
             raise RuntimeError("weakref to context has expired")
-
         return await self._send(context.profile, message, self._inbound_message)
 
     async def send_webhook(self, topic: str, payload: dict):
@@ -343,5 +305,4 @@ class DispatcherResponder(BaseResponder):
         context = self._context()
         if not context:
             raise RuntimeError("weakref to context has expired")
-
         await context.profile.notify("acapy::webhook::" + topic, payload)

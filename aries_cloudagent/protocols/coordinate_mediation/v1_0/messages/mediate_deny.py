@@ -1,9 +1,6 @@
 """mediate-deny message used to notify mediation client of a denied mediation request."""
-
 from typing import Sequence
-
 from marshmallow import fields
-
 from .....messaging.agent_message import AgentMessage, AgentMessageSchema
 from ..message_types import MEDIATE_DENY, PROTOCOL_PACKAGE
 
@@ -50,10 +47,10 @@ class MediationDenySchema(AgentMessageSchema):
         model_class = MediationDeny
 
     mediator_terms = fields.List(
-        fields.Str(description="Terms for mediator to agree"),
+        fields.Str(metadata={"description": "Terms for mediator to agree"}),
         required=False,
     )
     recipient_terms = fields.List(
-        fields.Str(description="Terms for recipient to agree"),
+        fields.Str(metadata={"description": "Terms for recipient to agree"}),
         required=False,
     )

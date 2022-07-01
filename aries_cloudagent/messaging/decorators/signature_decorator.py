@@ -1,16 +1,12 @@
 """Model and schema for working with field signatures within message bodies."""
-
 import json
 import struct
 import time
-
 from marshmallow import EXCLUDE, fields
-
 from ...protocols.didcomm_prefix import DIDCommPrefix
 from ...wallet.base import BaseWallet
 from ...wallet.util import b64_to_bytes, bytes_to_b64
 from ...wallet.key_type import KeyType
-
 from ..models.base import BaseModel, BaseModelSchema
 from ..valid import Base64URL, BASE64URL, INDY_RAW_PUBLIC_KEY
 
@@ -70,7 +66,6 @@ class SignatureDecorator(BaseModel):
             timestamp = time.time()
         if isinstance(value, BaseModel):
             value = value.serialize()
-        # 8 byte, big-endian encoded, unsigned int (long)
         timestamp_bin = struct.pack("!Q", int(timestamp))
         msg_combined_bin = timestamp_bin + json.dumps(value).encode("ascii")
         signature_bin = await wallet.sign_message(msg_combined_bin, signer)
@@ -91,7 +86,7 @@ class SignatureDecorator(BaseModel):
         """
         msg_bin = b64_to_bytes(self.sig_data, urlsafe=True)
         (timestamp,) = struct.unpack_from("!Q", msg_bin, 0)
-        return (json.loads(msg_bin[8:]), timestamp)
+        return json.loads(msg_bin[8:]), timestamp
 
     async def verify(self, wallet: BaseWallet) -> bool:
         """
@@ -137,21 +132,24 @@ class SignatureDecoratorSchema(BaseModelSchema):
     signature_type = fields.Str(
         data_key="@type",
         required=True,
-        description="Signature type",
-        example=(DIDCommPrefix.NEW.qualify("signature/1.0/ed25519Sha512_single")),
+        metadata={
+            "description": "Signature type",
+            "example": DIDCommPrefix.NEW.qualify("signature/1.0/ed25519Sha512_single"),
+        },
     )
     signature = fields.Str(
         required=True,
-        description="signature value, base64url-encoded",
-        example=(
-            "FpSxSohK3rhn9QhcJStUNRYUvD8OxLuwda3yhzHkWbZ0VxIbI-"
-            "l4mKOz7AmkMHDj2IgDEa1-GCFfWXNl96a7Bg=="
-        ),
         validate=Base64URL(),
+        metadata={
+            "description": "signature value, base64url-encoded",
+            "example": "FpSxSohK3rhn9QhcJStUNRYUvD8OxLuwda3yhzHkWbZ0VxIbI-l4mKOz7AmkMHDj2IgDEa1-GCFfWXNl96a7Bg==",
+        },
     )
     sig_data = fields.Str(
-        required=True, description="Signature data, base64url-encoded", **BASE64URL
+        required=True,
+        metadata={"description": "Signature data, base64url-encoded", **BASE64URL},
     )
     signer = fields.Str(
-        required=True, description="Signer verification key", **INDY_RAW_PUBLIC_KEY
+        required=True,
+        metadata={"description": "Signer verification key", **INDY_RAW_PUBLIC_KEY},
     )

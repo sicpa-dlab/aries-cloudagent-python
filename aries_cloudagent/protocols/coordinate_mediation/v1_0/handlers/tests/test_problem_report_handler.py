@@ -1,8 +1,6 @@
 """Test Problem Report Handler."""
 import pytest
-
 from asynctest import mock as async_mock
-
 from ......connections.models import connection_target
 from ......connections.models.conn_record import ConnRecord
 from ......connections.models.diddoc import DIDDoc, PublicKey, PublicKeyType, Service
@@ -12,7 +10,6 @@ from ......messaging.responder import MockResponder
 from ......storage.base import BaseStorage
 from ......storage.error import StorageNotFoundError
 from ......transport.inbound.receipt import MessageReceipt
-
 from ...handlers import problem_report_handler as test_module
 from ...manager import MediationManagerError, MediationManager
 from ...messages.problem_report import CMProblemReport, ProblemReportReason

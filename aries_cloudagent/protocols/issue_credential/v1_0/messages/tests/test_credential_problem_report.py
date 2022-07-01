@@ -1,14 +1,9 @@
 import logging
 import pytest
-
 from unittest import mock, TestCase
-
 from ......messaging.models.base import BaseModelError
-
 from .....didcomm_prefix import DIDCommPrefix
-
 from ...message_types import CREDENTIAL_PROBLEM_REPORT, PROTOCOL_PACKAGE
-
 from ..credential_problem_report import (
     CredentialProblemReport,
     CredentialProblemReportSchema,
@@ -22,7 +17,6 @@ class TestCredentialProblemReport(TestCase):
 
     def test_init_type(self):
         """Test initializer."""
-
         prob = CredentialProblemReport(
             description={
                 "en": "oh no",
@@ -36,46 +30,37 @@ class TestCredentialProblemReport(TestCase):
         self._caplog = caplog
 
     @mock.patch(
-        f"{PROTOCOL_PACKAGE}.messages.credential_problem_report."
-        "CredentialProblemReportSchema.load"
+        f"{PROTOCOL_PACKAGE}.messages.credential_problem_report.CredentialProblemReportSchema.load"
     )
     def test_deserialize(self, mock_load):
         """Test deserialization."""
-
         obj = CredentialProblemReport(
             description={
                 "en": "oh no",
                 "code": ProblemReportReason.ISSUANCE_ABANDONED.value,
             }
         )
-
         prob = CredentialProblemReport.deserialize(obj)
         mock_load.assert_called_once_with(obj)
-
         assert prob is mock_load.return_value
 
     @mock.patch(
-        f"{PROTOCOL_PACKAGE}.messages.credential_problem_report."
-        "CredentialProblemReportSchema.dump"
+        f"{PROTOCOL_PACKAGE}.messages.credential_problem_report.CredentialProblemReportSchema.dump"
     )
     def test_serialize(self, mock_dump):
         """Test serialization."""
-
         obj = CredentialProblemReport(
             description={
                 "en": "oh no",
                 "code": ProblemReportReason.ISSUANCE_ABANDONED.value,
             }
         )
-
         ser = obj.serialize()
         mock_dump.assert_called_once_with(obj)
-
         assert ser is mock_dump.return_value
 
     def test_make_model(self):
         """Test making model."""
-
         prob = CredentialProblemReport(
             description={
                 "en": "oh no",
@@ -85,7 +70,6 @@ class TestCredentialProblemReport(TestCase):
         data = prob.serialize()
         model_instance = CredentialProblemReport.deserialize(data)
         assert isinstance(model_instance, CredentialProblemReport)
-
         prob = CredentialProblemReport()
         data = prob.serialize()
         with pytest.raises(BaseModelError):
@@ -100,10 +84,7 @@ class TestCredentialProblemReport(TestCase):
     def test_validate_and_logger(self):
         """Capture ValidationError and Logs."""
         data = CredentialProblemReport(
-            description={
-                "en": "oh no",
-                "code": "invalid_code",
-            },
+            description={"en": "oh no", "code": "invalid_code"}
         ).serialize()
         self._caplog.set_level(logging.WARNING)
         CredentialProblemReportSchema().validate_fields(data)

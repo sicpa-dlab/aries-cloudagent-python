@@ -1,8 +1,6 @@
 from typing import Coroutine, Union
-
 from ....connections.models.conn_record import ConnRecord
 from ....core.error import BaseError
-
 from .messages.presentation_problem_report import (
     PresentationProblemReport,
     ProblemReportReason,
@@ -11,8 +9,7 @@ from .models.presentation_exchange import V10PresentationExchange
 
 
 def problem_report_for_record(
-    record: Union[ConnRecord, V10PresentationExchange],
-    desc_en: str,
+    record: Union[ConnRecord, V10PresentationExchange], desc_en: str
 ) -> PresentationProblemReport:
     """
     Create problem report for record.
@@ -23,16 +20,12 @@ def problem_report_for_record(
 
     """
     result = PresentationProblemReport(
-        description={
-            "en": desc_en,
-            "code": ProblemReportReason.ABANDONED.value,
-        },
+        description={"en": desc_en, "code": ProblemReportReason.ABANDONED.value}
     )
     if record:
         thid = getattr(record, "thread_id", None)
         if thid:
             result.assign_thread_id(thid)
-
     return result
 
 
@@ -59,5 +52,4 @@ async def report_problem(
             problem_report_for_record(record, desc_en),
             connection_id=record.connection_id,
         )
-
     raise http_error_class(reason=err.roll_up) from err

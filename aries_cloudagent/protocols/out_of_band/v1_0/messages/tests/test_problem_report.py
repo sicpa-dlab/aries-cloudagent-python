@@ -1,11 +1,8 @@
 """Test Problem Report Message."""
 import logging
 import pytest
-
 from unittest import mock, TestCase
-
 from ......messaging.models.base import BaseModelError
-
 from ..problem_report import (
     OOBProblemReport,
     OOBProblemReportSchema,
@@ -44,7 +41,6 @@ class TestOOBProblemReportMessage(TestCase):
         data = self.problem_report.serialize()
         model_instance = OOBProblemReport.deserialize(data)
         assert isinstance(model_instance, OOBProblemReport)
-
         model_instance.description["code"] = "extraneous code"
         with pytest.raises(BaseModelError):
             OOBProblemReport.deserialize(model_instance)
@@ -63,10 +59,7 @@ class TestOOBProblemReportMessage(TestCase):
     def test_validate_and_logger(self):
         """Capture ValidationError and Logs."""
         data = OOBProblemReport(
-            description={
-                "en": "Insufficient credit",
-                "code": "invalid_code",
-            },
+            description={"en": "Insufficient credit", "code": "invalid_code"}
         )
         data.assign_thread_id(thid="test_thid", pthid="test_pthid")
         data = data.serialize()

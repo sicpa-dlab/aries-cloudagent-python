@@ -1,5 +1,4 @@
 from typing import Coroutine, Union
-
 from ....connections.models.conn_record import ConnRecord
 from ....core.error import BaseError
 from ....messaging.models.base_record import BaseRecord
@@ -22,5 +21,4 @@ async def internal_error(
         if thid:
             error_result.assign_thread_id(thid)
         await outbound_handler(error_result, connection_id=record.connection_id)
-
     raise http_error_class(reason=err.roll_up) from err

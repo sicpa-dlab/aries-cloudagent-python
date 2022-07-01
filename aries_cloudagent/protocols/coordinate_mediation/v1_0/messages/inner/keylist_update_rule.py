@@ -2,11 +2,8 @@
 
 Represents single item of keylist-update.updates.
 """
-
-
 from marshmallow import fields
 from marshmallow.validate import OneOf
-
 from ......messaging.models.base import BaseModel, BaseModelSchema
 from ......messaging.valid import INDY_RAW_PUBLIC_KEY
 
@@ -45,11 +42,14 @@ class KeylistUpdateRuleSchema(BaseModelSchema):
         model_class = KeylistUpdateRule
 
     recipient_key = fields.Str(
-        description="Key to remove or add", required=True, **INDY_RAW_PUBLIC_KEY
+        required=True,
+        metadata={"description": "Key to remove or add", **INDY_RAW_PUBLIC_KEY},
     )
     action = fields.Str(
         required=True,
-        description="Action for specific key",
-        example=KeylistUpdateRule.RULE_ADD,
         validate=OneOf(["add", "remove"]),
+        metadata={
+            "description": "Action for specific key",
+            "example": KeylistUpdateRule.RULE_ADD,
+        },
     )

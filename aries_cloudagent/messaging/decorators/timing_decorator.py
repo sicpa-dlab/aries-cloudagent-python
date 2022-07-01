@@ -4,12 +4,9 @@ The timing decorator (~timing).
 This decorator allows the timing of agent messages to be communicated
 and constrained.
 """
-
 from datetime import datetime
 from typing import Union
-
 from marshmallow import EXCLUDE, fields
-
 from ..models.base import BaseModel, BaseModelSchema
 from ..util import datetime_to_str
 from ..valid import INDY_ISO8601_DATETIME
@@ -31,7 +28,7 @@ class TimingDecorator(BaseModel):
         stale_time: Union[str, datetime] = None,
         expires_time: Union[str, datetime] = None,
         delay_milli: int = None,
-        wait_until_time: Union[str, datetime] = None,
+        wait_until_time: Union[str, datetime] = None
     ):
         """
         Initialize a TimingDecorator instance.
@@ -63,29 +60,45 @@ class TimingDecoratorSchema(BaseModelSchema):
         unknown = EXCLUDE
 
     in_time = fields.Str(
-        required=False, description="Time of message receipt", **INDY_ISO8601_DATETIME
+        required=False,
+        metadata={
+            "description": "Time of message receipt",
+            **INDY_ISO8601_DATETIME,
+        },
     )
     out_time = fields.Str(
-        required=False, description="Time of message dispatch", **INDY_ISO8601_DATETIME
+        required=False,
+        metadata={
+            "description": "Time of message dispatch",
+            **INDY_ISO8601_DATETIME,
+        },
     )
     stale_time = fields.Str(
         required=False,
-        description="Time when message should be considered stale",
-        **INDY_ISO8601_DATETIME,
+        metadata={
+            "description": "Time when message should be considered stale",
+            **INDY_ISO8601_DATETIME,
+        },
     )
     expires_time = fields.Str(
         required=False,
-        description="Time when message should be considered expired",
-        **INDY_ISO8601_DATETIME,
+        metadata={
+            "description": "Time when message should be considered expired",
+            **INDY_ISO8601_DATETIME,
+        },
     )
     delay_milli = fields.Int(
         required=False,
-        description="Number of milliseconds to delay processing",
-        example=1000,
-        strict=True,
+        metadata={
+            "description": "Number of milliseconds to delay processing",
+            "example": 1000,
+            "strict": True,
+        },
     )
     wait_until_time = fields.Str(
         required=False,
-        description="Earliest time at which to perform processing",
-        **INDY_ISO8601_DATETIME,
+        metadata={
+            "description": "Earliest time at which to perform processing",
+            **INDY_ISO8601_DATETIME,
+        },
     )

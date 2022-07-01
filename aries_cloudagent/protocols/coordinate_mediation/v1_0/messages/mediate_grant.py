@@ -2,11 +2,8 @@
 
 Used to notify mediation client of a granted mediation request.
 """
-
 from typing import Sequence
-
 from marshmallow import fields
-
 from .....messaging.agent_message import AgentMessage, AgentMessageSchema
 from ..message_types import MEDIATE_GRANT, PROTOCOL_PACKAGE
 
@@ -26,11 +23,7 @@ class MediationGrant(AgentMessage):
         schema_class = "MediationGrantSchema"
 
     def __init__(
-        self,
-        *,
-        endpoint: str = None,
-        routing_keys: Sequence[str] = None,
-        **kwargs,
+        self, *, endpoint: str = None, routing_keys: Sequence[str] = None, **kwargs
     ):
         """
         Initialize mediation grant object.
@@ -53,11 +46,14 @@ class MediationGrantSchema(AgentMessageSchema):
         model_class = MediationGrant
 
     endpoint = fields.Str(
-        description="endpoint on which messages destined "
-        "for the recipient are received.",
-        example="http://192.168.56.102:8020/",
+        metadata={
+            "description": "endpoint on which messages destined for the recipient are received.",
+            "example": "http://192.168.56.102:8020/",
+        }
     )
     routing_keys = fields.List(
-        fields.Str(description="Keys to use for forward message packaging"),
+        fields.Str(
+            metadata={"description": "Keys to use for forward message packaging"}
+        ),
         required=False,
     )

@@ -1,15 +1,11 @@
 """A credential offer content message."""
-
 from typing import Sequence
-
 from marshmallow import EXCLUDE, fields
-
 from .....messaging.agent_message import AgentMessage, AgentMessageSchema
 from .....messaging.decorators.attach_decorator import (
     AttachDecorator,
     AttachDecoratorSchema,
 )
-
 from ..message_types import ATTACH_DECO_IDS, CREDENTIAL_OFFER, PROTOCOL_PACKAGE
 from .inner.credential_preview import CredentialPreview, CredentialPreviewSchema
 
@@ -80,9 +76,14 @@ class CredentialOfferSchema(AgentMessageSchema):
         unknown = EXCLUDE
 
     comment = fields.Str(
-        description="Human-readable comment", required=False, allow_none=True
+        required=False,
+        allow_none=True,
+        metadata={"description": "Human-readable comment"},
     )
     credential_preview = fields.Nested(CredentialPreviewSchema, required=False)
     offers_attach = fields.Nested(
-        AttachDecoratorSchema, required=True, many=True, data_key="offers~attach"
+        AttachDecoratorSchema,
+        required=True,
+        data_key="offers~attach",
+        metadata={"many": True},
     )

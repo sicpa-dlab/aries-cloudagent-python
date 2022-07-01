@@ -1,7 +1,5 @@
 """A credential proposal content message."""
-
 from marshmallow import EXCLUDE, fields
-
 from .....messaging.agent_message import AgentMessage, AgentMessageSchema
 from .....messaging.valid import (
     INDY_CRED_DEF_ID,
@@ -9,14 +7,11 @@ from .....messaging.valid import (
     INDY_SCHEMA_ID,
     INDY_VERSION,
 )
-
 from ..message_types import CREDENTIAL_PROPOSAL, PROTOCOL_PACKAGE
-
 from .inner.credential_preview import CredentialPreview, CredentialPreviewSchema
 
 HANDLER_CLASS = (
-    f"{PROTOCOL_PACKAGE}.handlers."
-    "credential_proposal_handler.CredentialProposalHandler"
+    f"{PROTOCOL_PACKAGE}.handlers.credential_proposal_handler.CredentialProposalHandler"
 )
 
 
@@ -78,14 +73,24 @@ class CredentialProposalSchema(AgentMessageSchema):
         unknown = EXCLUDE
 
     comment = fields.Str(
-        description="Human-readable comment", required=False, allow_none=True
+        required=False,
+        allow_none=True,
+        metadata={"description": "Human-readable comment"},
     )
     credential_proposal = fields.Nested(
         CredentialPreviewSchema, required=False, allow_none=False
     )
-    schema_id = fields.Str(required=False, allow_none=False, **INDY_SCHEMA_ID)
-    schema_issuer_did = fields.Str(required=False, allow_none=False, **INDY_DID)
+    schema_id = fields.Str(
+        required=False, allow_none=False, metadata={**INDY_SCHEMA_ID}
+    )
+    schema_issuer_did = fields.Str(
+        required=False, allow_none=False, metadata={**INDY_DID}
+    )
     schema_name = fields.Str(required=False, allow_none=False)
-    schema_version = fields.Str(required=False, allow_none=False, **INDY_VERSION)
-    cred_def_id = fields.Str(required=False, allow_none=False, **INDY_CRED_DEF_ID)
-    issuer_did = fields.Str(required=False, allow_none=False, **INDY_DID)
+    schema_version = fields.Str(
+        required=False, allow_none=False, metadata={**INDY_VERSION}
+    )
+    cred_def_id = fields.Str(
+        required=False, allow_none=False, metadata={**INDY_CRED_DEF_ID}
+    )
+    issuer_did = fields.Str(required=False, allow_none=False, metadata={**INDY_DID})

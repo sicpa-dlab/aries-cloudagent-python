@@ -1,7 +1,5 @@
 """Record used to represent a parameter in a menu form."""
-
 from marshmallow import EXCLUDE, fields
-
 from .....messaging.models.base import BaseModel, BaseModelSchema
 
 
@@ -21,7 +19,7 @@ class MenuFormParam(BaseModel):
         default: str = None,
         description: str = None,
         input_type: str = None,
-        required: bool = None,
+        required: bool = None
     ):
         """
         Initialize a MenuFormParam instance.
@@ -54,30 +52,29 @@ class MenuFormParamSchema(BaseModelSchema):
 
     name = fields.Str(
         required=True,
-        description="Menu parameter name",
-        example="delay",
+        metadata={"description": "Menu parameter name", "example": "delay"},
     )
     title = fields.Str(
-        required=True, description="Menu parameter title", example="Delay in seconds"
+        required=True,
+        metadata={"description": "Menu parameter title", "example": "Delay in seconds"},
     )
     default = fields.Str(
         required=False,
-        description="Default parameter value",
-        example="0",
+        metadata={"description": "Default parameter value", "example": "0"},
     )
     description = fields.Str(
         required=False,
-        description="Additional descriptive text for menu form parameter",
-        example="Delay in seconds before starting",
+        metadata={
+            "description": "Additional descriptive text for menu form parameter",
+            "example": "Delay in seconds before starting",
+        },
     )
     input_type = fields.Str(
         required=False,
-        description="Menu form parameter input type",
-        example="int",
         data_key="type",
+        metadata={"description": "Menu form parameter input type", "example": "int"},
     )
     required = fields.Bool(
         required=False,
-        description="Whether parameter is required",
-        example="False",
+        metadata={"description": "Whether parameter is required", "example": "False"},
     )

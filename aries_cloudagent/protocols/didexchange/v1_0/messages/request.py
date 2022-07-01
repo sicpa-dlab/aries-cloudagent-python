@@ -1,14 +1,11 @@
 """Represents a DID exchange request message under RFC 23."""
-
 from marshmallow import EXCLUDE, fields
-
 from .....messaging.agent_message import AgentMessage, AgentMessageSchema
 from .....messaging.decorators.attach_decorator import (
     AttachDecorator,
     AttachDecoratorSchema,
 )
 from .....messaging.valid import INDY_DID
-
 from ..message_types import DIDX_REQUEST, PROTOCOL_PACKAGE
 
 HANDLER_CLASS = f"{PROTOCOL_PACKAGE}.handlers.request_handler.DIDXRequestHandler"
@@ -57,13 +54,15 @@ class DIDXRequestSchema(AgentMessageSchema):
 
     label = fields.Str(
         required=True,
-        description="Label for DID exchange request",
-        example="Request to connect with Bob",
+        metadata={
+            "description": "Label for DID exchange request",
+            "example": "Request to connect with Bob",
+        },
     )
-    did = fields.Str(description="DID of exchange", **INDY_DID)
+    did = fields.Str(metadata={"description": "DID of exchange", **INDY_DID})
     did_doc_attach = fields.Nested(
         AttachDecoratorSchema,
         required=False,
-        description="As signed attachment, DID Doc associated with DID",
         data_key="did_doc~attach",
+        metadata={"description": "As signed attachment, DID Doc associated with DID"},
     )

@@ -1,9 +1,6 @@
 """Cred request artifacts to attach to RFC 453 messages."""
-
 from typing import Mapping
-
 from marshmallow import EXCLUDE, fields
-
 from ...messaging.models.base import BaseModel, BaseModelSchema
 from ...messaging.valid import INDY_CRED_DEF_ID, INDY_DID, NUM_STR_WHOLE
 
@@ -23,7 +20,7 @@ class IndyCredRequest(BaseModel):
         blinded_ms: Mapping = None,
         blinded_ms_correctness_proof: Mapping = None,
         nonce: str = None,
-        **kwargs,
+        **kwargs
     ):
         """Initialize indy credential request."""
         super().__init__(**kwargs)
@@ -44,25 +41,23 @@ class IndyCredRequestSchema(BaseModelSchema):
         unknown = EXCLUDE
 
     prover_did = fields.Str(
-        requred=True,
-        description="Prover DID",
-        **INDY_DID,
+        metadata={"requred": True, "description": "Prover DID", **INDY_DID}
     )
     cred_def_id = fields.Str(
         required=True,
-        description="Credential definition identifier",
-        **INDY_CRED_DEF_ID,
+        metadata={
+            "description": "Credential definition identifier",
+            **INDY_CRED_DEF_ID,
+        },
     )
     blinded_ms = fields.Dict(
-        required=True,
-        description="Blinded master secret",
+        required=True, metadata={"description": "Blinded master secret"}
     )
     blinded_ms_correctness_proof = fields.Dict(
         required=True,
-        description="Blinded master secret correctness proof",
+        metadata={"description": "Blinded master secret correctness proof"},
     )
     nonce = fields.Str(
         required=True,
-        description="Nonce in credential request",
-        **NUM_STR_WHOLE,
+        metadata={"description": "Nonce in credential request", **NUM_STR_WHOLE},
     )

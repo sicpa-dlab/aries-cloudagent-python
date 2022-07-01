@@ -16,9 +16,9 @@ from ....admin.request_context import AdminRequestContext
 from ....connections.models.conn_record import ConnRecord
 from ....indy.holder import IndyHolder, IndyHolderError
 from ....indy.models.cred_precis import IndyCredPrecisSchema
+from ....indy.models.pres_preview import IndyPresPreview, IndyPresPreviewSchema
 from ....indy.models.proof import IndyPresSpecSchema
 from ....indy.models.proof_request import IndyProofRequestSchema
-from ....indy.models.pres_preview import IndyPresPreview, IndyPresPreviewSchema
 from ....indy.util import generate_pr_nonce
 from ....ledger.error import LedgerError
 from ....messaging.decorators.attach_decorator import AttachDecorator
@@ -28,13 +28,12 @@ from ....messaging.valid import (
     INDY_EXTRA_WQL,
     NUM_STR_NATURAL,
     NUM_STR_WHOLE,
-    UUIDFour,
     UUID4,
+    UUIDFour,
 )
 from ....storage.error import StorageError, StorageNotFoundError
-from ....utils.tracing import trace_event, get_timer, AdminAPIMessageTracingSchema
+from ....utils.tracing import AdminAPIMessageTracingSchema, get_timer, trace_event
 from ....wallet.error import WalletNotFoundError
-
 from . import problem_report_for_record, report_problem
 from .manager import PresentationManager, PresentationManagerError
 from .message_types import ATTACH_DECO_IDS, PRESENTATION_REQUEST, SPEC_URI
@@ -55,36 +54,44 @@ class V10PresentationExchangeListQueryStringSchema(OpenAPISchema):
     """Parameters and validators for presentation exchange list query."""
 
     connection_id = fields.UUID(
-        description="Connection identifier",
         required=False,
-        example=UUIDFour.EXAMPLE,  # typically but not necessarily a UUID4
+        metadata={
+            "description": "Connection identifier",
+            "example": UUIDFour.EXAMPLE,
+        },  # typically but not necessarily a UUID4
     )
     thread_id = fields.UUID(
-        description="Thread identifier",
         required=False,
-        example=UUIDFour.EXAMPLE,  # typically but not necessarily a UUID4
+        metadata={
+            "description": "Thread identifier",
+            "example": UUIDFour.EXAMPLE,
+        },  # typically but not necessarily a UUID4
     )
     role = fields.Str(
-        description="Role assigned in presentation exchange",
         required=False,
-        validate=validate.OneOf(
-            [
-                getattr(V10PresentationExchange, m)
-                for m in vars(V10PresentationExchange)
-                if m.startswith("ROLE_")
-            ]
-        ),
+        metadata={
+            "description": "Role assigned in presentation exchange",
+            "validate": validate.OneOf(
+                [
+                    getattr(V10PresentationExchange, m)
+                    for m in vars(V10PresentationExchange)
+                    if m.startswith("ROLE_")
+                ]
+            ),
+        },
     )
     state = fields.Str(
-        description="Presentation exchange state",
         required=False,
-        validate=validate.OneOf(
-            [
-                getattr(V10PresentationExchange, m)
-                for m in vars(V10PresentationExchange)
-                if m.startswith("STATE_")
-            ]
-        ),
+        metadata={
+            "description": "Presentation exchange state",
+            "validate": validate.OneOf(
+                [
+                    getattr(V10PresentationExchange, m)
+                    for m in vars(V10PresentationExchange)
+                    if m.startswith("STATE_")
+                ]
+            ),
+        },
     )
 
 
@@ -93,7 +100,7 @@ class V10PresentationExchangeListSchema(OpenAPISchema):
 
     results = fields.List(
         fields.Nested(V10PresentationExchangeSchema()),
-        description="Aries RFC 37 v1.0 presentation exchange records",
+        metadata={"description": "Aries RFC 37 v1.0 presentation exchange records"},
     )
 
 
@@ -101,27 +108,34 @@ class V10PresentationProposalRequestSchema(AdminAPIMessageTracingSchema):
     """Request schema for sending a presentation proposal admin message."""
 
     connection_id = fields.UUID(
-        description="Connection identifier", required=True, example=UUIDFour.EXAMPLE
+        metadata={"description": "Connection identifier", "example": UUIDFour.EXAMPLE},
+        required=True,
     )
     comment = fields.Str(
-        description="Human-readable comment", required=False, allow_none=True
+        metadata={"description": "Human-readable comment"},
+        required=False,
+        allow_none=True,
     )
     presentation_proposal = fields.Nested(
         IndyPresPreviewSchema(),
         required=True,
     )
     auto_present = fields.Boolean(
-        description=(
-            "Whether to respond automatically to presentation requests, building "
-            "and presenting requested proof"
-        ),
+        metadata={
+            "description": (
+                "Whether to respond automatically to presentation requests, building "
+                "and presenting requested proof"
+            )
+        },
         required=False,
         default=False,
     )
     trace = fields.Bool(
-        description="Whether to trace event (default false)",
         required=False,
-        example=False,
+        metadata={
+            "description": "Whether to trace event (default false)",
+            "example": False,
+        },
     )
 
 
@@ -131,14 +145,18 @@ class V10PresentationCreateRequestRequestSchema(AdminAPIMessageTracingSchema):
     proof_request = fields.Nested(IndyProofRequestSchema(), required=True)
     comment = fields.Str(required=False, allow_none=True)
     auto_verify = fields.Bool(
-        description="Verifier choice to auto-verify proof presentation",
         required=False,
-        example=False,
+        metadata={
+            "description": "Verifier choice to auto-verify proof presentation",
+            "example": False,
+        },
     )
     trace = fields.Bool(
-        description="Whether to trace event (default false)",
         required=False,
-        example=False,
+        metadata={
+            "description": "Whether to trace event (default false)",
+            "example": False,
+        },
     )
 
 
@@ -148,7 +166,8 @@ class V10PresentationSendRequestRequestSchema(
     """Request schema for sending a proof request on a connection."""
 
     connection_id = fields.UUID(
-        description="Connection identifier", required=True, example=UUIDFour.EXAMPLE
+        metadata={"description": "Connection identifier", "example": UUIDFour.EXAMPLE},
+        required=True,
     )
 
 
@@ -156,14 +175,18 @@ class V10PresentationSendRequestToProposalSchema(AdminAPIMessageTracingSchema):
     """Request schema for sending a proof request bound to a proposal."""
 
     auto_verify = fields.Bool(
-        description="Verifier choice to auto-verify proof presentation",
         required=False,
-        example=False,
+        metadata={
+            "description": "Verifier choice to auto-verify proof presentation",
+            "example": False,
+        },
     )
     trace = fields.Bool(
-        description="Whether to trace event (default false)",
         required=False,
-        example=False,
+        metadata={
+            "description": "Whether to trace event (default false)",
+            "example": False,
+        },
     )
 
 
@@ -171,25 +194,26 @@ class CredentialsFetchQueryStringSchema(OpenAPISchema):
     """Parameters and validators for credentials fetch request query string."""
 
     referent = fields.Str(
-        description="Proof request referents of interest, comma-separated",
         required=False,
-        example="1_name_uuid,2_score_uuid",
+        metadata={
+            "description": "Proof request referents of interest, comma-separated",
+            "example": "1_name_uuid,2_score_uuid",
+        },
     )
     start = fields.Str(
-        description="Start index",
         required=False,
-        strict=True,
-        **NUM_STR_WHOLE,
+        metadata={"description": "Start index", **NUM_STR_WHOLE, "strict": True},
     )
     count = fields.Str(
-        description="Maximum number to retrieve",
         required=False,
-        **NUM_STR_NATURAL,
+        metadata={"description": "Maximum number to retrieve", **NUM_STR_NATURAL},
     )
     extra_query = fields.Str(
-        description="(JSON) object mapping referents to extra WQL queries",
         required=False,
-        **INDY_EXTRA_WQL,
+        metadata={
+            "description": "(JSON) object mapping referents to extra WQL queries",
+            **INDY_EXTRA_WQL,
+        },
     )
 
 
@@ -203,7 +227,8 @@ class V10PresExIdMatchInfoSchema(OpenAPISchema):
     """Path parameters and validators for request taking presentation exchange id."""
 
     pres_ex_id = fields.Str(
-        description="Presentation exchange identifier", required=True, **UUID4
+        metadata={"description": "Presentation exchange identifier", **UUID4},
+        required=True,
     )
 
 

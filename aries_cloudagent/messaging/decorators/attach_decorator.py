@@ -3,16 +3,11 @@ A message decorator for attachments.
 
 An attach decorator embeds content or specifies appended content.
 """
-
-
 import json
 import uuid
 import copy
-
 from typing import Any, Mapping, Sequence, Tuple, Union
-
 from marshmallow import EXCLUDE, fields, pre_load
-
 from ...wallet.base import BaseWallet
 from ...wallet.util import (
     b58_to_bytes,
@@ -51,7 +46,6 @@ class AttachDecoratorDataJWSHeader(BaseModel):
 
     def __eq__(self, other: Any):
         """Compare equality with another."""
-
         return type(self) == type(other) and self.kid == other.kid
 
 
@@ -65,9 +59,11 @@ class AttachDecoratorDataJWSHeaderSchema(BaseModelSchema):
         unknown = EXCLUDE
 
     kid = fields.Str(
-        description="Key identifier, in W3C did:key or DID URL format",
         required=True,
-        **JWS_HEADER_KID,
+        metadata={
+            "description": "Key identifier, in W3C did:key or DID URL format",
+            **JWS_HEADER_KID,
+        },
     )
 
 
@@ -84,7 +80,7 @@ class AttachDecoratorData1JWS(BaseModel):
         *,
         header: AttachDecoratorDataJWSHeader,
         protected: str = None,
-        signature: str,
+        signature: str
     ):
         """Initialize flattened single-JWS to include in attach decorator data."""
         self.header = header
@@ -93,7 +89,6 @@ class AttachDecoratorData1JWS(BaseModel):
 
     def __eq__(self, other: Any):
         """Compare equality with another."""
-
         return (
             type(self) == type(other)
             and self.header == other.header
@@ -113,9 +108,12 @@ class AttachDecoratorData1JWSSchema(BaseModelSchema):
 
     header = fields.Nested(AttachDecoratorDataJWSHeaderSchema, required=True)
     protected = fields.Str(
-        description="protected JWS header", required=False, **BASE64URL_NO_PAD
+        required=False,
+        metadata={"description": "protected JWS header", **BASE64URL_NO_PAD},
     )
-    signature = fields.Str(description="signature", required=True, **BASE64URL_NO_PAD)
+    signature = fields.Str(
+        required=True, metadata={"description": "signature", **BASE64URL_NO_PAD}
+    )
 
 
 class AttachDecoratorDataJWS(BaseModel):
@@ -138,7 +136,7 @@ class AttachDecoratorDataJWS(BaseModel):
         header: AttachDecoratorDataJWSHeader = None,
         protected: str = None,
         signature: str = None,
-        signatures: Sequence[AttachDecoratorData1JWS] = None,
+        signatures: Sequence[AttachDecoratorData1JWS] = None
     ):
         """Initialize JWS to include in attach decorator multi-sig data."""
         self.header = header
@@ -159,57 +157,43 @@ class AttachDecoratorDataJWSSchema(BaseModelSchema):
     @pre_load
     def validate_single_xor_multi_sig(self, data: Mapping, **kwargs):
         """Ensure model is for either 1 or many sigatures, not mishmash of both."""
-
         if "signatures" in data:
             if any(k in data for k in ("header", "protected", "signature")):
                 raise BaseModelError(
-                    "AttachDecoratorDataJWSSchema: "
-                    "JWS must be flattened or general JSON serialization format"
+                    "AttachDecoratorDataJWSSchema: JWS must be flattened or general JSON serialization format"
                 )
         elif not all(k in data for k in ("header", "signature")):
             raise BaseModelError(
-                "AttachDecoratorDataJWSSchema: "
-                "Flattened JSON serialization format must include header and signature"
+                "AttachDecoratorDataJWSSchema: Flattened JSON serialization format must include header and signature"
             )
-
         return data
 
-    header = fields.Nested(
-        AttachDecoratorDataJWSHeaderSchema,
-        required=False,  # packed in signatures if multi-sig
-    )
+    header = fields.Nested(AttachDecoratorDataJWSHeaderSchema, required=False)
     protected = fields.Str(
-        description="protected JWS header",
-        required=False,  # packed in signatures if multi-sig
-        **BASE64URL_NO_PAD,
+        required=False,
+        metadata={"description": "protected JWS header", **BASE64URL_NO_PAD},
     )
     signature = fields.Str(
-        description="signature",
-        required=False,  # packed in signatures if multi-sig
-        **BASE64URL_NO_PAD,
+        required=False, metadata={"description": "signature", **BASE64URL_NO_PAD}
     )
     signatures = fields.List(
         fields.Nested(AttachDecoratorData1JWSSchema),
-        required=False,  # only present if multi-sig
-        description="List of signatures",
+        required=False,
+        metadata={"description": "List of signatures"},
     )
 
 
 def did_key(verkey: str) -> str:
     """Qualify verkey into DID key if need be."""
-
     if verkey.startswith("did:key:"):
         return verkey
-
     return DIDKey.from_public_key_b58(verkey, KeyType.ED25519).did
 
 
 def raw_key(verkey: str) -> str:
     """Strip qualified key to raw key if need be."""
-
     if verkey.startswith("did:key:"):
         return DIDKey.from_did(verkey).public_key_b58
-
     return verkey
 
 
@@ -228,7 +212,7 @@ class AttachDecoratorData(BaseModel):
         sha256_: str = None,
         links_: Union[Sequence[str], str] = None,
         base64_: str = None,
-        json_: dict = None,
+        json_: dict = None
     ):
         """
         Initialize decorator data.
@@ -250,11 +234,9 @@ class AttachDecoratorData(BaseModel):
         if jws_:
             self.jws_ = jws_
             assert not json_
-
         if base64_:
             self.base64_ = base64_
         elif json_:
-            # prevent external manipulation of attachment data
             self.json_ = copy.deepcopy(json_)
         else:
             assert isinstance(links_, (str, Sequence))
@@ -265,19 +247,16 @@ class AttachDecoratorData(BaseModel):
     @property
     def base64(self):
         """Accessor for base64 decorator data, or None."""
-
         return getattr(self, "base64_", None)
 
     @property
     def jws(self):
         """Accessor for JWS, or None."""
-
         return getattr(self, "jws_", None)
 
     @property
     def signatures(self) -> int:
         """Accessor for number of signatures."""
-
         if self.jws:
             return 1 if self.jws.signature else len(self.jws.signatures)
         return 0
@@ -285,7 +264,6 @@ class AttachDecoratorData(BaseModel):
     @property
     def signed(self) -> bytes:
         """Accessor for signed content (payload), None for unsigned."""
-
         return (
             b64_to_bytes(unpad(set_urlsafe_b64(self.base64, urlsafe=True)))
             if self.signatures
@@ -303,7 +281,6 @@ class AttachDecoratorData(BaseModel):
         """
         if not self.signatures:
             return None
-
         headers = {}
         sig = self.jws if self.jws.signature else self.jws.signatures[idx]
         if sig.protected:
@@ -316,27 +293,19 @@ class AttachDecoratorData(BaseModel):
     def json(self):
         """Accessor for json decorator data, or None."""
         json_data = getattr(self, "json_", None)
-
-        # Prevent external manipulation of attachment data
         return copy.deepcopy(json_data) if json_data else None
 
     @property
     def links(self):
         """Accessor for links decorator data, or None."""
-
         return getattr(self, "links_", None)
 
     @property
     def sha256(self):
         """Accessor for sha256 decorator data, or None."""
-
         return getattr(self, "sha256_", None)
 
-    async def sign(
-        self,
-        verkeys: Union[str, Sequence[str]],
-        wallet: BaseWallet,
-    ):
+    async def sign(self, verkeys: Union[str, Sequence[str]], wallet: BaseWallet):
         """
         Sign base64 data value of attachment.
 
@@ -348,7 +317,6 @@ class AttachDecoratorData(BaseModel):
 
         def build_protected(verkey: str):
             """Build protected header."""
-
             return str_to_b64(
                 json.dumps(
                     {
@@ -369,11 +337,11 @@ class AttachDecoratorData(BaseModel):
             )
 
         assert self.base64
-
         b64_payload = unpad(set_urlsafe_b64(self.base64, True))
-
-        if isinstance(verkeys, str) or (
-            isinstance(verkeys, Sequence) and len(verkeys) == 1
+        if (
+            isinstance(verkeys, str)
+            or isinstance(verkeys, Sequence)
+            and len(verkeys) == 1
         ):
             kid = did_key(verkeys if isinstance(verkeys, str) else verkeys[0])
             verkey = raw_key(verkeys if isinstance(verkeys, str) else verkeys[0])
@@ -389,7 +357,7 @@ class AttachDecoratorData(BaseModel):
             self.jws_ = AttachDecoratorDataJWS.deserialize(
                 {
                     "header": AttachDecoratorDataJWSHeader(kid).serialize(),
-                    "protected": b64_protected,  # always present by construction
+                    "protected": b64_protected,
                     "signature": b64_sig,
                 }
             )
@@ -407,7 +375,7 @@ class AttachDecoratorData(BaseModel):
                 )
                 jws["signatures"].append(
                     {
-                        "protected": b64_protected,  # always present by construction
+                        "protected": b64_protected,
                         "header": {"kid": did_key(verkey)},
                         "signature": b64_sig,
                     }
@@ -426,7 +394,6 @@ class AttachDecoratorData(BaseModel):
 
         """
         assert self.jws
-
         b64_payload = unpad(set_urlsafe_b64(self.base64, True))
         verkey_to_check = []
         for sig in [self.jws] if self.signatures == 1 else self.jws.signatures:
@@ -434,7 +401,6 @@ class AttachDecoratorData(BaseModel):
             b64_sig = sig.signature
             protected = json.loads(b64_to_str(b64_protected, urlsafe=True))
             assert "jwk" in protected and protected["jwk"].get("kty") == "OKP"
-
             sign_input = (b64_protected + "." + b64_payload).encode("ascii")
             b_sig = b64_to_bytes(b64_sig, urlsafe=True)
             verkey = bytes_to_b58(b64_to_bytes(protected["jwk"]["x"], urlsafe=True))
@@ -454,7 +420,6 @@ class AttachDecoratorData(BaseModel):
 
     def __eq__(self, other):
         """Compare equality with another."""
-
         for attr in ["jws_", "sha256_", "base64_"]:
             if getattr(self, attr, None) != getattr(other, attr, None):
                 return False
@@ -475,40 +440,44 @@ class AttachDecoratorDataSchema(BaseModelSchema):
     @pre_load
     def validate_data_spec(self, data: Mapping, **kwargs):
         """Ensure model chooses exactly one of base64, json, or links."""
-
         if len(set(data.keys()) & {"base64", "json", "links"}) != 1:
             raise BaseModelError(
                 "AttachDecoratorSchema: choose exactly one of base64, json, or links"
             )
-
         return data
 
     base64_ = fields.Str(
-        description="Base64-encoded data", required=False, data_key="base64", **BASE64
+        required=False,
+        data_key="base64",
+        metadata={"description": "Base64-encoded data", **BASE64},
     )
     jws_ = fields.Nested(
         AttachDecoratorDataJWSSchema,
-        description="Detached Java Web Signature",
         required=False,
         data_key="jws",
+        metadata={"description": "Detached Java Web Signature"},
     )
     json_ = fields.Dict(
-        description="JSON-serialized data",
         required=False,
-        example='{"sample": "content"}',
         data_key="json",
+        metadata={
+            "description": "JSON-serialized data",
+            "example": '{"sample": "content"}',
+        },
     )
     links_ = fields.List(
-        fields.Str(example="https://link.to/data"),
-        description="List of hypertext links to data",
+        fields.Str(metadata={"example": "https://link.to/data"}),
         required=False,
         data_key="links",
+        metadata={"description": "List of hypertext links to data"},
     )
     sha256_ = fields.Str(
-        description="SHA256 hash (binhex encoded) of content",
         required=False,
         data_key="sha256",
-        **SHA256,
+        metadata={
+            "description": "SHA256 hash (binhex encoded) of content",
+            **SHA256,
+        },
     )
 
 
@@ -530,7 +499,7 @@ class AttachDecorator(BaseModel):
         lastmod_time: str = None,
         byte_count: int = None,
         data: AttachDecoratorData,
-        **kwargs,
+        **kwargs
     ):
         """
         Initialize an AttachDecorator instance.
@@ -571,10 +540,7 @@ class AttachDecorator(BaseModel):
         elif hasattr(self.data, "json_"):
             return self.data.json
         elif hasattr(self.data, "links_"):
-            return (  # fetching would be async; we want a property here
-                self.data.links,
-                self.data.sha256,
-            )
+            return self.data.links, self.data.sha256
         else:
             return None
 
@@ -587,7 +553,7 @@ class AttachDecorator(BaseModel):
         description: str = None,
         filename: str = None,
         lastmod_time: str = None,
-        byte_count: int = None,
+        byte_count: int = None
     ):
         """
         Create `AttachDecorator` instance on base64-encoded data from input mapping.
@@ -625,7 +591,7 @@ class AttachDecorator(BaseModel):
         description: str = None,
         filename: str = None,
         lastmod_time: str = None,
-        byte_count: int = None,
+        byte_count: int = None
     ):
         """
         Create `AttachDecorator` instance on json-encoded data from input mapping.
@@ -663,7 +629,7 @@ class AttachDecorator(BaseModel):
         description: str = None,
         filename: str = None,
         lastmod_time: str = None,
-        byte_count: int = None,
+        byte_count: int = None
     ):
         """
         Create `AttachDecorator` instance on json-encoded data from input mapping.
@@ -703,38 +669,40 @@ class AttachDecoratorSchema(BaseModelSchema):
         unknown = EXCLUDE
 
     ident = fields.Str(
-        description="Attachment identifier",
-        example=UUIDFour.EXAMPLE,
         required=False,
         allow_none=False,
         data_key="@id",
+        metadata={"description": "Attachment identifier", "example": UUIDFour.EXAMPLE},
     )
     mime_type = fields.Str(
-        description="MIME type",
-        example="image/png",
         required=False,
         data_key="mime-type",
+        metadata={"description": "MIME type", "example": "image/png"},
     )
     filename = fields.Str(
-        description="File name", example="IMG1092348.png", required=False
+        required=False,
+        metadata={"description": "File name", "example": "IMG1092348.png"},
     )
     byte_count = fields.Int(
-        description="Byte count of data included by reference",
-        example=1234,
         required=False,
-        strict=True,
+        metadata={
+            "description": "Byte count of data included by reference",
+            "example": 1234,
+            "strict": True,
+        },
     )
     lastmod_time = fields.Str(
-        description="Hint regarding last modification datetime, in ISO-8601 format",
         required=False,
-        **INDY_ISO8601_DATETIME,
+        metadata={
+            "description": "Hint regarding last modification datetime, in ISO-8601 format",
+            **INDY_ISO8601_DATETIME,
+        },
     )
     description = fields.Str(
-        description="Human-readable description of content",
-        example="view from doorway, facing east, with lights off",
         required=False,
+        metadata={
+            "description": "Human-readable description of content",
+            "example": "view from doorway, facing east, with lights off",
+        },
     )
-    data = fields.Nested(
-        AttachDecoratorDataSchema,
-        required=True,
-    )
+    data = fields.Nested(AttachDecoratorDataSchema, required=True)

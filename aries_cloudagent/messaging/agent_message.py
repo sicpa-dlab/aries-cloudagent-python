@@ -1,9 +1,7 @@
 """Agent message base class and schema."""
-
 from collections import OrderedDict
 from typing import Mapping, Union
 import uuid
-
 from marshmallow import (
     EXCLUDE,
     fields,
@@ -13,13 +11,11 @@ from marshmallow import (
     post_dump,
     ValidationError,
 )
-
 from ..protocols.didcomm_prefix import DIDCommPrefix
 from ..wallet.base import BaseWallet
-
 from .decorators.base import BaseDecoratorSet
 from .decorators.default import DecoratorSet
-from .decorators.signature_decorator import SignatureDecorator  # TODO deprecated
+from .decorators.signature_decorator import SignatureDecorator
 from .decorators.thread_decorator import ThreadDecorator
 from .decorators.service_decorator import ServiceDecorator
 from .decorators.trace_decorator import (
@@ -81,11 +77,6 @@ class AgentMessage(BaseModel, BaseMessage):
                     self.__class__.__name__
                 )
             )
-        # Not required for now
-        # if not self.Meta.handler_class:
-        #    raise TypeError(
-        #        "Can't instantiate abstract class {} with no handler_class".format(
-        #            self.__class__.__name__))
 
     @classmethod
     def _get_handler_class(cls):
@@ -170,7 +161,7 @@ class AgentMessage(BaseModel, BaseMessage):
         """
         self._decorators.field(field_name)["sig"] = signature
 
-    async def sign_field(  # TODO migrate to signed-attachment per RFC 17
+    async def sign_field(
         self, field_name: str, signer_verkey: str, wallet: BaseWallet, timestamp=None
     ) -> SignatureDecorator:
         """
@@ -200,7 +191,7 @@ class AgentMessage(BaseModel, BaseMessage):
         self.set_signature(field_name, sig)
         return sig
 
-    async def verify_signed_field(  # TODO migrate to signed-attachment per RFC 17
+    async def verify_signed_field(
         self, field_name: str, wallet: BaseWallet, signer_verkey: str = None
     ) -> str:
         """
@@ -363,7 +354,6 @@ class AgentMessage(BaseModel, BaseMessage):
             msg: The received message containing optional trace information
         """
         if msg and msg._trace:
-            # ignore if not a valid type
             if isinstance(msg._trace, TraceDecorator) or isinstance(msg._trace, dict):
                 self._trace = msg._trace
 
@@ -391,8 +381,6 @@ class AgentMessage(BaseModel, BaseMessage):
             full_thread: Full thread flag
         """
         if self._trace:
-            # don't replace if there is already a trace decorator
-            # (potentially holding trace reports already)
             self._trace._target = target
             self._trace._full_thread = full_thread
         else:
@@ -413,7 +401,6 @@ class AgentMessage(BaseModel, BaseMessage):
         """Return serialized message in format specified."""
         if msg_format is DIDCommVersion.v2:
             raise NotImplementedError("DIDComm v2 is not yet supported")
-
         return super().serialize(**kwargs)
 
     @classmethod
@@ -423,7 +410,6 @@ class AgentMessage(BaseModel, BaseMessage):
         """Return message object deserialized from value in format specified."""
         if msg_format is DIDCommVersion.v2:
             raise NotImplementedError("DIDComm v2 is not yet supported")
-
         return super().deserialize(value, **kwargs)
 
 
@@ -437,19 +423,19 @@ class AgentMessageSchema(BaseModelSchema):
         signed_fields = None
         unknown = EXCLUDE
 
-    # Avoid clobbering keywords
     _type = fields.Str(
         data_key="@type",
         dump_only=True,
         required=False,
-        description="Message type",
-        example="https://didcomm.org/my-family/1.0/my-message-type",
+        metadata={
+            "description": "Message type",
+            "example": "https://didcomm.org/my-family/1.0/my-message-type",
+        },
     )
     _id = fields.Str(
         data_key="@id",
         required=False,
-        description="Message identifier",
-        example=UUIDFour.EXAMPLE,
+        metadata={"description": "Message identifier", "example": UUIDFour.EXAMPLE},
     )
 
     def __init__(self, *args, **kwargs):
@@ -485,7 +471,6 @@ class AgentMessageSchema(BaseModelSchema):
 
         """
         processed = self._decorators.extract_decorators(data, self.__class__)
-
         expect_fields = resolve_meta_property(self, "signed_fields") or ()
         found_signatures = {}
         for field_name, field in self._decorators.fields.items():
@@ -499,7 +484,7 @@ class AgentMessageSchema(BaseModelSchema):
                         f"Message defines both field signature and value: {field_name}"
                     )
                 found_signatures[field_name] = field["sig"]
-                processed[field_name], _ = field["sig"].decode()  # _ = timestamp
+                processed[field_name], _ = field["sig"].decode()
         for field_name in expect_fields:
             if field_name not in found_signatures:
                 raise ValidationError(f"Expected field signature: {field_name}")
@@ -540,15 +525,12 @@ class AgentMessageSchema(BaseModelSchema):
                 del field["sig"]
         self._decorators_dict = decorators.to_dict()
         self._signatures = signatures
-
-        # check existence of signatures
         expect_fields = resolve_meta_property(self, "signed_fields") or ()
         for field_name in expect_fields:
             if field_name not in self._signatures:
                 raise BaseModelError(
                     "Missing signature for field: {}".format(field_name)
                 )
-
         return obj
 
     @post_dump

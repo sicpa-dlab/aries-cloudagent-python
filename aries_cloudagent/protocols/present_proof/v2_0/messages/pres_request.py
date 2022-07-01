@@ -1,16 +1,12 @@
 """A presentation request content message."""
-
 from marshmallow import EXCLUDE, fields, validates_schema, ValidationError
 from typing import Sequence
-
 from .....messaging.agent_message import AgentMessage, AgentMessageSchema
 from .....messaging.decorators.attach_decorator import (
     AttachDecorator,
     AttachDecoratorSchema,
 )
-
 from ..message_types import PRES_20_REQUEST, PROTOCOL_PACKAGE
-
 from .pres_format import V20PresFormat, V20PresFormatSchema
 
 HANDLER_CLASS = (
@@ -75,8 +71,7 @@ class V20PresRequest(AgentMessage):
         )
         return (
             target_format.get_attachment_data(
-                self.formats,
-                self.request_presentations_attach,
+                self.formats, self.request_presentations_attach
             )
             if target_format
             else None
@@ -92,22 +87,26 @@ class V20PresRequestSchema(AgentMessageSchema):
         model_class = V20PresRequest
         unknown = EXCLUDE
 
-    comment = fields.Str(required=False, description="Human-readable comment")
+    comment = fields.Str(
+        required=False, metadata={"description": "Human-readable comment"}
+    )
     will_confirm = fields.Bool(
-        required=False, description="Whether verifier will send confirmation ack"
+        required=False,
+        metadata={"description": "Whether verifier will send confirmation ack"},
     )
     formats = fields.Nested(
         V20PresFormatSchema,
-        many=True,
         required=True,
-        descrption="Acceptable attachment formats",
+        metadata={"many": True, "descrption": "Acceptable attachment formats"},
     )
     request_presentations_attach = fields.Nested(
         AttachDecoratorSchema,
-        many=True,
         required=True,
-        description="Attachment per acceptable format on corresponding identifier",
         data_key="request_presentations~attach",
+        metadata={
+            "many": True,
+            "description": "Attachment per acceptable format on corresponding identifier",
+        },
     )
 
     @validates_schema
@@ -125,10 +124,8 @@ class V20PresRequestSchema(AgentMessageSchema):
         attachments = data.get("request_presentations_attach") or []
         if len(formats) != len(attachments):
             raise ValidationError("Formats/attachments length mismatch")
-
         for fmt in formats:
             atch = get_attach_by_id(fmt.attach_id)
-
             pres_format = V20PresFormat.Format.get(fmt.format)
             if pres_format:
                 pres_format.validate_fields(PRES_20_REQUEST, atch.content)

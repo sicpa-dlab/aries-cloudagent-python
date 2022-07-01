@@ -1,12 +1,9 @@
 """Ledger admin routes."""
-
 import json
 import logging
-
 from aiohttp import web
 from aiohttp_apispec import docs, querystring_schema, request_schema, response_schema
 from marshmallow import fields, validate
-
 from ..admin.request_context import AdminRequestContext
 from ..connections.models.conn_record import ConnRecord
 from ..messaging.models.base import BaseModelError
@@ -20,7 +17,6 @@ from ..messaging.valid import (
     UUIDFour,
 )
 from ..multitenant.base import BaseMultitenantManager
-
 from ..protocols.endorse_transaction.v1_0.manager import (
     TransactionManager,
     TransactionManagerError,
@@ -34,11 +30,8 @@ from ..protocols.endorse_transaction.v1_0.util import (
 )
 from ..storage.error import StorageError, StorageNotFoundError
 from ..wallet.error import WalletError, WalletNotFoundError
-
 from .base import BaseLedger, Role as LedgerRole
-from .multiple_ledger.base_manager import (
-    BaseMultipleLedgerManager,
-)
+from .multiple_ledger.base_manager import BaseMultipleLedgerManager
 from .multiple_ledger.ledger_requests_executor import (
     GET_NYM_ROLE,
     GET_KEY_FOR_DID,
@@ -52,7 +45,6 @@ from .multiple_ledger.ledger_config_schema import (
 from .endpoint_type import EndpointType
 from .error import BadLedgerRequestError, LedgerError, LedgerTransactionError
 from .util import notify_register_did_event
-
 
 LOGGER = logging.getLogger(__name__)
 
@@ -81,7 +73,7 @@ class TAAAcceptanceSchema(OpenAPISchema):
     """TAA acceptance record."""
 
     mechanism = fields.Str()
-    time = fields.Int(strict=True, **INT_EPOCH)
+    time = fields.Int(metadata={"strict": True, **INT_EPOCH})
 
 
 class TAAInfoSchema(OpenAPISchema):
@@ -111,24 +103,21 @@ class RegisterLedgerNymQueryStringSchema(OpenAPISchema):
     """Query string parameters and validators for register ledger nym request."""
 
     did = fields.Str(
-        description="DID to register",
-        required=True,
-        **INDY_DID,
+        required=True, metadata={"description": "DID to register", **INDY_DID}
     )
     verkey = fields.Str(
-        description="Verification key", required=True, **INDY_RAW_PUBLIC_KEY
+        required=True,
+        metadata={"description": "Verification key", **INDY_RAW_PUBLIC_KEY},
     )
     alias = fields.Str(
-        description="Alias",
-        required=False,
-        example="Barry",
+        required=False, metadata={"description": "Alias", "example": "Barry"}
     )
     role = fields.Str(
-        description="Role",
         required=False,
         validate=validate.OneOf(
             [r.name for r in LedgerRole if isinstance(r.value[0], int)] + ["reset"]
         ),
+        metadata={"description": "Role"},
     )
 
 
@@ -136,8 +125,8 @@ class CreateDidTxnForEndorserOptionSchema(OpenAPISchema):
     """Class for user to input whether to create a transaction for endorser or not."""
 
     create_transaction_for_endorser = fields.Boolean(
-        description="Create Transaction For Endorser's signature",
         required=False,
+        metadata={"description": "Create Transaction For Endorser's signature"},
     )
 
 
@@ -145,26 +134,31 @@ class SchemaConnIdMatchInfoSchema(OpenAPISchema):
     """Path parameters and validators for request taking connection id."""
 
     conn_id = fields.Str(
-        description="Connection identifier", required=False, example=UUIDFour.EXAMPLE
+        required=False,
+        metadata={"description": "Connection identifier", "example": UUIDFour.EXAMPLE},
     )
 
 
 class QueryStringDIDSchema(OpenAPISchema):
     """Parameters and validators for query string with DID only."""
 
-    did = fields.Str(description="DID of interest", required=True, **INDY_DID)
+    did = fields.Str(
+        required=True, metadata={"description": "DID of interest", **INDY_DID}
+    )
 
 
 class QueryStringEndpointSchema(OpenAPISchema):
     """Parameters and validators for query string with DID and endpoint type."""
 
-    did = fields.Str(description="DID of interest", required=True, **INDY_DID)
+    did = fields.Str(
+        required=True, metadata={"description": "DID of interest", **INDY_DID}
+    )
     endpoint_type = fields.Str(
-        description=(
-            f"Endpoint type of interest (default '{EndpointType.ENDPOINT.w3c}')"
-        ),
         required=False,
-        **ENDPOINT_TYPE,
+        metadata={
+            "description": f"Endpoint type of interest (default '{EndpointType.ENDPOINT.w3c}')",
+            **ENDPOINT_TYPE,
+        },
     )
 
 
@@ -172,14 +166,15 @@ class TxnOrRegisterLedgerNymResponseSchema(OpenAPISchema):
     """Response schema for ledger nym registration."""
 
     success = fields.Bool(
-        description="Success of nym registration operation",
-        example=True,
+        metadata={
+            "description": "Success of nym registration operation",
+            "example": True,
+        }
     )
-
     txn = fields.Nested(
         TransactionRecordSchema(),
         required=False,
-        description="DID transaction to endorse",
+        metadata={"description": "DID transaction to endorse"},
     )
 
 
@@ -187,9 +182,8 @@ class GetNymRoleResponseSchema(OpenAPISchema):
     """Response schema to get nym role operation."""
 
     role = fields.Str(
-        description="Ledger role",
         validate=validate.OneOf([r.name for r in LedgerRole]),
-        example=LedgerRole.ENDORSER.name,
+        metadata={"description": "Ledger role", "example": LedgerRole.ENDORSER.name},
     )
 
 
@@ -197,9 +191,8 @@ class GetDIDVerkeyResponseSchema(OpenAPISchema):
     """Response schema to get DID verkey."""
 
     verkey = fields.Str(
-        description="Full verification key",
         allow_none=True,
-        **INDY_RAW_PUBLIC_KEY,
+        metadata={"description": "Full verification key", **INDY_RAW_PUBLIC_KEY},
     )
 
 
@@ -207,16 +200,12 @@ class GetDIDEndpointResponseSchema(OpenAPISchema):
     """Response schema to get DID endpoint."""
 
     endpoint = fields.Str(
-        description="Full verification key",
         allow_none=True,
-        **ENDPOINT,
+        metadata={"description": "Full verification key", **ENDPOINT},
     )
 
 
-@docs(
-    tags=["ledger"],
-    summary="Send a NYM registration to the ledger.",
-)
+@docs(tags=["ledger"], summary="Send a NYM registration to the ledger.")
 @querystring_schema(RegisterLedgerNymQueryStringSchema())
 @querystring_schema(CreateDidTxnForEndorserOptionSchema())
 @querystring_schema(SchemaConnIdMatchInfoSchema())
@@ -237,37 +226,29 @@ async def register_ledger_nym(request: web.BaseRequest):
             if not session.settings.get_value("wallet.type"):
                 reason += ": missing wallet-type?"
             raise web.HTTPForbidden(reason=reason)
-
     did = request.query.get("did")
     verkey = request.query.get("verkey")
     if not did or not verkey:
         raise web.HTTPBadRequest(
             reason="Request query must include both did and verkey"
         )
-
     alias = request.query.get("alias")
     role = request.query.get("role")
-    if role == "reset":  # indy: empty to reset, null for regular user
-        role = ""  # visually: confusing - correct 'reset' to empty string here
-
+    if role == "reset":
+        role = ""
     create_transaction_for_endorser = json.loads(
         request.query.get("create_transaction_for_endorser", "false")
     )
     write_ledger = not create_transaction_for_endorser
     endorser_did = None
     connection_id = request.query.get("conn_id")
-
-    # check if we need to endorse
     if is_author_role(context.profile):
-        # authors cannot write to the ledger
         write_ledger = False
         create_transaction_for_endorser = True
         if not connection_id:
-            # author has not provided a connection id, so determine which to use
             connection_id = await get_endorser_connection_id(context.profile)
             if not connection_id:
                 raise web.HTTPBadRequest(reason="No endorser connection found")
-
     if not write_ledger:
         try:
             async with context.profile.session() as session:
@@ -278,28 +259,24 @@ async def register_ledger_nym(request: web.BaseRequest):
             raise web.HTTPNotFound(reason=err.roll_up) from err
         except BaseModelError as err:
             raise web.HTTPBadRequest(reason=err.roll_up) from err
-
         async with context.profile.session() as session:
             endorser_info = await connection_record.metadata_get(
                 session, "endorser_info"
             )
         if not endorser_info:
             raise web.HTTPForbidden(
-                reason="Endorser Info is not set up in "
-                "connection metadata for this connection record"
+                reason="Endorser Info is not set up in connection metadata for this connection record"
             )
         if "endorser_did" not in endorser_info.keys():
             raise web.HTTPForbidden(
-                reason=' "endorser_did" is not set in "endorser_info"'
-                " in connection metadata for this connection record"
+                reason=' "endorser_did" is not set in "endorser_info" in connection metadata for this connection record'
             )
         endorser_did = endorser_info["endorser_did"]
-
     success = False
     txn = None
     async with ledger:
         try:
-            (success, txn) = await ledger.register_nym(
+            success, txn = await ledger.register_nym(
                 did,
                 verkey,
                 alias,
@@ -315,15 +292,10 @@ async def register_ledger_nym(request: web.BaseRequest):
             raise web.HTTPForbidden(reason=err.roll_up)
         except WalletError as err:
             raise web.HTTPBadRequest(
-                reason=(
-                    f"Registered NYM for DID {did} on ledger but could not "
-                    f"replace metadata in wallet: {err.roll_up}"
-                )
+                reason=f"Registered NYM for DID {did} on ledger but could not replace metadata in wallet: {err.roll_up}"
             )
-
     meta_data = {"did": did, "verkey": verkey, "alias": alias, "role": role}
     if not create_transaction_for_endorser:
-        # Notify event
         await notify_register_did_event(context.profile, did, meta_data)
         return web.json_response({"success": success})
     else:
@@ -336,27 +308,19 @@ async def register_ledger_nym(request: web.BaseRequest):
             )
         except StorageError as err:
             raise web.HTTPBadRequest(reason=err.roll_up) from err
-
-        # if auto-request, send the request to the endorser
         if context.settings.get_value("endorser.auto_request"):
             try:
                 transaction, transaction_request = await transaction_mgr.create_request(
-                    transaction=transaction,
-                    # TODO see if we need to parameterize these params
-                    # expires_time=expires_time,
-                    # endorser_write_txn=endorser_write_txn,
+                    transaction=transaction
                 )
             except (StorageError, TransactionManagerError) as err:
                 raise web.HTTPBadRequest(reason=err.roll_up) from err
-
             await outbound_handler(transaction_request, connection_id=connection_id)
-
         return web.json_response({"success": success, "txn": txn})
 
 
 @docs(
-    tags=["ledger"],
-    summary="Get the role from the NYM registration of a public DID.",
+    tags=["ledger"], summary="Get the role from the NYM registration of a public DID."
 )
 @querystring_schema(QueryStringDIDSchema)
 @response_schema(GetNymRoleResponseSchema(), 200, description="")
@@ -368,11 +332,9 @@ async def get_nym_role(request: web.BaseRequest):
         request: aiohttp request object
     """
     context: AdminRequestContext = request["context"]
-
     did = request.query.get("did")
     if not did:
         raise web.HTTPBadRequest(reason="Request query must include DID")
-
     async with context.profile.session() as session:
         multitenant_mgr = session.inject_or(BaseMultitenantManager)
         if multitenant_mgr:
@@ -380,15 +342,13 @@ async def get_nym_role(request: web.BaseRequest):
         else:
             ledger_exec_inst = session.inject(IndyLedgerRequestsExecutor)
         ledger_id, ledger = await ledger_exec_inst.get_ledger_for_identifier(
-            did,
-            txn_record_type=GET_NYM_ROLE,
+            did, txn_record_type=GET_NYM_ROLE
         )
         if not ledger:
             reason = "No Indy ledger available"
             if not session.settings.get_value("wallet.type"):
                 reason += ": missing wallet-type?"
             raise web.HTTPForbidden(reason=reason)
-
     async with ledger:
         try:
             role = await ledger.get_nym_role(did)
@@ -398,7 +358,6 @@ async def get_nym_role(request: web.BaseRequest):
             raise web.HTTPNotFound(reason=err.roll_up)
         except LedgerError as err:
             raise web.HTTPBadRequest(reason=err.roll_up)
-
     if ledger_id:
         return web.json_response({"ledger_id": ledger_id, "role": role.name})
     else:
@@ -424,17 +383,13 @@ async def rotate_public_did_keypair(request: web.BaseRequest):
             raise web.HTTPForbidden(reason=reason)
     async with ledger:
         try:
-            await ledger.rotate_public_did_keypair()  # do not take seed over the wire
+            await ledger.rotate_public_did_keypair()
         except (WalletError, BadLedgerRequestError) as err:
             raise web.HTTPBadRequest(reason=err.roll_up) from err
-
     return web.json_response({})
 
 
-@docs(
-    tags=["ledger"],
-    summary="Get the verkey for a DID from the ledger.",
-)
+@docs(tags=["ledger"], summary="Get the verkey for a DID from the ledger.")
 @querystring_schema(QueryStringDIDSchema())
 @response_schema(GetDIDVerkeyResponseSchema(), 200, description="")
 async def get_did_verkey(request: web.BaseRequest):
@@ -445,11 +400,9 @@ async def get_did_verkey(request: web.BaseRequest):
         request: aiohttp request object
     """
     context: AdminRequestContext = request["context"]
-
     did = request.query.get("did")
     if not did:
         raise web.HTTPBadRequest(reason="Request query must include DID")
-
     async with context.profile.session() as session:
         multitenant_mgr = session.inject_or(BaseMultitenantManager)
         if multitenant_mgr:
@@ -457,15 +410,13 @@ async def get_did_verkey(request: web.BaseRequest):
         else:
             ledger_exec_inst = session.inject(IndyLedgerRequestsExecutor)
         ledger_id, ledger = await ledger_exec_inst.get_ledger_for_identifier(
-            did,
-            txn_record_type=GET_KEY_FOR_DID,
+            did, txn_record_type=GET_KEY_FOR_DID
         )
         if not ledger:
             reason = "No ledger available"
             if not session.settings.get_value("wallet.type"):
                 reason += ": missing wallet-type?"
             raise web.HTTPForbidden(reason=reason)
-
     async with ledger:
         try:
             result = await ledger.get_key_for_did(did)
@@ -473,17 +424,13 @@ async def get_did_verkey(request: web.BaseRequest):
                 raise web.HTTPNotFound(reason=f"DID {did} is not on the ledger")
         except LedgerError as err:
             raise web.HTTPBadRequest(reason=err.roll_up) from err
-
     if ledger_id:
         return web.json_response({"ledger_id": ledger_id, "verkey": result})
     else:
         return web.json_response({"verkey": result})
 
 
-@docs(
-    tags=["ledger"],
-    summary="Get the endpoint for a DID from the ledger.",
-)
+@docs(tags=["ledger"], summary="Get the endpoint for a DID from the ledger.")
 @querystring_schema(QueryStringEndpointSchema())
 @response_schema(GetDIDEndpointResponseSchema(), 200, description="")
 async def get_did_endpoint(request: web.BaseRequest):
@@ -494,11 +441,9 @@ async def get_did_endpoint(request: web.BaseRequest):
         request: aiohttp request object
     """
     context: AdminRequestContext = request["context"]
-
     did = request.query.get("did")
     if not did:
         raise web.HTTPBadRequest(reason="Request query must include DID")
-
     async with context.profile.session() as session:
         multitenant_mgr = session.inject_or(BaseMultitenantManager)
         if multitenant_mgr:
@@ -506,8 +451,7 @@ async def get_did_endpoint(request: web.BaseRequest):
         else:
             ledger_exec_inst = session.inject(IndyLedgerRequestsExecutor)
         ledger_id, ledger = await ledger_exec_inst.get_ledger_for_identifier(
-            did,
-            txn_record_type=GET_ENDPOINT_FOR_DID,
+            did, txn_record_type=GET_ENDPOINT_FOR_DID
         )
         if not ledger:
             reason = "No Indy ledger available"
@@ -517,13 +461,11 @@ async def get_did_endpoint(request: web.BaseRequest):
     endpoint_type = EndpointType.get(
         request.query.get("endpoint_type", EndpointType.ENDPOINT.w3c)
     )
-
     async with ledger:
         try:
             r = await ledger.get_endpoint_for_did(did, endpoint_type)
         except LedgerError as err:
             raise web.HTTPBadRequest(reason=err.roll_up) from err
-
     if ledger_id:
         return web.json_response({"ledger_id": ledger_id, "endpoint": r})
     else:
@@ -551,7 +493,6 @@ async def ledger_get_taa(request: web.BaseRequest):
             if not session.settings.get_value("wallet.type"):
                 reason += ": missing wallet-type?"
             raise web.HTTPForbidden(reason=reason)
-
     async with ledger:
         try:
             taa_info = await ledger.get_txn_author_agreement()
@@ -566,7 +507,6 @@ async def ledger_get_taa(request: web.BaseRequest):
             taa_info["taa_accepted"] = accepted
         except LedgerError as err:
             raise web.HTTPBadRequest(reason=err.roll_up) from err
-
     return web.json_response({"result": taa_info})
 
 
@@ -592,7 +532,6 @@ async def ledger_accept_taa(request: web.BaseRequest):
             if not session.settings.get_value("wallet.type"):
                 reason += ": missing wallet-type?"
             raise web.HTTPForbidden(reason=reason)
-
     accept_input = await request.json()
     LOGGER.info(">>> accepting TAA with: %s", accept_input)
     async with ledger:
@@ -603,10 +542,6 @@ async def ledger_accept_taa(request: web.BaseRequest):
                     reason=f"Ledger {ledger.pool_name} TAA not available"
                 )
             LOGGER.info("TAA on ledger: ", taa_info)
-            # this is a bit of a hack, but the "\ufeff" code is included in the
-            # ledger TAA and digest calculation, so it needs to be included in the
-            # TAA text that the user is accepting
-            # (if you copy the TAA text using swagger it won't include this character)
             if taa_info["taa_record"]["text"].startswith("\ufeff"):
                 if not accept_input["text"].startswith("\ufeff"):
                     LOGGER.info(
@@ -617,8 +552,7 @@ async def ledger_accept_taa(request: web.BaseRequest):
                 "version": accept_input["version"],
                 "text": accept_input["text"],
                 "digest": ledger.taa_digest(
-                    accept_input["version"],
-                    accept_input["text"],
+                    accept_input["version"], accept_input["text"]
                 ),
             }
             taa_record_digest = taa_record["digest"]
@@ -628,7 +562,6 @@ async def ledger_accept_taa(request: web.BaseRequest):
             )
         except (LedgerError, StorageError) as err:
             raise web.HTTPBadRequest(reason=err.roll_up) from err
-
     return web.json_response({})
 
 
@@ -686,7 +619,6 @@ async def get_ledger_config(request: web.BaseRequest):
         for config in ledger_config_list:
             ledger_id = config.get("id")
             config_ledger_ids_set.add(ledger_id)
-            # removing genesis_transactions
             config = {
                 key: val for key, val in config.items() if key != "genesis_transactions"
             }
@@ -707,7 +639,6 @@ async def get_ledger_config(request: web.BaseRequest):
 
 async def register(app: web.Application):
     """Register routes."""
-
     app.add_routes(
         [
             web.post("/ledger/register-nym", register_ledger_nym),
@@ -727,8 +658,6 @@ async def register(app: web.Application):
 
 def post_process_routes(app: web.Application):
     """Amend swagger API."""
-
-    # Add top-level tags description
     if "tags" not in app._state["swagger_dict"]:
         app._state["swagger_dict"]["tags"] = []
     app._state["swagger_dict"]["tags"].append(
@@ -737,10 +666,7 @@ def post_process_routes(app: web.Application):
             "description": "Interaction with ledger",
             "externalDocs": {
                 "description": "Overview",
-                "url": (
-                    "https://hyperledger-indy.readthedocs.io/projects/plenum/"
-                    "en/latest/storage.html#ledger"
-                ),
+                "url": "https://hyperledger-indy.readthedocs.io/projects/plenum/en/latest/storage.html#ledger",
             },
         }
     )

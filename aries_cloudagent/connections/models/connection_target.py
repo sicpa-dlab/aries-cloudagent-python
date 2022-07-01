@@ -1,5 +1,4 @@
 """Record used to handle routing of messages to another agent."""
-
 from typing import Sequence
 
 from marshmallow import EXCLUDE, fields
@@ -24,7 +23,7 @@ class ConnectionTarget(BaseModel):
         label: str = None,
         recipient_keys: Sequence[str] = None,
         routing_keys: Sequence[str] = None,
-        sender_key: str = None,
+        sender_key: str = None
     ):
         """
         Initialize a ConnectionTarget instance.
@@ -53,24 +52,31 @@ class ConnectionTargetSchema(BaseModelSchema):
         model_class = ConnectionTarget
         unknown = EXCLUDE
 
-    did = fields.Str(required=False, description="", **INDY_DID)
+    did = fields.Str(required=False, metadata={"description": "", **INDY_DID})
     endpoint = fields.Str(
         required=False,
-        description="Connection endpoint",
-        example="http://192.168.56.102:8020",
+        metadata={
+            "description": "Connection endpoint",
+            "example": "http://192.168.56.102:8020",
+        },
     )
-    label = fields.Str(required=False, description="Connection label", example="Bob")
+    label = fields.Str(
+        required=False, metadata={"description": "Connection label", "example": "Bob"}
+    )
     recipient_keys = fields.List(
-        fields.Str(description="Recipient public key", **INDY_RAW_PUBLIC_KEY),
+        fields.Str(
+            metadata={"description": "Recipient public key", **INDY_RAW_PUBLIC_KEY}
+        ),
         required=False,
-        description="List of recipient keys",
+        metadata={"description": "List of recipient keys"},
     )
     routing_keys = fields.List(
-        fields.Str(description="Routing key", **INDY_RAW_PUBLIC_KEY),
+        fields.Str(metadata={"description": "Routing key", **INDY_RAW_PUBLIC_KEY}),
         data_key="routingKeys",
         required=False,
-        description="List of routing keys",
+        metadata={"description": "List of routing keys"},
     )
     sender_key = fields.Str(
-        required=False, description="Sender public key", **INDY_RAW_PUBLIC_KEY
+        required=False,
+        metadata={"description": "Sender public key", **INDY_RAW_PUBLIC_KEY},
     )

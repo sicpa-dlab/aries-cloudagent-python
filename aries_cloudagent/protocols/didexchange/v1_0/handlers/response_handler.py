@@ -1,14 +1,7 @@
 """DID exchange response handler under RFC 23."""
-
-from .....messaging.base_handler import (
-    BaseHandler,
-    BaseResponder,
-    RequestContext,
-)
-
+from .....messaging.base_handler import BaseHandler, BaseResponder, RequestContext
 from ....problem_report.v1_0.message import ProblemReport
 from ....trustping.v1_0.messages.ping import Ping
-
 from ..manager import DIDXManager, DIDXManagerError
 from ..messages.response import DIDXResponse
 
@@ -26,7 +19,6 @@ class DIDXResponseHandler(BaseHandler):
         """
         self._logger.debug(f"DIDXResponseHandler called with context {context}")
         assert isinstance(context.message, DIDXResponse)
-
         profile = context.profile
         mgr = DIDXManager(profile)
         try:
@@ -52,7 +44,5 @@ class DIDXResponseHandler(BaseHandler):
                     target_list=targets,
                 )
             return
-
-        # send trust ping in response
         if context.settings.get("auto_ping_connection"):
             await responder.send(Ping(), connection_id=conn_rec.connection_id)

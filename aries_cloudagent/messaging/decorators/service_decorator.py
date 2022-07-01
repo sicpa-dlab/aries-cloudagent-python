@@ -4,7 +4,6 @@ A message decorator for services.
 A service decorator adds routing information to a message so agent can respond without
 needing to perform a handshake.
 """
-
 from typing import List, Optional
 
 from marshmallow import EXCLUDE, fields
@@ -26,7 +25,7 @@ class ServiceDecorator(BaseModel):
         *,
         endpoint: str,
         recipient_keys: List[str],
-        routing_keys: Optional[List[str]] = None,
+        routing_keys: Optional[List[str]] = None
     ):
         """
         Initialize a ServiceDecorator instance.
@@ -86,20 +85,24 @@ class ServiceDecoratorSchema(BaseModelSchema):
         unknown = EXCLUDE
 
     recipient_keys = fields.List(
-        fields.Str(description="Recipient public key", **INDY_RAW_PUBLIC_KEY),
+        fields.Str(
+            metadata={"description": "Recipient public key", **INDY_RAW_PUBLIC_KEY}
+        ),
         data_key="recipientKeys",
         required=True,
-        description="List of recipient keys",
+        metadata={"description": "List of recipient keys"},
     )
     endpoint = fields.Str(
         data_key="serviceEndpoint",
         required=True,
-        description="Service endpoint at which to reach this agent",
-        example="http://192.168.56.101:8020",
+        metadata={
+            "description": "Service endpoint at which to reach this agent",
+            "example": "http://192.168.56.101:8020",
+        },
     )
     routing_keys = fields.List(
-        fields.Str(description="Routing key", **INDY_RAW_PUBLIC_KEY),
+        fields.Str(metadata={"description": "Routing key", **INDY_RAW_PUBLIC_KEY}),
         data_key="routingKeys",
         required=False,
-        description="List of routing keys",
+        metadata={"description": "List of routing keys"},
     )

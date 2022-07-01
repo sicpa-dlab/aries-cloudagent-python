@@ -1,11 +1,8 @@
 """Test Problem Report Message."""
 import logging
 import pytest
-
 from unittest import mock, TestCase
-
 from ......messaging.models.base import BaseModelError
-
 from ..problem_report import (
     CMProblemReport,
     CMProblemReportSchema,
@@ -34,7 +31,6 @@ class TestCMProblemReportMessage(TestCase):
         data = self.problem_report.serialize()
         model_instance = CMProblemReport.deserialize(data)
         assert isinstance(model_instance, CMProblemReport)
-
         model_instance.description["code"] = "extraneous code"
         with pytest.raises(BaseModelError):
             CMProblemReport.deserialize(model_instance)
@@ -48,10 +44,7 @@ class TestCMProblemReportMessage(TestCase):
     def test_validate_and_logger(self):
         """Capture ValidationError and Logs."""
         data = CMProblemReport(
-            description={
-                "en": "Insufficient credit",
-                "code": "invalid_code",
-            },
+            description={"en": "Insufficient credit", "code": "invalid_code"}
         ).serialize()
         self._caplog.set_level(logging.WARNING)
         CMProblemReportSchema().validate_fields(data)

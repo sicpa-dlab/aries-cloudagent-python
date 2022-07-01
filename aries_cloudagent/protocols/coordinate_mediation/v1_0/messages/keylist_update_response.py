@@ -1,18 +1,11 @@
 """Response to keylist-update used to notify mediation client of applied updates."""
-
 from typing import Sequence
-
 from marshmallow import fields
-
 from .....messaging.agent_message import AgentMessage, AgentMessageSchema
 from ..message_types import KEYLIST_UPDATE_RESPONSE, PROTOCOL_PACKAGE
-
 from .inner.keylist_updated import KeylistUpdated, KeylistUpdatedSchema
 
-HANDLER_CLASS = (
-    f"{PROTOCOL_PACKAGE}.handlers"
-    ".keylist_update_response_handler.KeylistUpdateResponseHandler"
-)
+HANDLER_CLASS = f"{PROTOCOL_PACKAGE}.handlers.keylist_update_response_handler.KeylistUpdateResponseHandler"
 
 
 class KeylistUpdateResponse(AgentMessage):
@@ -25,12 +18,7 @@ class KeylistUpdateResponse(AgentMessage):
         message_type = KEYLIST_UPDATE_RESPONSE
         schema_class = "KeylistUpdateResponseSchema"
 
-    def __init__(
-        self,
-        *,
-        updated: Sequence[KeylistUpdated] = None,
-        **kwargs,
-    ):
+    def __init__(self, *, updated: Sequence[KeylistUpdated] = None, **kwargs):
         """
         Initialize keylist update object.
 
@@ -51,5 +39,5 @@ class KeylistUpdateResponseSchema(AgentMessageSchema):
 
     updated = fields.List(
         fields.Nested(KeylistUpdatedSchema()),
-        description="List of update results for each update",
+        metadata={"description": "List of update results for each update"},
     )

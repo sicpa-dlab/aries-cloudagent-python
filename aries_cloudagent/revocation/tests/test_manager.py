@@ -1,22 +1,18 @@
 import json
 
-from asynctest import mock as async_mock
-from asynctest import TestCase as AsyncTestCase
-from more_itertools import side_effect
-
 from aries_cloudagent.revocation.models.issuer_cred_rev_record import (
     IssuerCredRevRecord,
 )
+from asynctest import TestCase as AsyncTestCase
+from asynctest import mock as async_mock
 
 from ...core.in_memory import InMemoryProfile
 from ...indy.issuer import IndyIssuer
 from ...protocols.issue_credential.v1_0.models.credential_exchange import (
     V10CredentialExchange,
 )
-
-from ..manager import RevocationManager, RevocationManagerError
-
 from .. import manager as test_module
+from ..manager import RevocationManager, RevocationManagerError
 
 TEST_DID = "LjgpST2rjsoxYegQDRm7EL"
 SCHEMA_NAME = "bc-reg"

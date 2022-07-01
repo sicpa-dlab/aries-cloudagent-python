@@ -1,13 +1,10 @@
 """Event tracing."""
-
 import json
 import logging
 import time
 import datetime
 import requests
-
 from marshmallow import fields
-
 from ..transport.inbound.message import InboundMessage
 from ..transport.outbound.message import OutboundMessage
 from ..messaging.agent_message import AgentMessage
@@ -18,7 +15,6 @@ from ..messaging.decorators.trace_decorator import (
 )
 from ..messaging.models.base_record import BaseExchangeRecord
 from ..messaging.models.openapi import OpenAPISchema
-
 
 LOGGER = logging.getLogger(__name__)
 DT_FMT = "%Y-%m-%d %H:%M:%S.%f%z"
@@ -33,9 +29,11 @@ class AdminAPIMessageTracingSchema(OpenAPISchema):
     """
 
     trace = fields.Boolean(
-        description="Record trace information, based on agent configuration",
         required=False,
-        default=False,
+        dump_default=False,
+        metadata={
+            "description": "Record trace information, based on agent configuration"
+        },
     )
 
 
@@ -46,20 +44,16 @@ def get_timer() -> float:
 
 def tracing_enabled(context, message) -> bool:
     """Determine whether to log trace messages or not."""
-    # check if tracing is explicitely on
     if context.get("trace.enabled"):
         return True
-
     if message:
         if isinstance(message, AgentMessage):
-            # if there is a trace decorator on the messages then continue to trace
             if message._trace:
                 return True
         elif isinstance(message, BaseExchangeRecord):
             if message.trace:
                 return True
         elif isinstance(message, dict):
-            # if there is a trace decorator on the messages then continue to trace
             if message.get("~trace"):
                 return True
             if message.get("trace"):
@@ -78,16 +72,13 @@ def tracing_enabled(context, message) -> bool:
                 if message.payload.get("~trace") or message.payload.get("trace"):
                     return True
             elif message.payload and isinstance(message.payload, str):
-                if "trace" in message.payload:  # includes "~trace" in message.payload
+                if "trace" in message.payload:
                     return True
-
-    # default off
     return False
 
 
 def decode_inbound_message(message):
     """Return bundled message if appropriate."""
-
     if message and isinstance(message, OutboundMessage):
         if message.payload and isinstance(message.payload, AgentMessage):
             return message.payload
@@ -103,8 +94,6 @@ def decode_inbound_message(message):
             return json.loads(message)
         except Exception:
             pass
-
-    # default is the provided message
     return message
 
 
@@ -129,15 +118,9 @@ def trace_event(
             InboundMessage, OutboundMessage or Exchange record
         event: Dict that will be converted to json and posted to the target
     """
-
     ret = time.perf_counter()
-
     if force_trace or tracing_enabled(context, message):
         message = decode_inbound_message(message)
-
-        # build the event to log
-        # TODO check instance type of message to determine how to
-        # get message and thread id's
         if not handler:
             if context and context.get("trace.label"):
                 handler = context.get("trace.label")
@@ -154,7 +137,6 @@ def trace_event(
                 thread_id = msg_id
             msg_type = str(message._type)
         elif message and isinstance(message, InboundMessage):
-            # TODO not sure if we can log an InboundMessage before it's "handled"
             msg_id = str(message.session_id) if message.session_id else "N/A"
             thread_id = str(message.session_id) if message.session_id else "N/A"
             msg_type = str(message.__class__.__name__)
@@ -172,13 +154,12 @@ def trace_event(
                 thread_id = msg_id
             if message.get("@type"):
                 msg_type = str(message["@type"])
+            elif message.get("~thread"):
+                msg_type = "dict:Message"
+            elif message.get("thread_id"):
+                msg_type = "dict:Exchange"
             else:
-                if message.get("~thread"):
-                    msg_type = "dict:Message"
-                elif message.get("thread_id"):
-                    msg_type = "dict:Exchange"
-                else:
-                    msg_type = "dict"
+                msg_type = "dict"
         elif isinstance(message, BaseExchangeRecord):
             msg_id = "N/A"
             thread_id = str(message.thread_id)
@@ -200,13 +181,10 @@ def trace_event(
             "outcome": str(outcome),
         }
         event_str = json.dumps(event)
-
         try:
-            # check our target - if we get this far we know we are logging the event
             if context["trace.target"] == TRACE_MESSAGE_TARGET and isinstance(
                 message, AgentMessage
             ):
-                # add a trace report to the existing message
                 trace_report = TraceReport(
                     msg_id=event["msg_id"],
                     thread_id=event["thread_id"],
@@ -219,11 +197,9 @@ def trace_event(
                 )
                 message.add_trace_report(trace_report)
             elif context["trace.target"] == TRACE_LOG_TARGET:
-                # write to standard log file
                 LOGGER.setLevel(logging.INFO)
                 LOGGER.info(" %s %s", context["trace.tag"], event_str)
             else:
-                # should be an http endpoint
                 _ = requests.post(
                     context["trace.target"]
                     + (context["trace.tag"] if context["trace.tag"] else ""),
@@ -240,9 +216,6 @@ def trace_event(
                 event_str,
             )
             LOGGER.exception(e)
-
     else:
-        # trace is not enabled so just return
         pass
-
     return ret

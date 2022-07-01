@@ -1,12 +1,8 @@
 """Represents a generic problem report message."""
-
 from typing import Mapping, Sequence
-
 from marshmallow import EXCLUDE, fields, validate, validates_schema, ValidationError
-
 from ....messaging.agent_message import AgentMessage, AgentMessageSchema
 from ....messaging.valid import RFC3339_DATETIME
-
 from .message_types import PROBLEM_REPORT, PROTOCOL_PACKAGE
 
 HANDLER_CLASS = f"{PROTOCOL_PACKAGE}.handler.ProblemReportHandler"
@@ -72,10 +68,12 @@ class ProblemReportSchema(AgentMessageSchema):
         unknown = EXCLUDE
 
     description = fields.Dict(
-        keys=fields.Str(description="Locale or 'code'", example="en-US"),
-        values=fields.Str(description="Problem description or error code"),
         required=False,
-        description="Human-readable localized problem descriptions",
+        metadata={
+            "keys": fields.Str(description="Locale or 'code'", example="en-US"),
+            "values": fields.Str(description="Problem description or error code"),
+            "description": "Human-readable localized problem descriptions",
+        },
     )
     problem_items = fields.List(
         fields.Dict(
@@ -85,50 +83,64 @@ class ProblemReportSchema(AgentMessageSchema):
         ),
         data_key="problem-items",
         required=False,
-        description="List of problem items",
+        metadata={"description": "List of problem items"},
     )
     who_retries = fields.Str(
         data_key="who-retries",
         required=False,
-        description="Party to retry: you, me, both, none",
-        example="you",
         validate=validate.OneOf(["you", "me", "both", "none"]),
+        metadata={
+            "description": "Party to retry: you, me, both, none",
+            "example": "you",
+        },
     )
     fix_hint = fields.Dict(
-        keys=fields.Str(description="Locale", example="en-US"),
-        values=fields.Str(
-            description="Localized message", example="Synchronize time to NTP"
-        ),
         required=False,
-        description="Human-readable localized suggestions how to fix problem",
+        metadata={
+            "keys": fields.Str(description="Locale", example="en-US"),
+            "values": fields.Str(
+                description="Localized message", example="Synchronize time to NTP"
+            ),
+            "description": "Human-readable localized suggestions how to fix problem",
+        },
     )
     impact = fields.Str(
         required=False,
-        description="Breadth of impact of problem: message, thread, or connection",
-        example="thread",
         validate=validate.OneOf(["message", "thread", "connection"]),
+        metadata={
+            "description": "Breadth of impact of problem: message, thread, or connection",
+            "example": "thread",
+        },
     )
     where = fields.Str(
         required=False,
-        description="Where the error occurred, from reporter perspective",
-        example="you - agency",
-        validate=validate.Regexp(r"(you)|(me)|(other) - .+"),
+        validate=validate.Regexp("(you)|(me)|(other) - .+"),
+        metadata={
+            "description": "Where the error occurred, from reporter perspective",
+            "example": "you - agency",
+        },
     )
     time_noticed = fields.Str(
         data_key="time-noticed",
         required=False,
-        description="Problem detection time, precision at least day up to millisecond",
-        **RFC3339_DATETIME,
+        metadata={
+            "description": "Problem detection time, precision at least day up to millisecond",
+            **RFC3339_DATETIME,
+        },
     )
     tracking_uri = fields.Str(
         required=False,
-        description="URI allowing recipient to track error status",
-        example="http://myservice.com/status",
+        metadata={
+            "description": "URI allowing recipient to track error status",
+            "example": "http://myservice.com/status",
+        },
     )
     escalation_uri = fields.Str(
         required=False,
-        description="URI to supply additional help",
-        example="mailto://help.desk@myservice.com",
+        metadata={
+            "description": "URI to supply additional help",
+            "example": "mailto://help.desk@myservice.com",
+        },
     )
 
     @validates_schema

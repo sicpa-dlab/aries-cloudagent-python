@@ -1,18 +1,11 @@
 """An invitation content message."""
-
 from collections import namedtuple
 from enum import Enum
 from re import sub
 from typing import Sequence, Text, Union
 from urllib.parse import parse_qs, urljoin, urlparse
 
-from marshmallow import (
-    EXCLUDE,
-    fields,
-    post_dump,
-    validates_schema,
-    ValidationError,
-)
+from marshmallow import EXCLUDE, ValidationError, fields, post_dump, validates_schema
 
 from .....messaging.agent_message import AgentMessage, AgentMessageSchema
 from .....messaging.decorators.attach_decorator import (
@@ -20,14 +13,11 @@ from .....messaging.decorators.attach_decorator import (
     AttachDecoratorSchema,
 )
 from .....messaging.valid import DIDValidation
-from .....wallet.util import bytes_to_b64, b64_to_bytes
-
+from .....wallet.util import b64_to_bytes, bytes_to_b64
+from ....connections.v1_0.message_types import ARIES_PROTOCOL as CONN_PROTO
 from ....didcomm_prefix import DIDCommPrefix
 from ....didexchange.v1_0.message_types import ARIES_PROTOCOL as DIDX_PROTO
-from ....connections.v1_0.message_types import ARIES_PROTOCOL as CONN_PROTO
-
 from ..message_types import INVITATION
-
 from .service import Service
 
 HSProtoSpec = namedtuple("HSProtoSpec", "rfc name aka")
@@ -42,15 +32,12 @@ class HSProto(Enum):
         {"connection", "connections", "conn", "conns", "rfc160", "160", "old"},
     )
     RFC23 = HSProtoSpec(
-        23,
-        DIDX_PROTO,
-        {"didexchange", "didx", "didex", "rfc23", "23", "new"},
+        23, DIDX_PROTO, {"didexchange", "didx", "didex", "rfc23", "23", "new"}
     )
 
     @classmethod
     def get(cls, label: Union[str, "HSProto"]) -> "HSProto":
         """Get handshake protocol enum for label."""
-
         if isinstance(label, str):
             for hsp in HSProto:
                 if (
@@ -58,15 +45,12 @@ class HSProto(Enum):
                     or sub("[^a-zA-Z0-9]+", "", label.lower()) in hsp.aka
                 ):
                     return hsp
-
         elif isinstance(label, HSProto):
             return label
-
         elif isinstance(label, int):
             for hsp in HSProto:
                 if hsp.rfc == label:
                     return hsp
-
         return None
 
     @property
@@ -116,14 +100,13 @@ class InvitationMessage(AgentMessage):
 
     def __init__(
         self,
-        # _id: str = None,
         *,
         comment: str = None,
         label: str = None,
         handshake_protocols: Sequence[Text] = None,
         requests_attach: Sequence[AttachDecorator] = None,
         services: Sequence[Union[Service, Text]] = None,
-        **kwargs,
+        **kwargs
     ):
         """
         Initialize invitation message object.
@@ -132,7 +115,6 @@ class InvitationMessage(AgentMessage):
             requests_attach: request attachments
 
         """
-        # super().__init__(_id=_id, **kwargs)
         super().__init__(**kwargs)
         self.label = label
         self.handshake_protocols = (
@@ -162,10 +144,7 @@ class InvitationMessage(AgentMessage):
                 if isinstance(service_item, Service):
                     endpoint = service_item.service_endpoint
                     break
-        result = urljoin(
-            (base_url if base_url else endpoint),
-            "?oob={}".format(oob),
-        )
+        result = urljoin(base_url if base_url else endpoint, "?oob={}".format(oob))
         return result
 
     @classmethod
@@ -197,46 +176,50 @@ class InvitationMessageSchema(AgentMessageSchema):
         model_class = InvitationMessage
         unknown = EXCLUDE
 
-    label = fields.Str(required=False, description="Optional label", example="Bob")
+    label = fields.Str(
+        required=False, metadata={"description": "Optional label", "example": "Bob"}
+    )
     handshake_protocols = fields.List(
         fields.Str(
-            description="Handshake protocol",
-            example=DIDCommPrefix.qualify_current(HSProto.RFC23.name),
-            validate=lambda hsp: (
-                DIDCommPrefix.unqualify(hsp) in [p.name for p in HSProto]
-            ),
+            metadata={
+                "description": "Handshake protocol",
+                "example": DIDCommPrefix.qualify_current(HSProto.RFC23.name),
+            },
+            validate=lambda hsp: DIDCommPrefix.unqualify(hsp)
+            in [p.name for p in HSProto],
         ),
         required=False,
     )
     requests_attach = fields.Nested(
         AttachDecoratorSchema,
         required=False,
-        many=True,
         data_key="requests~attach",
-        description="Optional request attachment",
+        metadata={"many": True, "description": "Optional request attachment"},
     )
     services = fields.List(
         ServiceOrDIDField(
             required=True,
-            description=(
-                "Either a DIDComm service object (as per RFC0067) or a DID string."
-            ),
-        ),
-        example=[
-            {
-                "did": "WgWxqztrNooG92RXvxSTWv",
-                "id": "string",
-                "recipientKeys": [
-                    "did:key:z6MkpTHR8VNsBxYAAWHut2Geadd9jSwuBV8xRoAnwWsdvktH"
-                ],
-                "routingKeys": [
-                    "did:key:z6MkpTHR8VNsBxYAAWHut2Geadd9jSwuBV8xRoAnwWsdvktH"
-                ],
-                "serviceEndpoint": "http://192.168.56.101:8020",
-                "type": "string",
+            metadata={
+                "description": "Either a DIDComm service object (as per RFC0067) or a DID string.",
             },
-            "did:sov:WgWxqztrNooG92RXvxSTWv",
-        ],
+        ),
+        metadata={
+            "example": [
+                {
+                    "did": "WgWxqztrNooG92RXvxSTWv",
+                    "id": "string",
+                    "recipientKeys": [
+                        "did:key:z6MkpTHR8VNsBxYAAWHut2Geadd9jSwuBV8xRoAnwWsdvktH"
+                    ],
+                    "routingKeys": [
+                        "did:key:z6MkpTHR8VNsBxYAAWHut2Geadd9jSwuBV8xRoAnwWsdvktH"
+                    ],
+                    "serviceEndpoint": "http://192.168.56.101:8020",
+                    "type": "string",
+                },
+                "did:sov:WgWxqztrNooG92RXvxSTWv",
+            ]
+        },
     )
 
     @validates_schema
@@ -252,24 +235,18 @@ class InvitationMessageSchema(AgentMessageSchema):
         handshake_protocols = data.get("handshake_protocols")
         requests_attach = data.get("requests_attach")
         if not (
-            (handshake_protocols and len(handshake_protocols) > 0)
-            or (requests_attach and len(requests_attach) > 0)
+            handshake_protocols
+            and len(handshake_protocols) > 0
+            or requests_attach
+            and len(requests_attach) > 0
         ):
             raise ValidationError(
-                "Model must include non-empty "
-                "handshake_protocols or requests_attach or both"
+                "Model must include non-empty handshake_protocols or requests_attach or both"
             )
-
-        # services = data.get("services")
-        # if not ((services and len(services) > 0)):
-        #     raise ValidationError(
-        #         "Model must include non-empty services array"
-        #     )
 
     @post_dump
     def post_dump(self, data, **kwargs):
         """Post dump hook."""
         if "requests~attach" in data and not data["requests~attach"]:
             del data["requests~attach"]
-
         return data

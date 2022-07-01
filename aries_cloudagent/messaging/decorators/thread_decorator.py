@@ -4,7 +4,6 @@ A message decorator for threads.
 A thread decorator identifies a message that may require additional
 context from previous messages.
 """
-
 from typing import Mapping
 
 from marshmallow import EXCLUDE, fields
@@ -27,7 +26,7 @@ class ThreadDecorator(BaseModel):
         thid: str = None,
         pthid: str = None,
         sender_order: int = None,
-        received_orders: Mapping = None,
+        received_orders: Mapping = None
     ):
         """
         Initialize a ThreadDecorator instance.
@@ -122,32 +121,37 @@ class ThreadDecoratorSchema(BaseModelSchema):
     thid = fields.Str(
         required=False,
         allow_none=True,
-        description="Thread identifier",
-        example=UUIDFour.EXAMPLE,  # typically a UUID4 but not necessarily
+        metadata={"description": "Thread identifier", "example": UUIDFour.EXAMPLE},
     )
     pthid = fields.Str(
         required=False,
         allow_none=True,
-        description="Parent thread identifier",
-        example=UUIDFour.EXAMPLE,  # typically a UUID4 but not necessarily
+        metadata={
+            "description": "Parent thread identifier",
+            "example": UUIDFour.EXAMPLE,
+        },
     )
     sender_order = fields.Int(
         required=False,
         allow_none=True,
-        description="Ordinal of message among all from current sender in thread",
-        example=11,
-        strict=True,
+        metadata={
+            "description": "Ordinal of message among all from current sender in thread",
+            "example": 11,
+            "strict": True,
+        },
     )
     received_orders = fields.Dict(
-        keys=fields.Str(description="Sender key"),
-        values=fields.Int(
-            description="Highest sender_order value for sender",
-            example=3,
-            strict=True,
-        ),
         required=False,
         allow_none=True,
-        description=(
-            "Highest sender_order value that sender has seen from others on thread"
-        ),
+        metadata={
+            "keys": fields.Str(metadata={"description": "Sender key"}),
+            "values": fields.Int(
+                metadata={
+                    "description": "Highest sender_order value for sender",
+                    "example": 3,
+                },
+                strict=True,
+            ),
+            "description": "Highest sender_order value that sender has seen from others on thread",
+        },
     )

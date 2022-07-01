@@ -1,5 +1,4 @@
 """The localization decorator (~l10n) for message localization information."""
-
 from typing import Sequence
 
 from marshmallow import EXCLUDE, fields
@@ -20,7 +19,7 @@ class LocalizationDecorator(BaseModel):
         *,
         locale: str = None,
         localizable: Sequence[str] = None,
-        catalogs: Sequence[str] = None,
+        catalogs: Sequence[str] = None
     ):
         """
         Initialize a LocalizationDecorator instance.
@@ -47,23 +46,20 @@ class LocalizationDecoratorSchema(BaseModelSchema):
         unknown = EXCLUDE
 
     locale = fields.Str(
-        required=True,
-        description="Locale specifier",
-        example="en-CA",
+        required=True, metadata={"description": "Locale specifier", "example": "en-CA"}
     )
     localizable = fields.List(
-        fields.Str(
-            description="Localizable field",
-            example="note",
-        ),
+        fields.Str(metadata={"description": "Localizable field", "example": "note"}),
         required=False,
-        description="List of localizable fields",
+        metadata={"description": "List of localizable fields"},
     )
     catalogs = fields.List(
         fields.Str(
-            description="",
-            example="https://192.168.56.111/my-project/catalog.json",
+            metadata={
+                "description": "",
+                "example": "https://192.168.56.111/my-project/catalog.json",
+            }
         ),
         required=False,
-        description="List of message catalog URIs",
+        metadata={"description": "List of message catalog URIs"},
     )

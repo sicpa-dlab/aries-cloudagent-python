@@ -1,12 +1,8 @@
 """Record for out of band invitations."""
-
 from typing import Any, Mapping, Union
-
 from marshmallow import fields
-
 from .....messaging.models.base_record import BaseExchangeRecord, BaseExchangeSchema
 from .....messaging.valid import UUIDFour
-
 from ..messages.invitation import InvitationMessage, InvitationMessageSchema
 
 
@@ -22,7 +18,6 @@ class InvitationRecord(BaseExchangeRecord):
     RECORD_ID_NAME = "invitation_id"
     RECORD_TOPIC = "oob_invitation"
     TAG_NAMES = {"invi_msg_id"}
-
     STATE_INITIAL = "initial"
     STATE_AWAIT_RESPONSE = "await_response"
     STATE_DONE = "done"
@@ -33,10 +28,10 @@ class InvitationRecord(BaseExchangeRecord):
         invitation_id: str = None,
         state: str = None,
         invi_msg_id: str = None,
-        invitation: Union[InvitationMessage, Mapping] = None,  # invitation message
+        invitation: Union[InvitationMessage, Mapping] = None,
         invitation_url: str = None,
         oob_id: str = None,
-        public_did: str = None,  # backward-compat: BaseRecord.from_storage()
+        public_did: str = None,
         trace: bool = False,
         **kwargs,
     ):
@@ -95,34 +90,41 @@ class InvitationRecordSchema(BaseExchangeSchema):
 
     invitation_id = fields.Str(
         required=False,
-        description="Invitation record identifier",
-        example=UUIDFour.EXAMPLE,
+        metadata={
+            "description": "Invitation record identifier",
+            "example": UUIDFour.EXAMPLE,
+        },
     )
     state = fields.Str(
         required=False,
-        description="Out of band message exchange state",
-        example=InvitationRecord.STATE_AWAIT_RESPONSE,
+        metadata={
+            "description": "Out of band message exchange state",
+            "example": InvitationRecord.STATE_AWAIT_RESPONSE,
+        },
     )
     invi_msg_id = fields.Str(
         required=False,
-        description="Invitation message identifier",
-        example=UUIDFour.EXAMPLE,
+        metadata={
+            "description": "Invitation message identifier",
+            "example": UUIDFour.EXAMPLE,
+        },
     )
     oob_id = fields.Str(
         required=False,
-        description="Out of band record identifier",
-        example=UUIDFour.EXAMPLE,
+        metadata={
+            "description": "Out of band record identifier",
+            "example": UUIDFour.EXAMPLE,
+        },
     )
     invitation = fields.Nested(
         InvitationMessageSchema(),
         required=False,
-        description="Out of band invitation message",
+        metadata={"description": "Out of band invitation message"},
     )
     invitation_url = fields.Str(
         required=False,
-        description="Invitation message URL",
-        example=(
-            "https://example.com/endpoint?"
-            "c_i=eyJAdHlwZSI6ICIuLi4iLCAiLi4uIjogIi4uLiJ9XX0="
-        ),
+        metadata={
+            "description": "Invitation message URL",
+            "example": "https://example.com/endpoint?c_i=eyJAdHlwZSI6ICIuLi4iLCAiLi4uIjogIi4uLiJ9XX0=",
+        },
     )

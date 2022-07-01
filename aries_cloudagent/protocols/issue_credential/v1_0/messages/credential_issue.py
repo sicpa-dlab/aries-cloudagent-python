@@ -1,5 +1,4 @@
 """A credential content message."""
-
 from typing import Sequence
 
 from marshmallow import EXCLUDE, fields
@@ -9,7 +8,6 @@ from .....messaging.decorators.attach_decorator import (
     AttachDecorator,
     AttachDecoratorSchema,
 )
-
 from ..message_types import ATTACH_DECO_IDS, CREDENTIAL_ISSUE, PROTOCOL_PACKAGE
 
 HANDLER_CLASS = (
@@ -76,8 +74,13 @@ class CredentialIssueSchema(AgentMessageSchema):
         unknown = EXCLUDE
 
     comment = fields.Str(
-        description="Human-readable comment", required=False, allow_none=True
+        required=False,
+        allow_none=True,
+        metadata={"description": "Human-readable comment"},
     )
     credentials_attach = fields.Nested(
-        AttachDecoratorSchema, required=True, many=True, data_key="credentials~attach"
+        AttachDecoratorSchema,
+        required=True,
+        data_key="credentials~attach",
+        metadata={"many": True},
     )

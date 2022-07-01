@@ -1,10 +1,8 @@
 """Handler for keylist-query message."""
-
 from .....messaging.base_handler import BaseHandler, HandlerException
 from .....messaging.request_context import RequestContext
 from .....messaging.responder import BaseResponder
 from .....storage.error import StorageNotFoundError
-
 from ..manager import MediationManager, MediationNotGrantedError
 from ..messages.keylist_query import KeylistQuery
 from ..messages.problem_report import CMProblemReport, ProblemReportReason
@@ -20,10 +18,8 @@ class KeylistQueryHandler(BaseHandler):
             "%s called with context %s", self.__class__.__name__, context
         )
         assert isinstance(context.message, KeylistQuery)
-
         if not context.connection_ready:
             raise HandlerException("Invalid keylist query: no active connection")
-
         profile = context.profile
         mgr = MediationManager(profile)
         try:

@@ -1,11 +1,7 @@
 """Record used to represent the form associated with an action menu option."""
-
 from typing import Sequence
-
 from marshmallow import EXCLUDE, fields
-
 from .....messaging.models.base import BaseModel, BaseModelSchema
-
 from .menu_form_param import MenuFormParam, MenuFormParamSchema
 
 
@@ -23,7 +19,7 @@ class MenuForm(BaseModel):
         title: str = None,
         description: str = None,
         params: Sequence[MenuFormParam] = None,
-        submit_label: str = None,
+        submit_label: str = None
     ):
         """
         Initialize a MenuForm instance.
@@ -51,22 +47,25 @@ class MenuFormSchema(BaseModelSchema):
 
     title = fields.Str(
         required=False,
-        description="Menu form title",
-        example="Preferences",
+        metadata={"description": "Menu form title", "example": "Preferences"},
     )
     description = fields.Str(
         required=False,
-        description="Additional descriptive text for menu form",
-        example="Window preference settings",
+        metadata={
+            "description": "Additional descriptive text for menu form",
+            "example": "Window preference settings",
+        },
     )
     params = fields.List(
         fields.Nested(MenuFormParamSchema()),
         required=False,
-        description="List of form parameters",
+        metadata={"description": "List of form parameters"},
     )
     submit_label = fields.Str(
         required=False,
         data_key="submit-label",
-        description="Alternative label for form submit button",
-        example="Send",
+        metadata={
+            "description": "Alternative label for form submit button",
+            "example": "Send",
+        },
     )

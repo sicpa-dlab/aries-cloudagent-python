@@ -1,23 +1,18 @@
 """Issue-credential protocol message attachment format."""
-
 from collections import namedtuple
 from enum import Enum
 from typing import Mapping, Sequence, Type, TYPE_CHECKING, Union
 from uuid import uuid4
-
 from marshmallow import EXCLUDE, fields
-
 from .....utils.classloader import DeferLoad
 from .....messaging.decorators.attach_decorator import AttachDecorator
 from .....messaging.models.base import BaseModel, BaseModelSchema
 from .....messaging.valid import UUIDFour
-
 from ..models.detail.indy import V20CredExRecordIndy
 from ..models.detail.ld_proof import V20CredExRecordLDProof
 
 if TYPE_CHECKING:
     from ..formats.handler import V20CredFormatHandler
-
 FormatSpec = namedtuple("FormatSpec", "aries detail handler")
 
 
@@ -36,16 +31,14 @@ class V20CredFormat(BaseModel):
             "hlindy/",
             V20CredExRecordIndy,
             DeferLoad(
-                "aries_cloudagent.protocols.issue_credential.v2_0"
-                ".formats.indy.handler.IndyCredFormatHandler"
+                "aries_cloudagent.protocols.issue_credential.v2_0.formats.indy.handler.IndyCredFormatHandler"
             ),
         )
         LD_PROOF = FormatSpec(
             "aries/",
             V20CredExRecordLDProof,
             DeferLoad(
-                "aries_cloudagent.protocols.issue_credential.v2_0"
-                ".formats.ld_proof.handler.LDProofCredFormatHandler"
+                "aries_cloudagent.protocols.issue_credential.v2_0.formats.ld_proof.handler.LDProofCredFormatHandler"
             ),
         )
 
@@ -58,7 +51,6 @@ class V20CredFormat(BaseModel):
                         return fmt
             elif isinstance(label, V20CredFormat.Format):
                 return label
-
             return None
 
         @property
@@ -97,19 +89,12 @@ class V20CredFormat(BaseModel):
                     break
             else:
                 return None
-
             for atch in attachments:
                 if atch.ident == attach_id:
                     return atch.content
-
             return None
 
-    def __init__(
-        self,
-        *,
-        attach_id: str = None,
-        format_: str = None,
-    ):
+    def __init__(self, *, attach_id: str = None, format_: str = None):
         """Initialize issue-credential protocol message attachment format."""
         self.attach_id = attach_id or uuid4()
         self.format_ = format_
@@ -132,13 +117,14 @@ class V20CredFormatSchema(BaseModelSchema):
     attach_id = fields.Str(
         required=True,
         allow_none=False,
-        description="Attachment identifier",
-        example=UUIDFour.EXAMPLE,
+        metadata={"description": "Attachment identifier", "example": UUIDFour.EXAMPLE},
     )
     format_ = fields.Str(
         required=True,
         allow_none=False,
-        description="Attachment format specifier",
         data_key="format",
-        example="aries/ld-proof-vc-detail@v1.0",
+        metadata={
+            "description": "Attachment format specifier",
+            "example": "aries/ld-proof-vc-detail@v1.0",
+        },
     )

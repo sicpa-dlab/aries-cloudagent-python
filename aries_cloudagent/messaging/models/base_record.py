@@ -1,37 +1,26 @@
 """Classes for BaseStorage-based record management."""
-
 import json
 import logging
 import sys
 import uuid
-
 from datetime import datetime
 from typing import Any, Mapping, Optional, Sequence, Type, TypeVar, Union
-
 from marshmallow import fields
-
 from ...cache.base import BaseCache
 from ...config.settings import BaseSettings
 from ...core.profile import ProfileSession
 from ...storage.base import BaseStorage, StorageDuplicateError, StorageNotFoundError
 from ...storage.record import StorageRecord
-
 from ..util import datetime_to_str, time_now
 from ..valid import INDY_ISO8601_DATETIME
-
 from .base import BaseModel, BaseModelSchema, BaseModelError
 
 LOGGER = logging.getLogger(__name__)
-
-
 RecordType = TypeVar("RecordType", bound="BaseRecord")
 
 
 def match_post_filter(
-    record: dict,
-    post_filter: dict,
-    positive: bool = True,
-    alt: bool = False,
+    record: dict, post_filter: dict, positive: bool = True, alt: bool = False
 ) -> bool:
     """
     Determine if a record value matches the post-filter.
@@ -45,7 +34,6 @@ def match_post_filter(
     """
     if not post_filter:
         return True
-
     if alt:
         return (
             positive
@@ -53,18 +41,15 @@ def match_post_filter(
                 record.get(k) and record.get(k) in alts
                 for k, alts in post_filter.items()
             )
-        ) or (
-            (not positive)
+            or not positive
             and all(
                 record.get(k) and record.get(k) not in alts
                 for k, alts in post_filter.items()
             )
         )
-
     for k, v in post_filter.items():
         if record.get(k) != v:
             return not positive
-
     return positive
 
 
@@ -124,13 +109,11 @@ class BaseRecord(BaseModel):
     @classmethod
     def get_tag_map(cls) -> Mapping[str, str]:
         """Accessor for the set of defined tags."""
-
         return {tag.lstrip("~"): tag for tag in cls.TAG_NAMES or ()}
 
     @property
     def storage_record(self) -> StorageRecord:
         """Accessor for a `StorageRecord` representing this record."""
-
         return StorageRecord(
             self.RECORD_TYPE, json.dumps(self.value), self.tags, self._id
         )
@@ -138,13 +121,11 @@ class BaseRecord(BaseModel):
     @property
     def record_value(self) -> dict:
         """Accessor to define custom properties for the JSON record value."""
-
         return {}
 
     @property
     def value(self) -> dict:
         """Accessor for the JSON record value generated for this record."""
-
         ret = self.strip_tag_prefix(self.tags)
         ret.update({"created_at": self.created_at, "updated_at": self.updated_at})
         ret.update(self.record_value)
@@ -153,17 +134,15 @@ class BaseRecord(BaseModel):
     @property
     def record_tags(self) -> dict:
         """Accessor to define implementation-specific tags."""
-
         return {
             tag: getattr(self, prop)
-            for (prop, tag) in self.get_tag_map().items()
+            for prop, tag in self.get_tag_map().items()
             if getattr(self, prop) is not None
         }
 
     @property
     def tags(self) -> dict:
         """Accessor for the record tags generated for this record."""
-
         tags = self.record_tags
         return tags
 
@@ -195,7 +174,6 @@ class BaseRecord(BaseModel):
             value: The value to cache
             ttl: The cache ttl
         """
-
         if not cache_key:
             return
         cache = session.inject_or(BaseCache)
@@ -211,7 +189,6 @@ class BaseRecord(BaseModel):
             session: The profile session to use
             cache_key: The unique cache identifier
         """
-
         if not cache_key:
             return
         cache = session.inject_or(BaseCache)
@@ -233,7 +210,6 @@ class BaseRecord(BaseModel):
             session: The profile session to use
             record_id: The ID of the record to find
         """
-
         storage = session.inject(BaseStorage)
         result = await storage.get_record(
             cls.RECORD_TYPE, record_id, {"forUpdate": for_update, "retrieveTags": False}
@@ -259,7 +235,6 @@ class BaseRecord(BaseModel):
             post_filter: Additional value filters to apply matching positively,
                 with sequence values specifying alternatives to match (hit any)
         """
-
         storage = session.inject(BaseStorage)
         rows = await storage.find_all_records(
             cls.RECORD_TYPE,
@@ -308,7 +283,6 @@ class BaseRecord(BaseModel):
             alt: set to match any (positive=True) value or miss all (positive=False)
                 values in post_filter
         """
-
         storage = session.inject(BaseStorage)
         rows = await storage.find_all_records(
             cls.RECORD_TYPE,
@@ -319,15 +293,9 @@ class BaseRecord(BaseModel):
         for record in rows:
             vals = json.loads(record.value)
             if match_post_filter(
-                vals,
-                post_filter_positive,
-                positive=True,
-                alt=alt,
+                vals, post_filter_positive, positive=True, alt=alt
             ) and match_post_filter(
-                vals,
-                post_filter_negative,
-                positive=False,
-                alt=alt,
+                vals, post_filter_negative, positive=False, alt=alt
             ):
                 try:
                     result.append(cls.from_storage(record.id, vals))
@@ -354,7 +322,6 @@ class BaseRecord(BaseModel):
             override: Override configured logging regimen, print to stderr instead
             event: Flag to override whether the event is sent
         """
-
         new_record = None
         log_reason = reason or ("Updated record" if self._id else "Created record")
         try:
@@ -380,10 +347,8 @@ class BaseRecord(BaseModel):
             self.log_state(
                 log_reason, params, override=log_override, settings=session.settings
             )
-
         await self.post_save(session, new_record, self._last_state, event)
         self._last_state = self.state
-
         return self._id
 
     async def post_save(
@@ -402,9 +367,8 @@ class BaseRecord(BaseModel):
             last_state: The previous state value
             event: Flag to override whether the event is sent
         """
-
         if event is None:
-            event = new_record or (last_state != self.state)
+            event = new_record or last_state != self.state
         if event:
             await self.emit_event(session, self.serialize())
 
@@ -415,11 +379,9 @@ class BaseRecord(BaseModel):
         Args:
             session: The profile session to use
         """
-
         if self._id:
             storage = session.inject(BaseStorage)
             await storage.delete_record(self.storage_record)
-        # FIXME - update state and send webhook?
 
     async def emit_event(self, session: ProfileSession, payload: Any = None):
         """
@@ -429,18 +391,14 @@ class BaseRecord(BaseModel):
             session: The profile session to use
             payload: The event payload
         """
-
         if not self.RECORD_TOPIC:
             return
-
         if self.state:
             topic = f"{self.EVENT_NAMESPACE}::{self.RECORD_TOPIC}::{self.state}"
         else:
             topic = f"{self.EVENT_NAMESPACE}::{self.RECORD_TOPIC}"
-
         if not payload:
             payload = self.serialize()
-
         await session.profile.notify(topic, payload)
 
     @classmethod
@@ -452,9 +410,11 @@ class BaseRecord(BaseModel):
         override: bool = False,
     ):
         """Print a message with increased visibility (for testing)."""
-
-        if override or (
-            cls.LOG_STATE_FLAG and settings and settings.get(cls.LOG_STATE_FLAG)
+        if (
+            override
+            or cls.LOG_STATE_FLAG
+            and settings
+            and settings.get(cls.LOG_STATE_FLAG)
         ):
             out = msg + "\n"
             if params:
@@ -465,15 +425,11 @@ class BaseRecord(BaseModel):
     @classmethod
     def strip_tag_prefix(cls, tags: dict):
         """Strip tilde from unencrypted tag names."""
-
-        return (
-            {(k[1:] if "~" in k else k): v for (k, v) in tags.items()} if tags else {}
-        )
+        return {(k[1:] if "~" in k else k): v for k, v in tags.items()} if tags else {}
 
     @classmethod
     def prefix_tag_filter(cls, tag_filter: dict):
         """Prefix unencrypted tags used in the tag filter."""
-
         ret = None
         if tag_filter:
             tag_map = cls.get_tag_map()
@@ -489,7 +445,6 @@ class BaseRecord(BaseModel):
 
     def __eq__(self, other: Any) -> bool:
         """Comparison between records."""
-
         if type(other) is type(self):
             return self.value == other.value and self.tags == other.tags
         return False
@@ -499,21 +454,14 @@ class BaseExchangeRecord(BaseRecord):
     """Represents a base record with event tracing capability."""
 
     def __init__(
-        self,
-        id: str = None,
-        state: str = None,
-        *,
-        trace: bool = False,
-        **kwargs,
+        self, id: str = None, state: str = None, *, trace: bool = False, **kwargs
     ):
         """Initialize a new BaseExchangeRecord."""
-
         super().__init__(id, state, **kwargs)
         self.trace = trace
 
     def __eq__(self, other: Any) -> bool:
         """Comparison between records."""
-
         if type(other) is type(self):
             return (
                 self.value == other.value
@@ -533,16 +481,21 @@ class BaseRecordSchema(BaseModelSchema):
 
     state = fields.Str(
         required=False,
-        description="Current record state",
-        example="active",
+        metadata={"description": "Current record state", "example": "active"},
     )
     created_at = fields.Str(
-        required=False, description="Time of record creation", **INDY_ISO8601_DATETIME
+        required=False,
+        metadata={
+            "description": "Time of record creation",
+            **INDY_ISO8601_DATETIME,
+        },
     )
     updated_at = fields.Str(
         required=False,
-        description="Time of last record update",
-        **INDY_ISO8601_DATETIME,
+        metadata={
+            "description": "Time of last record update",
+            **INDY_ISO8601_DATETIME,
+        },
     )
 
 
@@ -555,7 +508,9 @@ class BaseExchangeSchema(BaseRecordSchema):
         model_class = BaseExchangeRecord
 
     trace = fields.Boolean(
-        description="Record trace information, based on agent configuration",
         required=False,
-        default=False,
+        dump_default=False,
+        metadata={
+            "description": "Record trace information, based on agent configuration"
+        },
     )

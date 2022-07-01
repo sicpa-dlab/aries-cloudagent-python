@@ -1,21 +1,13 @@
 """Represents an invitation message for establishing connection."""
-
 from typing import Sequence
 from urllib.parse import parse_qs, urljoin, urlparse
-
 from marshmallow import EXCLUDE, fields, validates_schema, ValidationError
-
 from .....messaging.agent_message import AgentMessage, AgentMessageSchema
 from .....messaging.valid import INDY_DID, INDY_RAW_PUBLIC_KEY
 from .....wallet.util import b64_to_bytes, bytes_to_b64
-
 from ..message_types import CONNECTION_INVITATION, PROTOCOL_PACKAGE
 
-
-HANDLER_CLASS = (
-    f"{PROTOCOL_PACKAGE}.handlers"
-    ".connection_invitation_handler.ConnectionInvitationHandler"
-)
+HANDLER_CLASS = f"{PROTOCOL_PACKAGE}.handlers.connection_invitation_handler.ConnectionInvitationHandler"
 
 
 class ConnectionInvitation(AgentMessage):
@@ -102,36 +94,45 @@ class ConnectionInvitationSchema(AgentMessageSchema):
 
     label = fields.Str(
         required=False,
-        description="Optional label for connection invitation",
-        example="Bob",
+        metadata={
+            "description": "Optional label for connection invitation",
+            "example": "Bob",
+        },
     )
     did = fields.Str(
-        required=False, description="DID for connection invitation", **INDY_DID
+        required=False,
+        metadata={"description": "DID for connection invitation", **INDY_DID},
     )
     recipient_keys = fields.List(
-        fields.Str(description="Recipient public key", **INDY_RAW_PUBLIC_KEY),
+        fields.Str(
+            metadata={"description": "Recipient public key", **INDY_RAW_PUBLIC_KEY}
+        ),
         data_key="recipientKeys",
         required=False,
-        description="List of recipient keys",
+        metadata={"description": "List of recipient keys"},
     )
     endpoint = fields.Str(
         data_key="serviceEndpoint",
         required=False,
-        description="Service endpoint at which to reach this agent",
-        example="http://192.168.56.101:8020",
+        metadata={
+            "description": "Service endpoint at which to reach this agent",
+            "example": "http://192.168.56.101:8020",
+        },
     )
     routing_keys = fields.List(
-        fields.Str(description="Routing key", **INDY_RAW_PUBLIC_KEY),
+        fields.Str(metadata={"description": "Routing key", **INDY_RAW_PUBLIC_KEY}),
         data_key="routingKeys",
         required=False,
-        description="List of routing keys",
+        metadata={"description": "List of routing keys"},
     )
     image_url = fields.URL(
         data_key="imageUrl",
         required=False,
         allow_none=True,
-        description="Optional image URL for connection invitation",
-        example="http://192.168.56.101/img/logo.jpg",
+        metadata={
+            "description": "Optional image URL for connection invitation",
+            "example": "http://192.168.56.101/img/logo.jpg",
+        },
     )
 
     @validates_schema

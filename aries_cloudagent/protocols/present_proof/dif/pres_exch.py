@@ -1,21 +1,18 @@
 """Schemas for dif presentation exchange attachment."""
+from typing import Mapping, Sequence, Union
+
 from marshmallow import (
-    fields,
-    validate,
     EXCLUDE,
     INCLUDE,
-    pre_load,
-    post_dump,
     ValidationError,
+    fields,
+    post_dump,
+    pre_load,
+    validate,
 )
-from typing import Sequence, Union, Mapping
 
-from ....messaging.models.base import BaseModelSchema, BaseModel
-from ....messaging.valid import (
-    UUID4,
-    StrOrDictField,
-    StrOrNumberField,
-)
+from ....messaging.models.base import BaseModel, BaseModelSchema
+from ....messaging.valid import UUID4, StrOrDictField, StrOrNumberField
 from ....vc.vc_ld import LinkedDataProofSchema
 
 
@@ -35,7 +32,7 @@ class ClaimFormat(BaseModel):
         jwt_vp: Mapping = None,
         ldp: Mapping = None,
         ldp_vc: Mapping = None,
-        ldp_vp: Mapping = None,
+        ldp_vp: Mapping = None
     ):
         """Initialize format."""
         self.jwt = jwt
@@ -55,24 +52,12 @@ class ClaimFormatSchema(BaseModelSchema):
         model_class = ClaimFormat
         unknown = EXCLUDE
 
-    jwt = fields.Dict(
-        required=False,
-    )
-    jwt_vc = fields.Dict(
-        required=False,
-    )
-    jwt_vp = fields.Dict(
-        required=False,
-    )
-    ldp = fields.Dict(
-        required=False,
-    )
-    ldp_vc = fields.Dict(
-        required=False,
-    )
-    ldp_vp = fields.Dict(
-        required=False,
-    )
+    jwt = fields.Dict(required=False)
+    jwt_vc = fields.Dict(required=False)
+    jwt_vp = fields.Dict(required=False)
+    ldp = fields.Dict(required=False)
+    ldp_vc = fields.Dict(required=False)
+    ldp_vp = fields.Dict(required=False)
 
 
 class SubmissionRequirements(BaseModel):
@@ -93,8 +78,7 @@ class SubmissionRequirements(BaseModel):
         minimum: int = None,
         maximum: int = None,
         _from: str = None,
-        # Self_reference
-        from_nested: Sequence = None,
+        from_nested: Sequence = None
     ):
         """Initialize SubmissionRequirement."""
         self._name = _name
@@ -116,38 +100,34 @@ class SubmissionRequirementsSchema(BaseModelSchema):
         model_class = SubmissionRequirements
         unknown = EXCLUDE
 
-    _name = fields.Str(description="Name", required=False, data_key="name")
-    purpose = fields.Str(description="Purpose", required=False)
+    _name = fields.Str(
+        required=False, data_key="name", metadata={"description": "Name"}
+    )
+    purpose = fields.Str(required=False, metadata={"description": "Purpose"})
     rule = fields.Str(
-        description="Selection",
         required=False,
         validate=validate.OneOf(["all", "pick"]),
+        metadata={"description": "Selection"},
     )
     count = fields.Int(
-        description="Count Value",
-        example=1234,
         required=False,
-        strict=True,
+        metadata={"description": "Count Value", "example": 1234, "strict": True},
     )
     minimum = fields.Int(
-        description="Min Value",
-        example=1234,
         required=False,
-        strict=True,
         data_key="min",
+        metadata={"description": "Min Value", "example": 1234, "strict": True},
     )
     maximum = fields.Int(
-        description="Max Value",
-        example=1234,
         required=False,
-        strict=True,
         data_key="max",
+        metadata={"description": "Max Value", "example": 1234, "strict": True},
     )
-    _from = fields.Str(description="From", required=False, data_key="from")
-    # Self References
+    _from = fields.Str(
+        required=False, data_key="from", metadata={"description": "From"}
+    )
     from_nested = fields.List(
-        fields.Nested(lambda: SubmissionRequirementsSchema()),
-        required=False,
+        fields.Nested(lambda: SubmissionRequirementsSchema()), required=False
     )
 
     @pre_load
@@ -155,13 +135,11 @@ class SubmissionRequirementsSchema(BaseModelSchema):
         """Support validation of from and from_nested."""
         if "from" in data and "from_nested" in data:
             raise ValidationError(
-                "Both from and from_nested cannot be "
-                "specified in the submission requirement"
+                "Both from and from_nested cannot be specified in the submission requirement"
             )
         if "from" not in data and "from_nested" not in data:
             raise ValidationError(
-                "Either from or from_nested needs to be "
-                "specified in the submission requirement"
+                "Either from or from_nested needs to be specified in the submission requirement"
             )
         return data
 
@@ -174,12 +152,7 @@ class SchemaInputDescriptor(BaseModel):
 
         schema_class = "SchemaInputDescriptorSchema"
 
-    def __init__(
-        self,
-        *,
-        uri: str = None,
-        required: bool = None,
-    ):
+    def __init__(self, *, uri: str = None, required: bool = None):
         """Initialize SchemaInputDescriptor."""
         self.uri = uri
         self.required = required
@@ -194,11 +167,8 @@ class SchemaInputDescriptorSchema(BaseModelSchema):
         model_class = SchemaInputDescriptor
         unknown = EXCLUDE
 
-    uri = fields.Str(
-        description="URI",
-        required=False,
-    )
-    required = fields.Bool(description="Required", required=False)
+    uri = fields.Str(required=False, metadata={"description": "URI"})
+    required = fields.Bool(required=False, metadata={"description": "Required"})
 
 
 class SchemasInputDescriptorFilter(BaseModel):
@@ -213,7 +183,7 @@ class SchemasInputDescriptorFilter(BaseModel):
         self,
         *,
         oneof_filter: bool = False,
-        uri_groups: Sequence[Sequence[SchemaInputDescriptor]] = None,
+        uri_groups: Sequence[Sequence[SchemaInputDescriptor]] = None
     ):
         """Initialize SchemasInputDescriptorFilter."""
         self.oneof_filter = oneof_filter
@@ -230,7 +200,7 @@ class SchemasInputDescriptorFilterSchema(BaseModelSchema):
         unknown = EXCLUDE
 
     uri_groups = fields.List(fields.List(fields.Nested(SchemaInputDescriptorSchema)))
-    oneof_filter = fields.Bool(description="oneOf")
+    oneof_filter = fields.Bool(metadata={"description": "oneOf"})
 
     @pre_load
     def extract_info(self, data, **kwargs):
@@ -262,12 +232,7 @@ class DIFHolder(BaseModel):
 
         schema_class = "DIFHolderSchema"
 
-    def __init__(
-        self,
-        *,
-        field_ids: Sequence[str] = None,
-        directive: str = None,
-    ):
+    def __init__(self, *, field_ids: Sequence[str] = None, directive: str = None):
         """Initialize Holder."""
         self.field_ids = field_ids
         self.directive = directive
@@ -283,18 +248,14 @@ class DIFHolderSchema(BaseModelSchema):
         unknown = EXCLUDE
 
     field_ids = fields.List(
-        fields.Str(
-            description="FieldID",
-            required=False,
-            **UUID4,
-        ),
+        fields.Str(metadata={"description": "FieldID", **UUID4}, required=False),
         required=False,
         data_key="field_id",
     )
     directive = fields.Str(
-        description="Preference",
         required=False,
         validate=validate.OneOf(["required", "preferred"]),
+        metadata={"description": "Preference"},
     )
 
 
@@ -320,7 +281,7 @@ class Filter(BaseModel):
         exclusive_min: str = None,
         exclusive_max: str = None,
         const: str = None,
-        enums: Sequence[str] = None,
+        enums: Sequence[str] = None
     ):
         """Initialize Filter."""
         self._type = _type
@@ -346,62 +307,45 @@ class FilterSchema(BaseModelSchema):
         model_class = Filter
         unknown = EXCLUDE
 
-    _type = fields.Str(description="Type", required=False, data_key="type")
+    _type = fields.Str(
+        required=False, data_key="type", metadata={"description": "Type"}
+    )
     fmt = fields.Str(
-        description="Format",
-        required=False,
-        data_key="format",
+        required=False, data_key="format", metadata={"description": "Format"}
     )
-    pattern = fields.Str(
-        description="Pattern",
-        required=False,
-    )
-    minimum = StrOrNumberField(
-        description="Minimum",
-        required=False,
-    )
-    maximum = StrOrNumberField(
-        description="Maximum",
-        required=False,
-    )
+    pattern = fields.Str(required=False, metadata={"description": "Pattern"})
+    minimum = StrOrNumberField(metadata={"description": "Minimum"}, required=False)
+    maximum = StrOrNumberField(metadata={"description": "Maximum"}, required=False)
     min_length = fields.Int(
-        description="Min Length",
-        example=1234,
-        strict=True,
         required=False,
         data_key="minLength",
+        metadata={"description": "Min Length", "example": 1234, "strict": True},
     )
     max_length = fields.Int(
-        description="Max Length",
-        example=1234,
-        strict=True,
         required=False,
         data_key="maxLength",
+        metadata={"description": "Max Length", "example": 1234, "strict": True},
     )
     exclusive_min = StrOrNumberField(
-        description="ExclusiveMinimum",
+        metadata={"description": "ExclusiveMinimum"},
         required=False,
         data_key="exclusiveMinimum",
     )
     exclusive_max = StrOrNumberField(
-        description="ExclusiveMaximum",
+        metadata={"description": "ExclusiveMaximum"},
         required=False,
         data_key="exclusiveMaximum",
     )
-    const = StrOrNumberField(
-        description="Const",
-        required=False,
-    )
+    const = StrOrNumberField(metadata={"description": "Const"}, required=False)
     enums = fields.List(
-        StrOrNumberField(description="Enum", required=False),
+        StrOrNumberField(metadata={"description": "Enum"}, required=False),
         required=False,
         data_key="enum",
     )
     _not = fields.Boolean(
-        description="Not",
         required=False,
-        example=False,
         data_key="not",
+        metadata={"description": "Not", "example": False},
     )
 
     @pre_load
@@ -422,7 +366,6 @@ class FilterSchema(BaseModelSchema):
         """Support serialization of not filter according to DIF spec."""
         if data.pop("not", False):
             return {"not": data}
-
         return data
 
 
@@ -441,7 +384,7 @@ class DIFField(BaseModel):
         paths: Sequence[str] = None,
         purpose: str = None,
         predicate: str = None,
-        _filter: Filter = None,
+        _filter: Filter = None
     ):
         """Initialize Field."""
         self.paths = paths
@@ -460,20 +403,17 @@ class DIFFieldSchema(BaseModelSchema):
         model_class = DIFField
         unknown = EXCLUDE
 
-    id = fields.Str(description="ID", required=False)
+    id = fields.Str(required=False, metadata={"description": "ID"})
     paths = fields.List(
-        fields.Str(description="Path", required=False),
+        fields.Str(metadata={"description": "Path"}, required=False),
         required=False,
         data_key="path",
     )
-    purpose = fields.Str(
-        description="Purpose",
-        required=False,
-    )
+    purpose = fields.Str(required=False, metadata={"description": "Purpose"})
     predicate = fields.Str(
-        description="Preference",
         required=False,
         validate=validate.OneOf(["required", "preferred"]),
+        metadata={"description": "Preference"},
     )
     _filter = fields.Nested(FilterSchema, data_key="filter")
 
@@ -495,7 +435,7 @@ class Constraints(BaseModel):
         _fields: Sequence[DIFField] = None,
         status_active: str = None,
         status_suspended: str = None,
-        status_revoked: str = None,
+        status_revoked: str = None
     ):
         """Initialize Constraints for Input Descriptor."""
         self.subject_issuer = subject_issuer
@@ -517,33 +457,30 @@ class ConstraintsSchema(BaseModelSchema):
         unknown = EXCLUDE
 
     subject_issuer = fields.Str(
-        description="SubjectIsIssuer",
         required=False,
-        validate=validate.OneOf(["required", "preferred"]),
         data_key="subject_is_issuer",
+        metadata={
+            "description": "SubjectIsIssuer",
+            "validate": validate.OneOf(["required", "preferred"]),
+        },
     )
-    limit_disclosure = fields.Str(description="LimitDisclosure", required=False)
+    limit_disclosure = fields.Str(
+        required=False, metadata={"description": "LimitDisclosure"}
+    )
     holders = fields.List(
-        fields.Nested(DIFHolderSchema),
-        required=False,
-        data_key="is_holder",
+        fields.Nested(DIFHolderSchema), required=False, data_key="is_holder"
     )
     _fields = fields.List(
-        fields.Nested(DIFFieldSchema),
-        required=False,
-        data_key="fields",
+        fields.Nested(DIFFieldSchema), required=False, data_key="fields"
     )
     status_active = fields.Str(
-        required=False,
-        validate=validate.OneOf(["required", "allowed", "disallowed"]),
+        required=False, validate=validate.OneOf(["required", "allowed", "disallowed"])
     )
     status_suspended = fields.Str(
-        required=False,
-        validate=validate.OneOf(["required", "allowed", "disallowed"]),
+        required=False, validate=validate.OneOf(["required", "allowed", "disallowed"])
     )
     status_revoked = fields.Str(
-        required=False,
-        validate=validate.OneOf(["required", "allowed", "disallowed"]),
+        required=False, validate=validate.OneOf(["required", "allowed", "disallowed"])
     )
 
     @pre_load
@@ -601,7 +538,7 @@ class InputDescriptors(BaseModel):
         purpose: str = None,
         metadata: dict = None,
         constraint: Constraints = None,
-        schemas: SchemasInputDescriptorFilter = None,
+        schemas: SchemasInputDescriptorFilter = None
     ):
         """Initialize InputDescriptors."""
         self.id = id
@@ -622,18 +559,17 @@ class InputDescriptorsSchema(BaseModelSchema):
         model_class = InputDescriptors
         unknown = EXCLUDE
 
-    id = fields.Str(description="ID", required=False)
+    id = fields.Str(required=False, metadata={"description": "ID"})
     groups = fields.List(
-        fields.Str(
-            description="Group",
-            required=False,
-        ),
+        fields.Str(metadata={"description": "Group"}, required=False),
         required=False,
         data_key="group",
     )
-    name = fields.Str(description="Name", required=False)
-    purpose = fields.Str(description="Purpose", required=False)
-    metadata = fields.Dict(description="Metadata dictionary", required=False)
+    name = fields.Str(required=False, metadata={"description": "Name"})
+    purpose = fields.Str(required=False, metadata={"description": "Purpose"})
+    metadata = fields.Dict(
+        required=False, metadata={"description": "Metadata dictionary"}
+    )
     constraint = fields.Nested(
         ConstraintsSchema, required=False, data_key="constraints"
     )
@@ -641,11 +577,9 @@ class InputDescriptorsSchema(BaseModelSchema):
         SchemasInputDescriptorFilterSchema,
         required=False,
         data_key="schema",
-        description=(
-            "Accepts a list of schema or a dict containing filters like oneof_filter."
-        ),
-        example=(
-            {
+        metadata={
+            "description": "Accepts a list of schema or a dict containing filters like oneof_filter.",
+            "example": {
                 "oneof_filter": [
                     [
                         {"uri": "https://www.w3.org/Test1#Test1"},
@@ -658,8 +592,8 @@ class InputDescriptorsSchema(BaseModelSchema):
                         ]
                     },
                 ]
-            }
-        ),
+            },
+        },
     )
 
 
@@ -678,7 +612,7 @@ class Requirement(BaseModel):
         maximum: int = None,
         minimum: int = None,
         input_descriptors: Sequence[InputDescriptors] = None,
-        nested_req: Sequence = None,
+        nested_req: Sequence = None
     ):
         """Initialize Requirement."""
         self.count = count
@@ -698,28 +632,20 @@ class RequirementSchema(BaseModelSchema):
         unknown = EXCLUDE
 
     count = fields.Int(
-        description="Count Value",
-        example=1234,
-        strict=True,
         required=False,
+        metadata={"description": "Count Value", "example": 1234, "strict": True},
     )
     maximum = fields.Int(
-        description="Max Value",
-        example=1234,
-        strict=True,
         required=False,
+        metadata={"description": "Max Value", "example": 1234, "strict": True},
     )
     minimum = fields.Int(
-        description="Min Value",
-        example=1234,
-        strict=True,
         required=False,
+        metadata={"description": "Min Value", "example": 1234, "strict": True},
     )
     input_descriptors = fields.List(
-        fields.Nested(InputDescriptorsSchema),
-        required=False,
+        fields.Nested(InputDescriptorsSchema), required=False
     )
-    # Self References
     nested_req = fields.List(
         fields.Nested(lambda: RequirementSchema(exclude=("_nested_req",))),
         required=False,
@@ -743,7 +669,7 @@ class PresentationDefinition(BaseModel):
         fmt: ClaimFormat = None,
         submission_requirements: Sequence[SubmissionRequirements] = None,
         input_descriptors: Sequence[InputDescriptors] = None,
-        **kwargs,
+        **kwargs
     ):
         """Initialize flattened single-JWS to include in attach decorator data."""
         super().__init__(**kwargs)
@@ -766,35 +692,26 @@ class PresentationDefinitionSchema(BaseModelSchema):
 
     id = fields.Str(
         required=False,
-        description="Unique Resource Identifier",
-        **UUID4,
+        metadata={"description": "Unique Resource Identifier", **UUID4},
     )
     name = fields.Str(
-        description=(
-            "Human-friendly name that describes"
-            " what the presentation definition pertains to"
-        ),
         required=False,
+        metadata={
+            "description": "Human-friendly name that describes what the presentation definition pertains to"
+        },
     )
     purpose = fields.Str(
-        description=(
-            "Describes the purpose for which"
-            " the Presentation Definition's inputs are being requested"
-        ),
         required=False,
+        metadata={
+            "description": "Describes the purpose for which the Presentation Definition's inputs are being requested"
+        },
     )
-    fmt = fields.Nested(
-        ClaimFormatSchema,
-        required=False,
-        data_key="format",
-    )
+    fmt = fields.Nested(ClaimFormatSchema, required=False, data_key="format")
     submission_requirements = fields.List(
-        fields.Nested(SubmissionRequirementsSchema),
-        required=False,
+        fields.Nested(SubmissionRequirementsSchema), required=False
     )
     input_descriptors = fields.List(
-        fields.Nested(InputDescriptorsSchema),
-        required=False,
+        fields.Nested(InputDescriptorsSchema), required=False
     )
 
 
@@ -806,13 +723,7 @@ class InputDescriptorMapping(BaseModel):
 
         schema_class = "InputDescriptorMappingSchema"
 
-    def __init__(
-        self,
-        *,
-        id: str = None,
-        fmt: str = None,
-        path: str = None,
-    ):
+    def __init__(self, *, id: str = None, fmt: str = None, path: str = None):
         """Initialize InputDescriptorMapping."""
         self.id = id
         self.fmt = fmt
@@ -828,20 +739,14 @@ class InputDescriptorMappingSchema(BaseModelSchema):
         model_class = InputDescriptorMapping
         unknown = EXCLUDE
 
-    id = fields.Str(
-        description="ID",
-        required=False,
-    )
+    id = fields.Str(required=False, metadata={"description": "ID"})
     fmt = fields.Str(
-        description="Format",
         required=False,
-        default="ldp_vp",
+        dump_default="ldp_vp",
         data_key="format",
+        metadata={"description": "Format"},
     )
-    path = fields.Str(
-        description="Path",
-        required=False,
-    )
+    path = fields.Str(required=False, metadata={"description": "Path"})
 
 
 class PresentationSubmission(BaseModel):
@@ -857,7 +762,7 @@ class PresentationSubmission(BaseModel):
         *,
         id: str = None,
         definition_id: str = None,
-        descriptor_maps: Sequence[InputDescriptorMapping] = None,
+        descriptor_maps: Sequence[InputDescriptorMapping] = None
     ):
         """Initialize InputDescriptorMapping."""
         self.id = id
@@ -874,15 +779,9 @@ class PresentationSubmissionSchema(BaseModelSchema):
         model_class = PresentationSubmission
         unknown = EXCLUDE
 
-    id = fields.Str(
-        description="ID",
-        required=False,
-        **UUID4,
-    )
+    id = fields.Str(required=False, metadata={"description": "ID", **UUID4})
     definition_id = fields.Str(
-        description="DefinitionID",
-        required=False,
-        **UUID4,
+        required=False, metadata={"description": "DefinitionID", **UUID4}
     )
     descriptor_maps = fields.List(
         fields.Nested(InputDescriptorMappingSchema),
@@ -907,7 +806,7 @@ class VerifiablePresentation(BaseModel):
         types: Sequence[str] = None,
         credentials: Sequence[dict] = None,
         proof: Sequence[dict] = None,
-        presentation_submission: PresentationSubmission = None,
+        presentation_submission: PresentationSubmission = None
     ):
         """Initialize VerifiablePresentation."""
         self.id = id
@@ -927,27 +826,19 @@ class VerifiablePresentationSchema(BaseModelSchema):
         model_class = VerifiablePresentation
         unknown = INCLUDE
 
-    id = fields.Str(
-        description="ID",
-        required=False,
-        **UUID4,
-    )
-    contexts = fields.List(
-        StrOrDictField(),
-        data_key="@context",
-    )
+    id = fields.Str(required=False, metadata={"description": "ID", **UUID4})
+    contexts = fields.List(StrOrDictField(), data_key="@context")
     types = fields.List(
-        fields.Str(description="Types", required=False),
-        data_key="type",
+        fields.Str(metadata={"description": "Types"}, required=False), data_key="type"
     )
     credentials = fields.List(
-        fields.Dict(description="Credentials", required=False),
+        fields.Dict(metadata={"description": "Credentials"}, required=False),
         data_key="verifiableCredential",
     )
     proof = fields.Nested(
         LinkedDataProofSchema(),
         required=True,
-        description="The proof of the credential",
+        metadata={"description": "The proof of the credential"},
     )
     presentation_submission = fields.Nested(PresentationSubmissionSchema)
 
@@ -960,12 +851,7 @@ class DIFOptions(BaseModel):
 
         schema_class = "DIFOptionsSchema"
 
-    def __init__(
-        self,
-        *,
-        challenge: str = None,
-        domain: str = None,
-    ):
+    def __init__(self, *, challenge: str = None, domain: str = None):
         """Initialize DIFOptions."""
         self.challenge = challenge
         self.domain = domain
@@ -981,12 +867,16 @@ class DIFOptionsSchema(BaseModelSchema):
         unknown = EXCLUDE
 
     challenge = fields.String(
-        description="Challenge protect against replay attack",
         required=False,
-        **UUID4,
+        metadata={
+            "description": "Challenge protect against replay attack",
+            **UUID4,
+        },
     )
     domain = fields.String(
-        description="Domain protect against replay attack",
         required=False,
-        example="4jt78h47fh47",
+        metadata={
+            "description": "Domain protect against replay attack",
+            "example": "4jt78h47fh47",
+        },
     )

@@ -1,12 +1,9 @@
 """V2.0 present-proof dif presentation-exchange format handler."""
-
 import json
 import logging
-
 from marshmallow import RAISE
 from typing import Mapping, Tuple, Sequence
 from uuid import uuid4
-
 from ......messaging.base_handler import BaseResponder
 from ......messaging.decorators.attach_decorator import AttachDecorator
 from ......storage.error import StorageNotFoundError
@@ -22,19 +19,13 @@ from ......vc.ld_proofs import (
 from ......vc.vc_ld.verify import verify_presentation
 from ......wallet.base import BaseWallet
 from ......wallet.key_type import KeyType
-
 from .....problem_report.v1_0.message import ProblemReport
-
 from ....dif.pres_exch import PresentationDefinition, SchemaInputDescriptor
 from ....dif.pres_exch_handler import DIFPresExchHandler, DIFPresExchError
 from ....dif.pres_proposal_schema import DIFProofProposalSchema
-from ....dif.pres_request_schema import (
-    DIFProofRequestSchema,
-    DIFPresSpecSchema,
-)
+from ....dif.pres_request_schema import DIFProofRequestSchema, DIFPresSpecSchema
 from ....dif.pres_schema import DIFProofSchema
 from ....v2_0.messages.pres_problem_report import ProblemReportReason
-
 from ...message_types import (
     ATTACHMENT_FORMAT,
     PRES_20_REQUEST,
@@ -44,7 +35,6 @@ from ...message_types import (
 from ...messages.pres_format import V20PresFormat
 from ...messages.pres import V20Pres
 from ...models.pres_exchange import V20PresExRecord
-
 from ..handler import V20PresFormatHandler, V20PresFormatHandlerError
 
 LOGGER = logging.getLogger(__name__)
@@ -54,11 +44,7 @@ class DIFPresFormatHandler(V20PresFormatHandler):
     """DIF presentation format handler."""
 
     format = V20PresFormat.Format.DIF
-
-    ISSUE_SIGNATURE_SUITE_KEY_TYPE_MAPPING = {
-        Ed25519Signature2018: KeyType.ED25519,
-    }
-
+    ISSUE_SIGNATURE_SUITE_KEY_TYPE_MAPPING = {Ed25519Signature2018: KeyType.ED25519}
     if BbsBlsSignature2020.BBS_SUPPORTED:
         ISSUE_SIGNATURE_SUITE_KEY_TYPE_MAPPING[BbsBlsSignature2020] = KeyType.BLS12381G2
         ISSUE_SIGNATURE_SUITE_KEY_TYPE_MAPPING[
@@ -70,9 +56,7 @@ class DIFPresFormatHandler(V20PresFormatHandler):
         suites = []
         for suite, key_type in self.ISSUE_SIGNATURE_SUITE_KEY_TYPE_MAPPING.items():
             suites.append(
-                suite(
-                    key_pair=WalletKeyPair(wallet=wallet, key_type=key_type),
-                )
+                suite(key_pair=WalletKeyPair(wallet=wallet, key_type=key_type))
             )
         return suites
 
@@ -100,11 +84,7 @@ class DIFPresFormatHandler(V20PresFormatHandler):
             PRES_20_PROPOSAL: DIFProofProposalSchema,
             PRES_20: DIFProofSchema,
         }
-
-        # Get schema class
         Schema = mapping[message_type]
-
-        # Validate, throw if not valid
         Schema(unknown=RAISE).load(attachment_data)
 
     def get_format_identifier(self, message_type: str) -> str:
@@ -123,19 +103,13 @@ class DIFPresFormatHandler(V20PresFormatHandler):
         self, message_type: str, data: dict
     ) -> Tuple[V20PresFormat, AttachDecorator]:
         """Get presentation format and attach objects for use in pres_ex messages."""
-
-        return (
-            V20PresFormat(
-                attach_id=DIFPresFormatHandler.format.api,
-                format_=self.get_format_identifier(message_type),
-            ),
-            AttachDecorator.data_json(data, ident=DIFPresFormatHandler.format.api),
-        )
+        return V20PresFormat(
+            attach_id=DIFPresFormatHandler.format.api,
+            format_=self.get_format_identifier(message_type),
+        ), AttachDecorator.data_json(data, ident=DIFPresFormatHandler.format.api)
 
     async def create_bound_request(
-        self,
-        pres_ex_record: V20PresExRecord,
-        request_data: dict = None,
+        self, pres_ex_record: V20PresExRecord, request_data: dict = None
     ) -> Tuple[V20PresFormat, AttachDecorator]:
         """
         Create a presentation request bound to a proposal.
@@ -164,13 +138,10 @@ class DIFPresFormatHandler(V20PresFormatHandler):
             if "challenge" not in dif_proof_request.get("options"):
                 dif_proof_request["options"]["challenge"] = str(uuid4())
         dif_proof_request["presentation_definition"] = pres_proposal_dict
-
         return self.get_format_data(PRES_20_REQUEST, dif_proof_request)
 
     async def create_pres(
-        self,
-        pres_ex_record: V20PresExRecord,
-        request_data: dict = {},
+        self, pres_ex_record: V20PresExRecord, request_data: dict = {}
     ) -> Tuple[V20PresFormat, AttachDecorator]:
         """Create a presentation."""
         proof_request = pres_ex_record.pres_request.attachment(
@@ -184,7 +155,6 @@ class DIFPresFormatHandler(V20PresFormatHandler):
         if request_data != {} and DIFPresFormatHandler.format.api in request_data:
             dif_spec = request_data.get(DIFPresFormatHandler.format.api)
             pres_spec_payload = DIFPresSpecSchema().load(dif_spec)
-            # Overriding with prover provided pres_spec
             pres_definition = pres_spec_payload.get("presentation_definition")
             issuer_id = pres_spec_payload.get("issuer_id")
             limit_record_ids = pres_spec_payload.get("record_ids")
@@ -199,7 +169,6 @@ class DIFPresFormatHandler(V20PresFormatHandler):
             issuer_id = None
         if not challenge:
             challenge = str(uuid4())
-
         input_descriptors = pres_definition.input_descriptors
         claim_fmt = pres_definition.fmt
         dif_handler_proof_type = None
@@ -209,8 +178,9 @@ class DIFPresFormatHandler(V20PresFormatHandler):
             credentials_list = []
             for input_descriptor in input_descriptors:
                 proof_type = None
-                limit_disclosure = input_descriptor.constraint.limit_disclosure and (
-                    input_descriptor.constraint.limit_disclosure == "required"
+                limit_disclosure = (
+                    input_descriptor.constraint.limit_disclosure
+                    and input_descriptor.constraint.limit_disclosure == "required"
                 )
                 uri_list = []
                 one_of_uri_groups = []
@@ -241,46 +211,33 @@ class DIFPresFormatHandler(V20PresFormatHandler):
                     if claim_fmt.ldp_vp:
                         if "proof_type" in claim_fmt.ldp_vp:
                             proof_types = claim_fmt.ldp_vp.get("proof_type")
-                            if limit_disclosure and (
-                                BbsBlsSignature2020.signature_type not in proof_types
+                            if (
+                                limit_disclosure
+                                and BbsBlsSignature2020.signature_type
+                                not in proof_types
                             ):
                                 raise V20PresFormatHandlerError(
-                                    "Verifier submitted presentation request with "
-                                    "limit_disclosure [selective disclosure] "
-                                    "option but verifier does not support "
-                                    "BbsBlsSignature2020 format"
+                                    "Verifier submitted presentation request with limit_disclosure [selective disclosure] option but verifier does not support BbsBlsSignature2020 format"
                                 )
                             elif (
                                 len(proof_types) == 1
-                                and (
-                                    BbsBlsSignature2020.signature_type
-                                    not in proof_types
-                                )
-                                and (
-                                    Ed25519Signature2018.signature_type
-                                    not in proof_types
-                                )
+                                and BbsBlsSignature2020.signature_type
+                                not in proof_types
+                                and Ed25519Signature2018.signature_type
+                                not in proof_types
                             ):
                                 raise V20PresFormatHandlerError(
-                                    "Only BbsBlsSignature2020 and/or "
-                                    "Ed25519Signature2018 signature types "
-                                    "are supported"
+                                    "Only BbsBlsSignature2020 and/or Ed25519Signature2018 signature types are supported"
                                 )
                             elif (
                                 len(proof_types) >= 2
-                                and (
-                                    BbsBlsSignature2020.signature_type
-                                    not in proof_types
-                                )
-                                and (
-                                    Ed25519Signature2018.signature_type
-                                    not in proof_types
-                                )
+                                and BbsBlsSignature2020.signature_type
+                                not in proof_types
+                                and Ed25519Signature2018.signature_type
+                                not in proof_types
                             ):
                                 raise V20PresFormatHandlerError(
-                                    "Only BbsBlsSignature2020 and "
-                                    "Ed25519Signature2018 signature types "
-                                    "are supported"
+                                    "Only BbsBlsSignature2020 and Ed25519Signature2018 signature types are supported"
                                 )
                             else:
                                 for proof_format in proof_types:
@@ -308,9 +265,7 @@ class DIFPresFormatHandler(V20PresFormatHandler):
                                         break
                     else:
                         raise V20PresFormatHandlerError(
-                            "Currently, only ldp_vp with "
-                            "BbsBlsSignature2020 and Ed25519Signature2018"
-                            " signature types are supported"
+                            "Currently, only ldp_vp with BbsBlsSignature2020 and Ed25519Signature2018 signature types are supported"
                         )
                 if one_of_uri_groups:
                     records = []
@@ -333,11 +288,8 @@ class DIFPresFormatHandler(V20PresFormatHandler):
                     search = holder.search_credentials(
                         proof_types=proof_type, pd_uri_list=uri_list
                     )
-                    # Defaults to page_size but would like to include all
-                    # For now, setting to 1000
                     max_results = 1000
                     records = await search.fetch(max_results)
-                # Avoiding addition of duplicate records
                 (
                     vcrecord_list,
                     vcrecord_ids_set,
@@ -352,10 +304,7 @@ class DIFPresFormatHandler(V20PresFormatHandler):
             if responder:
                 report = ProblemReport(
                     description={
-                        "en": (
-                            "Presentation request not properly formatted,"
-                            " TypeError raised on Holder agent."
-                        ),
+                        "en": "Presentation request not properly formatted, TypeError raised on Holder agent.",
                         "code": ProblemReportReason.ABANDONED.value,
                     }
                 )
@@ -365,7 +314,6 @@ class DIFPresFormatHandler(V20PresFormatHandler):
                     report, connection_id=pres_ex_record.connection_id
                 )
                 return
-
         dif_handler = DIFPresExchHandler(
             self._profile,
             pres_signing_did=issuer_id,
@@ -406,7 +354,7 @@ class DIFPresFormatHandler(V20PresFormatHandler):
             if vc_record.record_id not in record_ids:
                 to_add.append(vc_record)
                 record_ids.add(vc_record.record_id)
-        return (to_add, record_ids)
+        return to_add, record_ids
 
     async def retrieve_uri_list_from_schema_filter(
         self, schema_uri_groups: Sequence[Sequence[SchemaInputDescriptor]]

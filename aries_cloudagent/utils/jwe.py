@@ -65,7 +65,7 @@ class JweRecipientSchema(Schema):
     """JWE recipient schema."""
 
     encrypted_key = B64Value(required=True)
-    header = fields.Dict(many=True, required=False)
+    header = fields.Dict(metadata={"many": True}, required=False)
 
 
 class JweRecipient:

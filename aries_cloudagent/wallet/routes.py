@@ -22,6 +22,9 @@ from ..messaging.valid import (
     INDY_DID,
     INDY_OR_KEY_DID,
     INDY_RAW_PUBLIC_KEY,
+    IndyDID,
+    IndyOrKeyDID,
+    IndyRawPublicKey,
 )
 from ..multitenant.base import BaseMultitenantManager
 from ..protocols.endorse_transaction.v1_0.manager import (
@@ -51,9 +54,19 @@ class WalletModuleResponseSchema(OpenAPISchema):
 class DIDSchema(OpenAPISchema):
     """Result schema for a DID."""
 
-    did = fields.Str(metadata={"description": "DID of interest"}, **INDY_OR_KEY_DID)
+    did = fields.Str(
+        metadata={
+            "description": "DID of interest",
+            "example": IndyOrKeyDID.EXAMPLE,
+            **INDY_OR_KEY_DID,
+        }
+    )
     verkey = fields.Str(
-        metadata={"description": "Public verification key"}, **INDY_RAW_PUBLIC_KEY
+        metadata={
+            "description": "Public verification key",
+            "example": IndyRawPublicKey.EXAMPLE,
+        },
+        validate=IndyRawPublicKey(),
     )
     posture = fields.Str(
         metadata={
@@ -97,7 +110,7 @@ class DIDEndpointWithTypeSchema(OpenAPISchema):
     """Request schema to set DID endpoint of particular type."""
 
     did = fields.Str(
-        required=True, metadata={"description": "DID of interest"}, **INDY_DID
+        required=True, metadata={"description": "DID of interest", **INDY_DID}
     )
     endpoint = fields.Str(
         required=False,
@@ -117,7 +130,7 @@ class DIDEndpointSchema(OpenAPISchema):
     """Request schema to set DID endpoint; response schema to get DID endpoint."""
 
     did = fields.Str(
-        required=True, metadata={"description": "DID of interest"}, **INDY_DID
+        required=True, metadata={"description": "DID of interest", **INDY_DID}
     )
     endpoint = fields.Str(
         required=False,
@@ -130,19 +143,18 @@ class DIDListQueryStringSchema(OpenAPISchema):
     """Parameters and validators for DID list request query string."""
 
     did = fields.Str(
-        required=False, metadata={"description": "DID of interest"}, **INDY_OR_KEY_DID
+        required=False, metadata={"description": "DID of interest", **INDY_OR_KEY_DID}
     )
     verkey = fields.Str(
         required=False,
-        metadata={"description": "Verification key of interest"},
-        **INDY_RAW_PUBLIC_KEY,
+        metadata={"description": "Verification key of interest", **INDY_RAW_PUBLIC_KEY},
     )
     posture = fields.Str(
         required=False,
         metadata={
-            "description": "Whether DID is current public DID, posted to ledger but current public DID, or local to the wallet"
+            "description": "Whether DID is current public DID, posted to ledger but current public DID, or local to the wallet",
+            **DID_POSTURE,
         },
-        **DID_POSTURE,
     )
     method = fields.Str(
         required=False,
@@ -168,7 +180,7 @@ class DIDQueryStringSchema(OpenAPISchema):
     """Parameters and validators for set public DID request query string."""
 
     did = fields.Str(
-        required=True, metadata={"description": "DID of interest"}, **INDY_DID
+        required=True, metadata={"description": "DID of interest", **INDY_DID}
     )
 
 

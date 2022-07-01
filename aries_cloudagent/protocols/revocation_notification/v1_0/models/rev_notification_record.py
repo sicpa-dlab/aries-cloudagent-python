@@ -135,34 +135,41 @@ class RevNotificationRecordSchema(BaseRecordSchema):
 
     rev_reg_id = fields.Str(
         required=False,
-        description="Revocation registry identifier",
-        **INDY_REV_REG_ID,
+        metadata={"description": "Revocation registry identifier", **INDY_REV_REG_ID},
     )
     cred_rev_id = fields.Str(
         required=False,
-        description="Credential revocation identifier",
-        **INDY_CRED_REV_ID,
+        metadata={
+            "description": "Credential revocation identifier",
+            **INDY_CRED_REV_ID,
+        },
     )
     connection_id = fields.Str(
-        description=(
-            "Connection ID to which the revocation notification will be sent; "
-            "required if notify is true"
-        ),
+        metadata={
+            "description": (
+                "Connection ID to which the revocation notification will be sent; "
+                "required if notify is true"
+            ),
+            **UUID4,
+        },
         required=False,
-        **UUID4,
     )
     thread_id = fields.Str(
-        description=(
-            "Thread ID of the credential exchange message thread resulting in "
-            "the credential now being revoked; required if notify is true"
-        ),
+        metadata={
+            "description": (
+                "Thread ID of the credential exchange message thread resulting in "
+                "the credential now being revoked; required if notify is true"
+            )
+        },
         required=False,
     )
     comment = fields.Str(
-        description="Optional comment to include in revocation notification",
+        metadata={
+            "description": "Optional comment to include in revocation notification"
+        },
         required=False,
     )
     version = fields.Str(
-        description="Version of Revocation Notification to send out",
+        metadata={"description": "Version of Revocation Notification to send out"},
         required=False,
     )
