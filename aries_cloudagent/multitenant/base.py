@@ -1,31 +1,26 @@
 """Manager for multitenancy."""
 
+from abc import ABC, abstractmethod
 from datetime import datetime
 import logging
-from abc import abstractmethod
+from typing import Iterable, List, Optional, cast
 
 import jwt
-from typing import List, Optional, cast
 
-from ..core.profile import (
-    Profile,
-    ProfileSession,
-)
-from ..messaging.responder import BaseResponder
 from ..config.injection_context import InjectionContext
-from ..wallet.models.wallet_record import WalletRecord
-from ..wallet.base import BaseWallet
 from ..core.error import BaseError
-from ..protocols.routing.v1_0.manager import RouteNotFoundError, RoutingManager
-from ..protocols.routing.v1_0.models.route_record import RouteRecord
-from ..transport.wire_format import BaseWireFormat
-from ..storage.base import BaseStorage
-from ..storage.error import StorageNotFoundError
+from ..core.profile import Profile, ProfileSession
+from ..multitenant.route_manager import MultitenantRouteManager
 from ..protocols.coordinate_mediation.v1_0.manager import (
     MediationManager,
     MediationRecord,
 )
-
+from ..protocols.routing.v1_0.manager import RouteNotFoundError, RoutingManager
+from ..protocols.routing.v1_0.models.route_record import RouteRecord
+from ..storage.base import BaseStorage
+from ..transport.wire_format import BaseWireFormat
+from ..wallet.base import BaseWallet
+from ..wallet.models.wallet_record import WalletRecord
 from .error import WalletKeyMissingError
 
 LOGGER = logging.getLogger(__name__)
@@ -35,7 +30,7 @@ class MultitenantManagerError(BaseError):
     """Generic multitenant error."""
 
 
-class BaseMultitenantManager:
+class BaseMultitenantManager(ABC):
     """Base class for handling multitenancy."""
 
     def __init__(self, profile: Profile):
@@ -48,7 +43,10 @@ class BaseMultitenantManager:
         if not profile:
             raise MultitenantManagerError("Missing profile")
 
-        self._instances: dict[str, Profile] = {}
+    @property
+    @abstractmethod
+    def open_profiles(self) -> Iterable[Profile]:
+        """Return iterator over open profiles."""
 
     async def get_default_mediator(self) -> Optional[MediationRecord]:
         """Retrieve the default mediator used for subwallet routing.
@@ -201,9 +199,9 @@ class BaseMultitenantManager:
                 public_did_info = await wallet.get_public_did()
 
             if public_did_info:
-                await self.add_key(
-                    wallet_record.wallet_id, public_did_info.verkey, skip_if_exists=True
-                )
+                await self.get_route_manager(
+                    profile, wallet_record.wallet_id
+                ).route_public_did(public_did_info.verkey)
         except Exception:
             await wallet_record.delete_record(session)
             raise
@@ -215,7 +213,7 @@ class BaseMultitenantManager:
         wallet_id: str,
         new_settings: dict,
     ) -> WalletRecord:
-        """Update a existing wallet and wallet record.
+        """Update an existing wallet record.
 
         Args:
             wallet_id: The wallet id of the wallet record
@@ -230,18 +228,6 @@ class BaseMultitenantManager:
             wallet_record = await WalletRecord.retrieve_by_id(session, wallet_id)
             wallet_record.update_settings(new_settings)
             await wallet_record.save(session)
-
-        # update profile only if loaded
-        if wallet_id in self._instances:
-            profile = self._instances[wallet_id]
-            profile.settings.update(wallet_record.settings)
-
-            extra_settings = {
-                "admin.webhook_urls": self.get_webhook_urls(
-                    self._profile.context, wallet_record
-                ),
-            }
-            profile.settings.update(extra_settings)
 
         return wallet_record
 
@@ -294,48 +280,9 @@ class BaseMultitenantManager:
 
         """
 
-    async def add_key(
-        self, wallet_id: str, recipient_key: str, *, skip_if_exists: bool = False
-    ):
-        """
-        Add a wallet key to map incoming messages to specific subwallets.
-
-        Args:
-            wallet_id: The wallet id the key corresponds to
-            recipient_key: The recipient key belonging to the wallet
-            skip_if_exists: Whether to skip the action if the key is already registered
-                            for relaying / mediation
-        """
-
-        LOGGER.info(
-            f"Add route record for recipient {recipient_key} to wallet {wallet_id}"
-        )
-        routing_mgr = RoutingManager(self._profile)
-        mediation_mgr = MediationManager(self._profile)
-        mediation_record = await mediation_mgr.get_default_mediator()
-
-        if skip_if_exists:
-            try:
-                async with self._profile.session() as session:
-                    await RouteRecord.retrieve_by_recipient_key(session, recipient_key)
-
-                # If no error is thrown, it means there is already a record
-                return
-            except (StorageNotFoundError):
-                pass
-
-        await routing_mgr.create_route_record(
-            recipient_key=recipient_key, internal_wallet_id=wallet_id
-        )
-
-        # External mediation
-        if mediation_record:
-            keylist_updates = await mediation_mgr.add_key(recipient_key)
-
-            responder = self._profile.inject(BaseResponder)
-            await responder.send(
-                keylist_updates, connection_id=mediation_record.connection_id
-            )
+    def get_route_manager(self, sub_profile: Profile, wallet_id: str):
+        """Return a route manager for handling multitenant routing."""
+        return MultitenantRouteManager(self._profile, sub_profile, wallet_id)
 
     async def create_auth_token(
         self, wallet_record: WalletRecord, wallet_key: str = None

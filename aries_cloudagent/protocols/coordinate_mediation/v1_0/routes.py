@@ -15,11 +15,10 @@ from ....connections.models.conn_record import ConnRecord
 from ....messaging.models.base import BaseModelError
 from ....messaging.models.openapi import OpenAPISchema
 from ....messaging.valid import UUIDFour
+from ....multitenant.base import BaseMultitenantManager
 from ....storage.error import StorageError, StorageNotFoundError
-
 from ...connections.v1_0.routes import ConnectionsConnIdMatchInfoSchema
 from ...routing.v1_0.models.route_record import RouteRecord, RouteRecordSchema
-
 from .manager import MediationManager, MediationManagerError
 from .message_types import SPEC_URI
 from .messages.inner.keylist_update_rule import (
@@ -31,6 +30,7 @@ from .messages.keylist_update import KeylistUpdateSchema
 from .messages.mediate_deny import MediationDenySchema
 from .messages.mediate_grant import MediationGrantSchema
 from .models.mediation_record import MediationRecord, MediationRecordSchema
+from .route_manager import CoordinateMediationV1RouteManager
 
 
 CONNECTION_ID_SCHEMA = fields.UUID(
@@ -495,7 +495,7 @@ async def set_default_mediator(request: web.BaseRequest):
         mediator_mgr = MediationManager(context.profile)
         await mediator_mgr.set_default_mediator_by_id(mediation_id=mediation_id)
         default_mediator = await mediator_mgr.get_default_mediator()
-        results = default_mediator.serialize()
+        results = default_mediator.serialize() if default_mediator else {}
     except (StorageError, BaseModelError) as err:
         raise web.HTTPBadRequest(reason=err.roll_up) from err
     return web.json_response(results, status=201)
@@ -510,10 +510,55 @@ async def clear_default_mediator(request: web.BaseRequest):
         mediator_mgr = MediationManager(context.profile)
         default_mediator = await mediator_mgr.get_default_mediator()
         await mediator_mgr.clear_default_mediator()
-        results = default_mediator.serialize()
+        results = default_mediator.serialize() if default_mediator else {}
     except (StorageError, BaseModelError) as err:
         raise web.HTTPBadRequest(reason=err.roll_up) from err
     return web.json_response(results, status=201)
+
+
+@docs(tags=["mediation"], summary="Update keylist for a connection")
+@match_info_schema(ConnectionsConnIdMatchInfoSchema())
+@request_schema(MediationIdMatchInfoSchema())
+# TODO Fix this response so that it adequately represents Optionals
+@response_schema(KeylistUpdateSchema(), 200)
+async def update_keylist_for_connection(request: web.BaseRequest):
+    """Update keylist for a connection."""
+    context: AdminRequestContext = request["context"]
+    body = await request.json()
+    mediation_id = body.get("mediation_id")
+    connection_id = request.match_info["conn_id"]
+    try:
+        multitenant_mgr = context.inject_or(BaseMultitenantManager)
+        wallet_id = context.settings.get_str("wallet.id")
+        if multitenant_mgr and wallet_id:
+            routing_manager = multitenant_mgr.get_route_manager(
+                context.profile, wallet_id
+            )
+        else:
+            routing_manager = CoordinateMediationV1RouteManager(context.profile)
+
+        async with context.session() as session:
+            connection_record = await ConnRecord.retrieve_by_id(session, connection_id)
+            mediation_record = await routing_manager.mediation_record_for_connection(
+                connection_record, mediation_id, or_default=True
+            )
+
+        if not mediation_record:
+            raise web.HTTPBadRequest(
+                reason="No mediation_id specified and no default mediator"
+            )
+
+        keylist_update = await routing_manager.route_connection(
+            connection_record, mediation_record
+        )
+
+        results = keylist_update.serialize() if keylist_update else {}
+    except StorageNotFoundError as err:
+        raise web.HTTPNotFound(reason=err.roll_up) from err
+    except (StorageError, BaseModelError) as err:
+        raise web.HTTPBadRequest(reason=err.roll_up) from err
+
+    return web.json_response(results, status=200)
 
 
 async def register(app: web.Application):
@@ -548,6 +593,9 @@ async def register(app: web.Application):
             ),
             web.put("/mediation/{mediation_id}/default-mediator", set_default_mediator),
             web.delete("/mediation/default-mediator", clear_default_mediator),
+            web.post(
+                "/mediation/update-keylist/{conn_id}", update_keylist_for_connection
+            ),
         ]
     )
 
