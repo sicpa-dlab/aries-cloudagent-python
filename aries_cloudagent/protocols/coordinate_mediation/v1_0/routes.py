@@ -543,10 +543,10 @@ async def update_keylist_for_connection(request: web.BaseRequest):
                 connection_record, mediation_id, or_default=True
             )
 
-        if not mediation_record:
-            raise web.HTTPBadRequest(
-                reason="No mediation_id specified and no default mediator"
-            )
+        # if not mediation_record:
+        #     raise web.HTTPBadRequest(
+        #         reason="No mediation_id specified and no default mediator"
+        #     )
 
         keylist_update = await routing_manager.route_connection(
             connection_record, mediation_record
