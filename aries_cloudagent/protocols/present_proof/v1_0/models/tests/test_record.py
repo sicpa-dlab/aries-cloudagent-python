@@ -110,8 +110,10 @@ class TestRecord(AsyncTestCase):
             "role": None,
             "state": None,
             "auto_present": True,
+            "auto_verify": False,
             "error_msg": None,
             "verified": None,
+            "verified_msgs": None,
             "trace": False,
         }
 

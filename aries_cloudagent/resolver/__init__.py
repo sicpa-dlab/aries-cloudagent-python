@@ -2,9 +2,9 @@
 
 import logging
 
-
 from ..config.injection_context import InjectionContext
 from ..config.provider import ClassProvider
+
 from ..resolver.did_resolver import DIDResolver
 
 LOGGER = logging.getLogger(__name__)
@@ -37,3 +37,10 @@ async def setup(context: InjectionContext):
     ).provide(context.settings, context.injector)
     await web_resolver.setup(context)
     registry.register_resolver(web_resolver)
+
+    if context.settings.get("resolver.universal"):
+        universal_resolver = ClassProvider(
+            "aries_cloudagent.resolver.default.universal.UniversalResolver"
+        ).provide(context.settings, context.injector)
+        await universal_resolver.setup(context)
+        registry.register_resolver(universal_resolver)

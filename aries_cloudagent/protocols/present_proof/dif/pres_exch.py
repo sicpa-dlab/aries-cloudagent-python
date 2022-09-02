@@ -237,7 +237,9 @@ class SchemasInputDescriptorFilterSchema(BaseModelSchema):
         """deserialize."""
         new_data = {}
         if isinstance(data, dict):
-            if "oneof_filter" in data:
+            if "uri_groups" in data:
+                return data
+            elif "oneof_filter" in data and isinstance(data["oneof_filter"], list):
                 new_data["oneof_filter"] = True
                 uri_group_list_of_list = []
                 uri_group_list = data.get("oneof_filter")
@@ -646,7 +648,7 @@ class InputDescriptorsSchema(BaseModelSchema):
         ),
         example=(
             {
-                "oneOf": [
+                "oneof_filter": [
                     [
                         {"uri": "https://www.w3.org/Test1#Test1"},
                         {"uri": "https://www.w3.org/Test2#Test2"},

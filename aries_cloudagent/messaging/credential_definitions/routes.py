@@ -28,6 +28,7 @@ from ...ledger.multiple_ledger.ledger_requests_executor import (
     GET_CRED_DEF,
     IndyLedgerRequestsExecutor,
 )
+from ...multitenant.base import BaseMultitenantManager
 from ...protocols.endorse_transaction.v1_0.manager import (
     TransactionManager,
     TransactionManagerError,
@@ -40,7 +41,7 @@ from ...protocols.endorse_transaction.v1_0.util import (
     get_endorser_connection_id,
 )
 
-from ...revocation.util import notify_revocation_reg_event
+from ...revocation.indy import IndyRevocation
 from ...storage.base import BaseStorage, StorageRecord
 from ...storage.error import StorageError
 
@@ -185,6 +186,23 @@ async def credential_definitions_send_credential_definition(request: web.BaseReq
     tag = body.get("tag")
     rev_reg_size = body.get("revocation_registry_size")
 
+    tag_query = {"schema_id": schema_id}
+    async with profile.session() as session:
+        storage = session.inject(BaseStorage)
+        found = await storage.find_all_records(
+            type_filter=CRED_DEF_SENT_RECORD_TYPE,
+            tag_query=tag_query,
+        )
+        if 0 < len(found):
+            # need to check the 'tag' value
+            for record in found:
+                cred_def_id = record.value
+                cred_def_id_parts = cred_def_id.split(":")
+                if tag == cred_def_id_parts[4]:
+                    raise web.HTTPBadRequest(
+                        reason=f"Cred def for {schema_id} {tag} already exists"
+                    )
+
     # check if we need to endorse
     if is_author_role(context.profile):
         # authors cannot write to the ledger
@@ -248,9 +266,12 @@ async def credential_definitions_send_credential_definition(request: web.BaseReq
     except (IndyIssuerError, LedgerError) as e:
         raise web.HTTPBadRequest(reason=e.message) from e
 
+    issuer_did = cred_def_id.split(":")[0]
     meta_data = {
         "context": {
             "schema_id": schema_id,
+            "cred_def_id": cred_def_id,
+            "issuer_did": issuer_did,
             "support_revocation": support_revocation,
             "novel": novel,
             "tag": tag,
@@ -263,15 +284,20 @@ async def credential_definitions_send_credential_definition(request: web.BaseReq
 
     if not create_transaction_for_endorser:
         # Notify event
-        issuer_did = cred_def_id.split(":")[0]
-        meta_data["context"]["schema_id"] = schema_id
-        meta_data["context"]["cred_def_id"] = cred_def_id
-        meta_data["context"]["issuer_did"] = issuer_did
         meta_data["processing"]["auto_create_rev_reg"] = True
         await notify_cred_def_event(context.profile, cred_def_id, meta_data)
 
-        return web.json_response({"credential_definition_id": cred_def_id})
+        return web.json_response(
+            {
+                "sent": {"credential_definition_id": cred_def_id},
+                "credential_definition_id": cred_def_id,
+            }
+        )
 
+    # If the transaction is for the endorser, but the schema has already been created,
+    # then we send back the schema since the transaction will fail to be created.
+    elif "signed_txn" not in cred_def:
+        return web.json_response({"sent": {"credential_definition_id": cred_def_id}})
     else:
         meta_data["processing"]["auto_create_rev_reg"] = context.settings.get_value(
             "endorser.auto_create_rev_reg"
@@ -301,7 +327,12 @@ async def credential_definitions_send_credential_definition(request: web.BaseReq
 
             await outbound_handler(transaction_request, connection_id=connection_id)
 
-        return web.json_response({"txn": transaction.serialize()})
+        return web.json_response(
+            {
+                "sent": {"credential_definition_id": cred_def_id},
+                "txn": transaction.serialize(),
+            }
+        )
 
 
 @docs(
@@ -358,7 +389,11 @@ async def credential_definitions_get_credential_definition(request: web.BaseRequ
     cred_def_id = request.match_info["cred_def_id"]
 
     async with context.profile.session() as session:
-        ledger_exec_inst = session.inject(IndyLedgerRequestsExecutor)
+        multitenant_mgr = session.inject_or(BaseMultitenantManager)
+        if multitenant_mgr:
+            ledger_exec_inst = IndyLedgerRequestsExecutor(context.profile)
+        else:
+            ledger_exec_inst = session.inject(IndyLedgerRequestsExecutor)
     ledger_id, ledger = await ledger_exec_inst.get_ledger_for_identifier(
         cred_def_id,
         txn_record_type=GET_CRED_DEF,
@@ -403,7 +438,11 @@ async def credential_definitions_fix_cred_def_wallet_record(request: web.BaseReq
 
     async with context.profile.session() as session:
         storage = session.inject(BaseStorage)
-        ledger_exec_inst = session.inject(IndyLedgerRequestsExecutor)
+        multitenant_mgr = session.inject_or(BaseMultitenantManager)
+        if multitenant_mgr:
+            ledger_exec_inst = IndyLedgerRequestsExecutor(context.profile)
+        else:
+            ledger_exec_inst = session.inject(IndyLedgerRequestsExecutor)
     ledger_id, ledger = await ledger_exec_inst.get_ledger_for_identifier(
         cred_def_id,
         txn_record_type=GET_CRED_DEF,
@@ -475,16 +514,15 @@ async def on_cred_def_event(profile: Profile, event: Event):
     if support_revocation and novel and auto_create_rev_reg:
         # this kicks off the revocation registry creation process, which is 3 steps:
         # 1 - create revocation registry (ledger transaction may require endorsement)
-        # 2 - create revocation entry (ledger transaction may require endorsement)
-        # 3 - upload tails file
+        # 2 - upload tails file
+        # 3 - create revocation entry (ledger transaction may require endorsement)
         # For a cred def we also automatically create a second "pending" revocation
         # registry, so when the first one fills up we can continue to issue credentials
         # without a delay
-        await notify_revocation_reg_event(
-            profile,
+        revoc = IndyRevocation(profile)
+        await revoc.init_issuer_registry(
             cred_def_id,
             rev_reg_size,
-            auto_create_rev_reg=auto_create_rev_reg,
             create_pending_rev_reg=create_pending_rev_reg,
             endorser_connection_id=endorser_connection_id,
         )

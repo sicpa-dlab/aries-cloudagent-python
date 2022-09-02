@@ -27,6 +27,7 @@ class IssuerCredRevRecord(BaseRecord):
     RECORD_TOPIC = "issuer_cred_rev"
     TAG_NAMES = {
         "cred_ex_id",
+        "cred_ex_version",
         "cred_def_id",
         "rev_reg_id",
         "cred_rev_id",
@@ -35,6 +36,9 @@ class IssuerCredRevRecord(BaseRecord):
 
     STATE_ISSUED = "issued"
     STATE_REVOKED = "revoked"
+
+    VERSION_1 = "1"
+    VERSION_2 = "2"
 
     def __init__(
         self,
@@ -45,6 +49,7 @@ class IssuerCredRevRecord(BaseRecord):
         rev_reg_id: str = None,
         cred_rev_id: str = None,
         cred_def_id: str = None,  # Marshmallow formalism: leave None
+        cred_ex_version: str = None,
         **kwargs,
     ):
         """Initialize a new IssuerCredRevRecord."""
@@ -53,6 +58,7 @@ class IssuerCredRevRecord(BaseRecord):
         self.rev_reg_id = rev_reg_id
         self.cred_rev_id = cred_rev_id
         self.cred_def_id = ":".join(rev_reg_id.split(":")[-7:-2])
+        self.cred_ex_version = cred_ex_version
 
     @property
     def record_id(self) -> str:
@@ -90,10 +96,15 @@ class IssuerCredRevRecord(BaseRecord):
         session: ProfileSession,
         rev_reg_id: str,
         cred_rev_id: str,
+        *,
+        for_update: bool = False,
     ) -> "IssuerCredRevRecord":
         """Retrieve an issuer cred rev record by rev reg id and cred rev id."""
         return await cls.retrieve_by_tag_filter(
-            session, {"rev_reg_id": rev_reg_id}, {"cred_rev_id": cred_rev_id}
+            session,
+            {"rev_reg_id": rev_reg_id},
+            {"cred_rev_id": cred_rev_id},
+            for_update=for_update,
         )
 
     @classmethod
@@ -152,4 +163,8 @@ class IssuerCredRevRecordSchema(BaseRecordSchema):
         required=False,
         description="Credential revocation identifier",
         **INDY_CRED_REV_ID,
+    )
+    cred_ex_version = fields.Str(
+        required=False,
+        description="Credential exchange version",
     )

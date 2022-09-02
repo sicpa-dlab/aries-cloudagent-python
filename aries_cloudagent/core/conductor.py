@@ -11,19 +11,20 @@ wallet.
 import hashlib
 import json
 import logging
+
 from qrcode import QRCode
 
 from ..admin.base_server import BaseAdminServer
 from ..admin.server import AdminResponder, AdminServer
 from ..config.default_context import ContextBuilder
 from ..config.injection_context import InjectionContext
-from ..config.provider import ClassProvider
 from ..config.ledger import (
     get_genesis_transactions,
     ledger_config,
     load_multiple_genesis_transactions_from_config,
 )
 from ..config.logging import LoggingConfigurator
+from ..config.provider import ClassProvider
 from ..config.wallet import wallet_config
 from ..core.profile import Profile
 from ..indy.verifier import IndyVerifier
@@ -33,8 +34,8 @@ from ..ledger.multiple_ledger.base_manager import (
     BaseMultipleLedgerManager,
     MultipleLedgerManagerError,
 )
-from ..ledger.multiple_ledger.manager_provider import MultiIndyLedgerManagerProvider
 from ..ledger.multiple_ledger.ledger_requests_executor import IndyLedgerRequestsExecutor
+from ..ledger.multiple_ledger.manager_provider import MultiIndyLedgerManagerProvider
 from ..messaging.responder import BaseResponder
 from ..multitenant.base import BaseMultitenantManager
 from ..multitenant.manager_provider import MultitenantManagerProvider
@@ -45,8 +46,12 @@ from ..protocols.connections.v1_0.manager import (
 from ..protocols.connections.v1_0.messages.connection_invitation import (
     ConnectionInvitation,
 )
-from ..protocols.coordinate_mediation.v1_0.manager import MediationManager
 from ..protocols.coordinate_mediation.mediation_invite_store import MediationInviteStore
+from ..protocols.coordinate_mediation.v1_0.manager import MediationManager
+from ..protocols.coordinate_mediation.v1_0.route_manager import RouteManager
+from ..protocols.coordinate_mediation.v1_0.route_manager_provider import (
+    RouteManagerProvider,
+)
 from ..protocols.out_of_band.v1_0.manager import OutOfBandManager
 from ..protocols.out_of_band.v1_0.messages.invitation import HSProto, InvitationMessage
 from ..storage.base import BaseStorage
@@ -56,18 +61,16 @@ from ..transport.inbound.message import InboundMessage
 from ..transport.outbound.base import OutboundDeliveryError
 from ..transport.outbound.manager import OutboundTransportManager, QueuedOutboundMessage
 from ..transport.outbound.message import OutboundMessage
-from ..transport.outbound.queue.base import BaseOutboundQueue
-from ..transport.outbound.queue.loader import get_outbound_queue
 from ..transport.outbound.status import OutboundSendStatus
 from ..transport.wire_format import BaseWireFormat
 from ..utils.stats import Collector
 from ..utils.task_queue import CompletedTask, TaskQueue
 from ..vc.ld_proofs.document_loader import DocumentLoader
-from ..version import __version__, RECORD_TYPE_ACAPY_VERSION
+from ..version import RECORD_TYPE_ACAPY_VERSION, __version__
 from ..wallet.did_info import DIDInfo
-
 from .dispatcher import Dispatcher
-from .util import STARTUP_EVENT_TOPIC, SHUTDOWN_EVENT_TOPIC
+from .oob_processor import OobMessageProcessor
+from .util import SHUTDOWN_EVENT_TOPIC, STARTUP_EVENT_TOPIC
 
 LOGGER = logging.getLogger(__name__)
 
@@ -97,7 +100,6 @@ class Conductor:
         self.outbound_transport_manager: OutboundTransportManager = None
         self.root_profile: Profile = None
         self.setup_public_did: DIDInfo = None
-        self.outbound_queue: BaseOutboundQueue = None
 
     @property
     def context(self) -> InjectionContext:
@@ -206,12 +208,22 @@ class Conductor:
                 BaseMultitenantManager, MultitenantManagerProvider(self.root_profile)
             )
 
+        # Bind route manager provider
+        context.injector.bind_provider(
+            RouteManager, RouteManagerProvider(self.root_profile)
+        )
+
+        # Bind oob message processor to be able to receive and process un-encrypted
+        # messages
+        context.injector.bind_instance(
+            OobMessageProcessor,
+            OobMessageProcessor(inbound_message_router=self.inbound_message_router),
+        )
+
         # Bind default PyLD document loader
         context.injector.bind_instance(
             DocumentLoader, DocumentLoader(self.root_profile)
         )
-
-        self.outbound_queue = get_outbound_queue(self.root_profile)
 
         # Admin API
         if context.settings.get("admin.enabled"):
@@ -273,13 +285,6 @@ class Conductor:
             LOGGER.exception("Unable to start outbound transports")
             raise
 
-        if self.outbound_queue:
-            try:
-                await self.outbound_queue.start()
-            except Exception:
-                LOGGER.exception("Unable to start outbound queue")
-                raise
-
         # Start up Admin server
         if self.admin_server:
             try:
@@ -303,7 +308,6 @@ class Conductor:
             default_label,
             self.inbound_transport_manager.registered_transports,
             self.outbound_transport_manager.registered_transports,
-            self.outbound_queue,
             self.setup_public_did and self.setup_public_did.did,
             self.admin_server,
         )
@@ -489,13 +493,11 @@ class Conductor:
             shutdown.run(self.inbound_transport_manager.stop())
         if self.outbound_transport_manager:
             shutdown.run(self.outbound_transport_manager.stop())
-        if self.outbound_queue:
-            shutdown.run(self.outbound_queue.stop())
 
         # close multitenant profiles
         multitenant_mgr = self.context.inject_or(BaseMultitenantManager)
         if multitenant_mgr:
-            for profile in multitenant_mgr._instances.values():
+            for profile in multitenant_mgr.open_profiles:
                 shutdown.run(profile.close())
 
         if self.root_profile:
@@ -597,6 +599,26 @@ class Conductor:
             message: An outbound message to be sent
             inbound: The inbound message that produced this response, if available
         """
+        status: OutboundSendStatus = await self._outbound_message_router(
+            profile=profile, outbound=outbound, inbound=inbound
+        )
+        await profile.notify(status.topic, outbound)
+        return status
+
+    async def _outbound_message_router(
+        self,
+        profile: Profile,
+        outbound: OutboundMessage,
+        inbound: InboundMessage = None,
+    ) -> OutboundSendStatus:
+        """
+        Route an outbound message.
+
+        Args:
+            profile: The active profile for the request
+            message: An outbound message to be sent
+            inbound: The inbound message that produced this response, if available
+        """
         if not outbound.target and outbound.reply_to_verkey:
             if not outbound.reply_from_verkey and inbound:
                 outbound.reply_from_verkey = inbound.receipt.recipient_verkey
@@ -631,8 +653,10 @@ class Conductor:
             message: An outbound message to be sent
             inbound: The inbound message that produced this response, if available
         """
+        has_target = outbound.target or outbound.target_list
+
         # populate connection target(s)
-        if not outbound.target and not outbound.target_list and outbound.connection_id:
+        if not has_target and outbound.connection_id:
             conn_mgr = ConnectionManager(profile)
             try:
                 outbound.target_list = await self.dispatcher.run_task(
@@ -649,44 +673,23 @@ class Conductor:
                     self.admin_server.notify_fatal_error()
                 raise
             del conn_mgr
-        # If ``self.outbound_queue`` is specified (usually set via
-        # outbound queue `-oq` commandline option), use that external
-        # queue. Else save the message to an internal queue. This
-        # internal queue usually results in the message to be sent over
-        # ACA-py `-ot` transport.
-        if self.outbound_queue:
-            return await self._queue_external(profile, outbound)
-        else:
-            return self._queue_internal(profile, outbound)
-
-    async def _queue_external(
-        self,
-        profile: Profile,
-        outbound: OutboundMessage,
-    ) -> OutboundSendStatus:
-        """Save the message to an external outbound queue."""
-        async with self.outbound_queue:
-            targets = (
-                [outbound.target] if outbound.target else (outbound.target_list or [])
+        # Find oob/connectionless target we can send the message to
+        elif not has_target and outbound.reply_thread_id:
+            message_processor = profile.inject(OobMessageProcessor)
+            outbound.target = await self.dispatcher.run_task(
+                message_processor.find_oob_target_for_outbound_message(
+                    profile, outbound
+                )
             )
-            for target in targets:
-                encoded_outbound_message = (
-                    await self.outbound_transport_manager.encode_outbound_message(
-                        profile, outbound, target
-                    )
-                )
-                await self.outbound_queue.enqueue_message(
-                    encoded_outbound_message.payload, target.endpoint
-                )
 
-            return OutboundSendStatus.SENT_TO_EXTERNAL_QUEUE
+        return await self._queue_message(profile, outbound)
 
-    def _queue_internal(
+    async def _queue_message(
         self, profile: Profile, outbound: OutboundMessage
     ) -> OutboundSendStatus:
         """Save the message to an internal outbound queue."""
         try:
-            self.outbound_transport_manager.enqueue_message(profile, outbound)
+            await self.outbound_transport_manager.enqueue_message(profile, outbound)
             return OutboundSendStatus.QUEUED_FOR_DELIVERY
         except OutboundDeliveryError:
             LOGGER.warning("Cannot queue message for delivery, no supported transport")
@@ -697,7 +700,6 @@ class Conductor:
     ) -> OutboundSendStatus:
         """Handle a message that failed delivery via outbound transports."""
         queued_for_inbound = self.inbound_transport_manager.return_undelivered(outbound)
-
         return (
             OutboundSendStatus.WAITING_FOR_PICKUP
             if queued_for_inbound

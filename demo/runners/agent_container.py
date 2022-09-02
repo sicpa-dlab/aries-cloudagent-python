@@ -20,14 +20,10 @@ from runners.support.agent import (  # noqa:E402
     start_mediator_agent,
     connect_wallet_to_mediator,
     start_endorser_agent,
-    connect_wallet_to_endorser,
     CRED_FORMAT_INDY,
     CRED_FORMAT_JSON_LD,
-    DID_METHOD_SOV,
     DID_METHOD_KEY,
-    KEY_TYPE_ED255,
     KEY_TYPE_BLS,
-    SIG_TYPE_BLS,
 )
 from runners.support.utils import (  # noqa:E402
     check_requires,
@@ -97,6 +93,10 @@ class AriesAgent(DemoAgent):
 
     async def handle_oob_invitation(self, message):
         print("handle_oob_invitation()")
+        pass
+
+    async def handle_out_of_band(self, message):
+        print("handle_out_of_band()")
         pass
 
     async def handle_connection_reuse(self, message):
@@ -331,14 +331,17 @@ class AriesAgent(DemoAgent):
                             if referent not in credentials_by_reft:
                                 credentials_by_reft[referent] = row
 
+                # submit the proof wit one unrevealed revealed attribute
+                revealed_flag = False
                 for referent in presentation_request["requested_attributes"]:
                     if referent in credentials_by_reft:
                         revealed[referent] = {
                             "cred_id": credentials_by_reft[referent]["cred_info"][
                                 "referent"
                             ],
-                            "revealed": True,
+                            "revealed": revealed_flag,
                         }
+                        revealed_flag = True
                     else:
                         self_attested[referent] = "my self-attested value"
 
@@ -419,14 +422,17 @@ class AriesAgent(DemoAgent):
                                 if referent not in creds_by_reft:
                                     creds_by_reft[referent] = row
 
+                    # submit the proof wit one unrevealed revealed attribute
+                    revealed_flag = False
                     for referent in pres_request_indy["requested_attributes"]:
                         if referent in creds_by_reft:
                             revealed[referent] = {
                                 "cred_id": creds_by_reft[referent]["cred_info"][
                                     "referent"
                                 ],
-                                "revealed": True,
+                                "revealed": revealed_flag,
                             }
+                            revealed_flag = True
                         else:
                             self_attested[referent] = "my self-attested value"
 
@@ -611,6 +617,7 @@ class AgentContainer:
         self,
         ident: str,
         start_port: int,
+        prefix: str = None,
         no_auto: bool = False,
         revocation: bool = False,
         genesis_txns: str = None,
@@ -628,12 +635,14 @@ class AgentContainer:
         arg_file: str = None,
         endorser_role: str = None,
         reuse_connections: bool = False,
+        taa_accept: bool = False,
     ):
         # configuration parameters
         self.genesis_txns = genesis_txns
         self.genesis_txn_list = genesis_txn_list
         self.ident = ident
         self.start_port = start_port
+        self.prefix = prefix or ident
         self.no_auto = no_auto
         self.revocation = revocation
         self.tails_server_base_url = tails_server_base_url
@@ -660,6 +669,7 @@ class AgentContainer:
         # local agent(s)
         self.agent = None
         self.mediator_agent = None
+        self.taa_accept = taa_accept
 
     async def initialize(
         self,
@@ -679,6 +689,7 @@ class AgentContainer:
                 self.ident,
                 self.start_port,
                 self.start_port + 1,
+                prefix=self.prefix,
                 genesis_data=self.genesis_txns,
                 genesis_txn_list=self.genesis_txn_list,
                 no_auto=self.no_auto,
@@ -746,11 +757,15 @@ class AgentContainer:
                 webhook_port=None,
                 mediator_agent=self.mediator_agent,
                 endorser_agent=self.endorser_agent,
+                taa_accept=self.taa_accept,
             )
         elif self.mediation:
             # we need to pre-connect the agent to its mediator
             if not await connect_wallet_to_mediator(self.agent, self.mediator_agent):
                 raise Exception("Mediation setup FAILED :-(")
+        else:
+            if self.taa_accept:
+                await self.agent.taa_accept()
 
         if self.public_did and self.cred_type == CRED_FORMAT_JSON_LD:
             # create did of appropriate type
@@ -866,7 +881,42 @@ class AgentContainer:
             }
 
             if self.revocation:
-                indy_proof_request["non_revoked"] = {"to": int(time.time())}
+                non_revoked_supplied = False
+                # plug in revocation where requested in the supplied proof request
+                non_revoked = {"to": int(time.time())}
+                if "non_revoked" in proof_request:
+                    indy_proof_request["non_revoked"] = non_revoked
+                    non_revoked_supplied = True
+                for attr in proof_request["requested_attributes"]:
+                    if "non_revoked" in proof_request["requested_attributes"][attr]:
+                        indy_proof_request["requested_attributes"][attr][
+                            "non_revoked"
+                        ] = non_revoked
+                        non_revoked_supplied = True
+                for pred in proof_request["requested_predicates"]:
+                    if "non_revoked" in proof_request["requested_predicates"][pred]:
+                        indy_proof_request["requested_predicates"][pred][
+                            "non_revoked"
+                        ] = non_revoked
+                        non_revoked_supplied = True
+
+                if not non_revoked_supplied:
+                    # else just make it global
+                    indy_proof_request["non_revoked"] = non_revoked
+
+            else:
+                # make sure we are not leaking non-revoc requests
+                if "non_revoked" in proof_request:
+                    del proof_request["non_revoked"]
+                for attr in proof_request["requested_attributes"]:
+                    if "non_revoked" in proof_request["requested_attributes"][attr]:
+                        del proof_request["requested_attributes"][attr]["non_revoked"]
+                for pred in proof_request["requested_predicates"]:
+                    if "non_revoked" in proof_request["requested_predicates"][pred]:
+                        del proof_request["requested_predicates"][pred]["non_revoked"]
+
+            log_status(f"  >>> asking for proof for request: {indy_proof_request}")
+
             proof_request_web_request = {
                 "connection_id": self.agent.connection_id,
                 "presentation_request": {
@@ -1144,6 +1194,11 @@ def arg_parser(ident: str = None, port: int = 8020):
         metavar="<arg-file>",
         help="Specify a file containing additional aca-py parameters",
     )
+    parser.add_argument(
+        "--taa-accept",
+        action="store_true",
+        help="Accept the ledger's TAA, if required",
+    )
     return parser
 
 
@@ -1244,6 +1299,7 @@ async def create_agent_with_args(args, ident: str = None):
         aip=aip,
         endorser_role=args.endorser_role,
         reuse_connections=reuse_connections,
+        taa_accept=args.taa_accept,
     )
 
     return agent

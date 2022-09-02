@@ -8,6 +8,8 @@ from ....ledger.base import BaseLedger
 from ....ledger.multiple_ledger.ledger_requests_executor import (
     IndyLedgerRequestsExecutor,
 )
+from ....multitenant.base import BaseMultitenantManager
+from ....multitenant.manager import MultitenantManager
 from ....storage.base import BaseStorage
 
 from .. import routes as test_module
@@ -70,6 +72,13 @@ class TestSchemaRoutes(AsyncTestCase):
             assert result == mock_response.return_value
             mock_response.assert_called_once_with(
                 {
+                    "sent": {
+                        "schema_id": SCHEMA_ID,
+                        "schema": {
+                            "schema": "def",
+                            "signed_txn": "...",
+                        },
+                    },
                     "schema_id": SCHEMA_ID,
                     "schema": {
                         "schema": "def",
@@ -116,7 +125,18 @@ class TestSchemaRoutes(AsyncTestCase):
             )
             result = await test_module.schemas_send_schema(self.request)
             assert result == mock_response.return_value
-            mock_response.assert_called_once_with({"txn": {"...": "..."}})
+            mock_response.assert_called_once_with(
+                {
+                    "sent": {
+                        "schema_id": SCHEMA_ID,
+                        "schema": {
+                            "schema": "def",
+                            "signed_txn": "...",
+                        },
+                    },
+                    "txn": {"...": "..."},
+                }
+            )
 
     async def test_send_schema_create_transaction_for_endorser_storage_x(self):
         self.request.json = async_mock.CoroutineMock(
@@ -297,6 +317,26 @@ class TestSchemaRoutes(AsyncTestCase):
         )
         self.request.match_info = {"schema_id": SCHEMA_ID}
         with async_mock.patch.object(test_module.web, "json_response") as mock_response:
+            result = await test_module.schemas_get_schema(self.request)
+            assert result == mock_response.return_value
+            mock_response.assert_called_once_with(
+                {
+                    "ledger_id": "test_ledger_id",
+                    "schema": {"schema": "def", "signed_txn": "..."},
+                }
+            )
+
+    async def test_get_schema_multitenant(self):
+        self.profile_injector.bind_instance(
+            BaseMultitenantManager,
+            async_mock.MagicMock(MultitenantManager, autospec=True),
+        )
+        self.request.match_info = {"schema_id": SCHEMA_ID}
+        with async_mock.patch.object(
+            IndyLedgerRequestsExecutor,
+            "get_ledger_for_identifier",
+            async_mock.CoroutineMock(return_value=("test_ledger_id", self.ledger)),
+        ), async_mock.patch.object(test_module.web, "json_response") as mock_response:
             result = await test_module.schemas_get_schema(self.request)
             assert result == mock_response.return_value
             mock_response.assert_called_once_with(

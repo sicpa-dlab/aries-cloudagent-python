@@ -1,10 +1,10 @@
 import asyncio
-from datetime import datetime
-import pytest
-
-from asynctest import mock as async_mock
 from copy import deepcopy
+from datetime import datetime
 from uuid import uuid4
+
+import mock as async_mock
+import pytest
 
 from .....core.in_memory import InMemoryProfile
 from .....did.did_key import DIDKey
@@ -16,7 +16,6 @@ from .....wallet.crypto import KeyType
 from .....wallet.did_method import DIDMethod
 from .....wallet.error import WalletNotFoundError
 from .....vc.ld_proofs import (
-    BbsBlsSignatureProof2020,
     BbsBlsSignature2020,
 )
 from .....vc.ld_proofs.document_loader import DocumentLoader
@@ -25,7 +24,6 @@ from .....vc.ld_proofs.constants import SECURITY_CONTEXT_BBS_URL
 from .....vc.tests.document_loader import custom_document_loader
 from .....vc.tests.data import (
     BBS_SIGNED_VC_MATTR,
-    BBS_NESTED_VC_REVEAL_DOCUMENT_MATTR,
 )
 
 from .. import pres_exch_handler as test_module
@@ -60,7 +58,7 @@ from .test_data import (
 )
 
 
-@pytest.yield_fixture(scope="class")
+@pytest.fixture(scope="class")
 def event_loop(request):
     loop = asyncio.get_event_loop_policy().new_event_loop()
     yield loop
@@ -71,9 +69,7 @@ def event_loop(request):
 def profile():
     profile = InMemoryProfile.test_profile()
     context = profile.context
-    did_resolvers = []
-    context.injector.bind_instance(Resolvers, did_resolvers)
-    context.injector.bind_instance(DIDResolver, DIDResolver(did_resolvers))
+    context.injector.bind_instance(DIDResolver, DIDResolver([]))
     context.injector.bind_instance(DocumentLoader, custom_document_loader)
     context.settings["debug.auto_respond_presentation_request"] = True
     return profile
@@ -1562,6 +1558,7 @@ class TestPresExchHandler:
         assert len(tmp_vp.get("verifiableCredential")) == 1
 
     @pytest.mark.asyncio
+    @pytest.mark.ursa_bbs_signatures
     async def test_filter_schema(self, setup_tuple, profile):
         cred_list, pd_list = setup_tuple
         dif_pres_exch_handler = DIFPresExchHandler(profile)
@@ -1583,6 +1580,7 @@ class TestPresExchHandler:
             == 0
         )
 
+    @pytest.mark.ursa_bbs_signatures
     def test_cred_schema_match_a(self, setup_tuple, profile):
         cred_list, pd_list = setup_tuple
         dif_pres_exch_handler = DIFPresExchHandler(profile)
@@ -1594,6 +1592,7 @@ class TestPresExchHandler:
             is True
         )
 
+    @pytest.mark.ursa_bbs_signatures
     @pytest.mark.asyncio
     async def test_merge_nested(self, setup_tuple, profile):
         cred_list, pd_list = setup_tuple
@@ -1655,6 +1654,7 @@ class TestPresExchHandler:
             test_nested_result, {}
         )
 
+    @pytest.mark.ursa_bbs_signatures
     def test_subject_is_issuer(self, setup_tuple, profile):
         cred_list, pd_list = setup_tuple
         dif_pres_exch_handler = DIFPresExchHandler(profile)
@@ -1666,14 +1666,17 @@ class TestPresExchHandler:
         tmp_cred.issuer_id = "19b823fb-55ef-49f4-8caf-2a26b8b9286f"
         assert dif_pres_exch_handler.subject_is_issuer(tmp_cred) is False
 
-    @pytest.mark.asyncio
     def test_is_numeric(self, profile):
         dif_pres_exch_handler = DIFPresExchHandler(profile)
-        assert dif_pres_exch_handler.is_numeric("test") is False
-        assert dif_pres_exch_handler.is_numeric(1) is True
-        assert dif_pres_exch_handler.is_numeric(2 + 3j) is False
+        with pytest.raises(DIFPresExchError):
+            dif_pres_exch_handler.is_numeric("test")
+        assert dif_pres_exch_handler.is_numeric(1) == 1
+        assert dif_pres_exch_handler.is_numeric(2.20) == 2.20
+        assert dif_pres_exch_handler.is_numeric("2.20") == 2.20
+        assert dif_pres_exch_handler.is_numeric("2") == 2
+        with pytest.raises(DIFPresExchError):
+            dif_pres_exch_handler.is_numeric(2 + 3j)
 
-    @pytest.mark.asyncio
     def test_filter_no_match(self, profile):
         dif_pres_exch_handler = DIFPresExchHandler(profile)
         tmp_filter_excl_min = Filter(exclusive_min=7)
@@ -1691,7 +1694,6 @@ class TestPresExchHandler:
         tmp_filter_max = Filter(maximum=10)
         assert dif_pres_exch_handler.maximum_check("test", tmp_filter_max) is False
 
-    @pytest.mark.asyncio
     def test_filter_valueerror(self, profile):
         dif_pres_exch_handler = DIFPresExchHandler(profile)
         tmp_filter_excl_min = Filter(exclusive_min=7, fmt="date")
@@ -1709,7 +1711,6 @@ class TestPresExchHandler:
         tmp_filter_max = Filter(maximum=10, fmt="date")
         assert dif_pres_exch_handler.maximum_check("test", tmp_filter_max) is False
 
-    @pytest.mark.asyncio
     def test_filter_length_check(self, profile):
         dif_pres_exch_handler = DIFPresExchHandler(profile)
         tmp_filter_both = Filter(min_length=7, max_length=10)
@@ -1720,7 +1721,6 @@ class TestPresExchHandler:
         assert dif_pres_exch_handler.length_check("test", tmp_filter_max) is True
         assert dif_pres_exch_handler.length_check("test12", tmp_filter_min) is False
 
-    @pytest.mark.asyncio
     def test_filter_pattern_check(self, profile):
         dif_pres_exch_handler = DIFPresExchHandler(profile)
         tmp_filter = Filter(pattern="test1|test2")
@@ -1728,7 +1728,6 @@ class TestPresExchHandler:
         tmp_filter = Filter(const="test3")
         assert dif_pres_exch_handler.pattern_check("test3", tmp_filter) is False
 
-    @pytest.mark.asyncio
     def test_is_len_applicable(self, profile):
         dif_pres_exch_handler = DIFPresExchHandler(profile)
         tmp_req_a = Requirement(count=1)
@@ -1739,7 +1738,6 @@ class TestPresExchHandler:
         assert dif_pres_exch_handler.is_len_applicable(tmp_req_b, 2) is False
         assert dif_pres_exch_handler.is_len_applicable(tmp_req_c, 6) is False
 
-    @pytest.mark.asyncio
     def test_create_vcrecord(self, profile):
         dif_pres_exch_handler = DIFPresExchHandler(profile)
         test_cred_dict = {
@@ -1837,6 +1835,7 @@ class TestPresExchHandler:
             val="test", _filter=Filter()
         )
 
+    @pytest.mark.ursa_bbs_signatures
     def test_cred_schema_match_b(self, profile, setup_tuple):
         dif_pres_exch_handler = DIFPresExchHandler(profile)
         cred_list, pd_list = setup_tuple
@@ -2027,7 +2026,7 @@ class TestPresExchHandler:
         with async_mock.patch.object(
             DIFPresExchHandler,
             "_did_info_for_did",
-            async_mock.CoroutineMock(),
+            async_mock.AsyncMock(),
         ) as mock_did_info:
             did_info = DIDInfo(
                 did="did:sov:LjgpST2rjsoxYegQDRm7EL",
@@ -2092,7 +2091,7 @@ class TestPresExchHandler:
         with async_mock.patch.object(
             DIFPresExchHandler,
             "_did_info_for_did",
-            async_mock.CoroutineMock(),
+            async_mock.AsyncMock(),
         ) as mock_did_info:
             did_info = DIDInfo(
                 did="did:sov:LjgpST2rjsoxYegQDRm7EL",
@@ -2160,7 +2159,7 @@ class TestPresExchHandler:
         with async_mock.patch.object(
             DIFPresExchHandler,
             "_did_info_for_did",
-            async_mock.CoroutineMock(),
+            async_mock.AsyncMock(),
         ) as mock_did_info:
             did_info = DIDInfo(
                 did="did:key:z6Mkgg342Ycpuk263R9d8Aq6MUaxPn1DDeHyGo38EefXmgDL",
@@ -2181,6 +2180,7 @@ class TestPresExchHandler:
             )
             assert len(filtered_creds) == 2
 
+    @pytest.mark.ursa_bbs_signatures
     @pytest.mark.asyncio
     async def test_create_vp_no_issuer(self, profile, setup_tuple):
         dif_pres_exch_handler = DIFPresExchHandler(profile)
@@ -2229,23 +2229,23 @@ class TestPresExchHandler:
         with async_mock.patch.object(
             DIFPresExchHandler,
             "_did_info_for_did",
-            async_mock.CoroutineMock(),
+            async_mock.AsyncMock(),
         ) as mock_did_info, async_mock.patch.object(
             DIFPresExchHandler,
             "make_requirement",
-            async_mock.CoroutineMock(),
+            async_mock.AsyncMock(),
         ) as mock_make_req, async_mock.patch.object(
             DIFPresExchHandler,
             "apply_requirements",
-            async_mock.CoroutineMock(),
+            async_mock.AsyncMock(),
         ) as mock_apply_req, async_mock.patch.object(
             DIFPresExchHandler,
             "merge",
-            async_mock.CoroutineMock(),
+            async_mock.AsyncMock(),
         ) as mock_merge, async_mock.patch.object(
             test_module,
             "create_presentation",
-            async_mock.CoroutineMock(),
+            async_mock.AsyncMock(),
         ) as mock_create_vp:
             mock_make_req.return_value = async_mock.MagicMock()
             mock_apply_req.return_value = async_mock.MagicMock()
@@ -2272,6 +2272,7 @@ class TestPresExchHandler:
             )
 
     @pytest.mark.asyncio
+    @pytest.mark.ursa_bbs_signatures
     async def test_create_vp_with_bbs_suite(self, profile, setup_tuple):
         dif_pres_exch_handler = DIFPresExchHandler(
             profile, proof_type=BbsBlsSignature2020.signature_type
@@ -2280,27 +2281,27 @@ class TestPresExchHandler:
         with async_mock.patch.object(
             DIFPresExchHandler,
             "_did_info_for_did",
-            async_mock.CoroutineMock(),
+            async_mock.AsyncMock(),
         ) as mock_did_info, async_mock.patch.object(
             DIFPresExchHandler,
             "make_requirement",
-            async_mock.CoroutineMock(),
+            async_mock.AsyncMock(),
         ) as mock_make_req, async_mock.patch.object(
             DIFPresExchHandler,
             "apply_requirements",
-            async_mock.CoroutineMock(),
+            async_mock.AsyncMock(),
         ) as mock_apply_req, async_mock.patch.object(
             DIFPresExchHandler,
             "merge",
-            async_mock.CoroutineMock(),
+            async_mock.AsyncMock(),
         ) as mock_merge, async_mock.patch.object(
             test_module,
             "create_presentation",
-            async_mock.CoroutineMock(),
+            async_mock.AsyncMock(),
         ) as mock_create_vp, async_mock.patch.object(
             test_module,
             "sign_presentation",
-            async_mock.CoroutineMock(),
+            async_mock.AsyncMock(),
         ) as mock_sign_vp:
             mock_make_req.return_value = async_mock.MagicMock()
             mock_apply_req.return_value = async_mock.MagicMock()
@@ -2328,6 +2329,7 @@ class TestPresExchHandler:
             assert SECURITY_CONTEXT_BBS_URL in vp["@context"]
 
     @pytest.mark.asyncio
+    @pytest.mark.ursa_bbs_signatures
     async def test_create_vp_no_issuer_with_bbs_suite(self, profile, setup_tuple):
         dif_pres_exch_handler = DIFPresExchHandler(
             profile, proof_type=BbsBlsSignature2020.signature_type
@@ -2336,27 +2338,27 @@ class TestPresExchHandler:
         with async_mock.patch.object(
             DIFPresExchHandler,
             "_did_info_for_did",
-            async_mock.CoroutineMock(),
+            async_mock.AsyncMock(),
         ) as mock_did_info, async_mock.patch.object(
             DIFPresExchHandler,
             "make_requirement",
-            async_mock.CoroutineMock(),
+            async_mock.AsyncMock(),
         ) as mock_make_req, async_mock.patch.object(
             DIFPresExchHandler,
             "apply_requirements",
-            async_mock.CoroutineMock(),
+            async_mock.AsyncMock(),
         ) as mock_apply_req, async_mock.patch.object(
             DIFPresExchHandler,
             "merge",
-            async_mock.CoroutineMock(),
+            async_mock.AsyncMock(),
         ) as mock_merge, async_mock.patch.object(
             test_module,
             "create_presentation",
-            async_mock.CoroutineMock(),
+            async_mock.AsyncMock(),
         ) as mock_create_vp, async_mock.patch.object(
             DIFPresExchHandler,
             "get_sign_key_credential_subject_id",
-            async_mock.CoroutineMock(),
+            async_mock.AsyncMock(),
         ) as mock_sign_key_cred_subject:
             mock_make_req.return_value = async_mock.MagicMock()
             mock_apply_req.return_value = async_mock.MagicMock()
@@ -2980,6 +2982,7 @@ class TestPresExchHandler:
         assert filtered_cred_list[1].record_id in record_id_list
 
     @pytest.mark.asyncio
+    @pytest.mark.ursa_bbs_signatures
     async def test_create_vp_record_ids(self, profile):
         dif_pres_exch_handler = DIFPresExchHandler(profile)
         test_pd_filter_with_only_num_type = """

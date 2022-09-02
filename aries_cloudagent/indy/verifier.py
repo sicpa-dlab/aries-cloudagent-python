@@ -3,6 +3,7 @@
 import logging
 
 from abc import ABC, ABCMeta, abstractmethod
+from enum import Enum
 from time import time
 from typing import Mapping
 
@@ -12,10 +13,23 @@ from ..ledger.multiple_ledger.ledger_requests_executor import (
     IndyLedgerRequestsExecutor,
 )
 from ..messaging.util import canon, encode
+from ..multitenant.base import BaseMultitenantManager
 
 from .models.xform import indy_proof_req2non_revoc_intervals
 
+
 LOGGER = logging.getLogger(__name__)
+
+
+class PresVerifyMsg(str, Enum):
+    """Credential verification codes."""
+
+    RMV_REFERENT_NON_REVOC_INTERVAL = "RMV_RFNT_NRI"
+    RMV_GLOBAL_NON_REVOC_INTERVAL = "RMV_GLB_NRI"
+    TSTMP_OUT_NON_REVOC_INTRVAL = "TS_OUT_NRI"
+    CT_UNREVEALED_ATTRIBUTES = "UNRVL_ATTR"
+    PRES_VALUE_ERROR = "VALUE_ERROR"
+    PRES_VERIFY_ERROR = "VERIFY_ERROR"
 
 
 class IndyVerifier(ABC, metaclass=ABCMeta):
@@ -31,7 +45,7 @@ class IndyVerifier(ABC, metaclass=ABCMeta):
         """
         return "<{}>".format(self.__class__.__name__)
 
-    def non_revoc_intervals(self, pres_req: dict, pres: dict, cred_defs: dict):
+    def non_revoc_intervals(self, pres_req: dict, pres: dict, cred_defs: dict) -> list:
         """
         Remove superfluous non-revocation intervals in presentation request.
 
@@ -44,6 +58,7 @@ class IndyVerifier(ABC, metaclass=ABCMeta):
             pres: corresponding presentation
 
         """
+        msgs = []
         for (req_proof_key, pres_key) in {
             "revealed_attrs": "requested_attributes",
             "revealed_attr_groups": "requested_attributes",
@@ -59,6 +74,10 @@ class IndyVerifier(ABC, metaclass=ABCMeta):
                     if uuid in pres_req[pres_key] and pres_req[pres_key][uuid].pop(
                         "non_revoked", None
                     ):
+                        msgs.append(
+                            f"{PresVerifyMsg.RMV_REFERENT_NON_REVOC_INTERVAL.value}::"
+                            f"{uuid}"
+                        )
                         LOGGER.info(
                             (
                                 "Amended presentation request (nonce=%s): removed "
@@ -78,6 +97,7 @@ class IndyVerifier(ABC, metaclass=ABCMeta):
             for spec in pres["identifiers"]
         ):
             pres_req.pop("non_revoked", None)
+            msgs.append(PresVerifyMsg.RMV_GLOBAL_NON_REVOC_INTERVAL.value)
             LOGGER.warning(
                 (
                     "Amended presentation request (nonce=%s); removed global "
@@ -85,6 +105,7 @@ class IndyVerifier(ABC, metaclass=ABCMeta):
                 ),
                 pres_req["nonce"],
             )
+        return msgs
 
     async def check_timestamps(
         self,
@@ -92,7 +113,7 @@ class IndyVerifier(ABC, metaclass=ABCMeta):
         pres_req: Mapping,
         pres: Mapping,
         rev_reg_defs: Mapping,
-    ):
+    ) -> list:
         """
         Check for suspicious, missing, and superfluous timestamps.
 
@@ -105,26 +126,35 @@ class IndyVerifier(ABC, metaclass=ABCMeta):
             pres: indy proof request
             rev_reg_defs: rev reg defs by rev reg id, augmented with transaction times
         """
+        msgs = []
         now = int(time())
         non_revoc_intervals = indy_proof_req2non_revoc_intervals(pres_req)
+        LOGGER.debug(f">>> got non-revoc intervals: {non_revoc_intervals}")
         # timestamp for irrevocable credential
+        cred_defs = []
         for (index, ident) in enumerate(pres["identifiers"]):
-            if ident.get("timestamp"):
-                cred_def_id = ident["cred_def_id"]
+            LOGGER.debug(f">>> got (index, ident): ({index},{ident})")
+            cred_def_id = ident["cred_def_id"]
+            multitenant_mgr = profile.inject_or(BaseMultitenantManager)
+            if multitenant_mgr:
+                ledger_exec_inst = IndyLedgerRequestsExecutor(profile)
+            else:
                 ledger_exec_inst = profile.inject(IndyLedgerRequestsExecutor)
-                ledger = (
-                    await ledger_exec_inst.get_ledger_for_identifier(
-                        cred_def_id,
-                        txn_record_type=GET_CRED_DEF,
+            ledger = (
+                await ledger_exec_inst.get_ledger_for_identifier(
+                    cred_def_id,
+                    txn_record_type=GET_CRED_DEF,
+                )
+            )[1]
+            async with ledger:
+                cred_def = await ledger.get_credential_definition(cred_def_id)
+            cred_defs.append(cred_def)
+            if ident.get("timestamp"):
+                if not cred_def["value"].get("revocation"):
+                    raise ValueError(
+                        f"Timestamp in presentation identifier #{index} "
+                        f"for irrevocable cred def id {cred_def_id}"
                     )
-                )[1]
-                async with ledger:
-                    cred_def = await ledger.get_credential_definition(cred_def_id)
-                    if not cred_def["value"].get("revocation"):
-                        raise ValueError(
-                            f"Timestamp in presentation identifier #{index} "
-                            f"for irrevocable cred def id {cred_def_id}"
-                        )
 
         # timestamp in the future too far in the past
         for ident in pres["identifiers"]:
@@ -150,6 +180,7 @@ class IndyVerifier(ABC, metaclass=ABCMeta):
 
         # timestamp superfluous, missing, or outside non-revocation interval
         revealed_attrs = pres["requested_proof"].get("revealed_attrs", {})
+        unrevealed_attrs = pres["requested_proof"].get("unrevealed_attrs", {})
         revealed_groups = pres["requested_proof"].get("revealed_attr_groups", {})
         self_attested = pres["requested_proof"].get("self_attested_attrs", {})
         preds = pres["requested_proof"].get("predicates", {})
@@ -157,23 +188,39 @@ class IndyVerifier(ABC, metaclass=ABCMeta):
             if "name" in req_attr:
                 if uuid in revealed_attrs:
                     index = revealed_attrs[uuid]["sub_proof_index"]
-                    timestamp = pres["identifiers"][index].get("timestamp")
-                    if (timestamp is not None) ^ bool(non_revoc_intervals.get(uuid)):
-                        raise ValueError(
-                            f"Timestamp on sub-proof #{index} "
-                            f"is {'superfluous' if timestamp else 'missing'} "
-                            f"vs. requested attribute {uuid}"
-                        )
-                    if non_revoc_intervals.get(uuid) and not (
-                        non_revoc_intervals[uuid].get("from", 0)
-                        < timestamp
-                        < non_revoc_intervals[uuid].get("to", now)
-                    ):
-                        LOGGER.info(
-                            f"Timestamp {timestamp} from ledger for item"
-                            f"{uuid} falls outside non-revocation interval "
-                            f"{non_revoc_intervals[uuid]}"
-                        )
+                    if cred_defs[index]["value"].get("revocation"):
+                        timestamp = pres["identifiers"][index].get("timestamp")
+                        if (timestamp is not None) ^ bool(
+                            non_revoc_intervals.get(uuid)
+                        ):
+                            LOGGER.debug(f">>> uuid: {uuid}")
+                            LOGGER.debug(
+                                f">>> revealed_attrs[uuid]: {revealed_attrs[uuid]}"
+                            )
+                            raise ValueError(
+                                f"Timestamp on sub-proof #{index} "
+                                f"is {'superfluous' if timestamp else 'missing'} "
+                                f"vs. requested attribute {uuid}"
+                            )
+                        if non_revoc_intervals.get(uuid) and not (
+                            non_revoc_intervals[uuid].get("from", 0)
+                            < timestamp
+                            < non_revoc_intervals[uuid].get("to", now)
+                        ):
+                            msgs.append(
+                                f"{PresVerifyMsg.TSTMP_OUT_NON_REVOC_INTRVAL.value}::"
+                                f"{uuid}"
+                            )
+                            LOGGER.info(
+                                f"Timestamp {timestamp} from ledger for item"
+                                f"{uuid} falls outside non-revocation interval "
+                                f"{non_revoc_intervals[uuid]}"
+                            )
+                elif uuid in unrevealed_attrs:
+                    # nothing to do, attribute value is not revealed
+                    msgs.append(
+                        f"{PresVerifyMsg.CT_UNREVEALED_ATTRIBUTES.value}::" f"{uuid}"
+                    )
                 elif uuid not in self_attested:
                     raise ValueError(
                         f"Presentation attributes mismatch requested attribute {uuid}"
@@ -188,23 +235,28 @@ class IndyVerifier(ABC, metaclass=ABCMeta):
                 ):
                     raise ValueError(f"Missing requested attribute group {uuid}")
                 index = group_spec["sub_proof_index"]
-                timestamp = pres["identifiers"][index].get("timestamp")
-                if (timestamp is not None) ^ bool(non_revoc_intervals.get(uuid)):
-                    raise ValueError(
-                        f"Timestamp on sub-proof #{index} "
-                        f"is {'superfluous' if timestamp else 'missing'} "
-                        f"vs. requested attribute group {uuid}"
-                    )
-                if non_revoc_intervals.get(uuid) and not (
-                    non_revoc_intervals[uuid].get("from", 0)
-                    < timestamp
-                    < non_revoc_intervals[uuid].get("to", now)
-                ):
-                    LOGGER.warning(
-                        f"Timestamp {timestamp} from ledger for item"
-                        f"{uuid} falls outside non-revocation interval "
-                        f"{non_revoc_intervals[uuid]}"
-                    )
+                if cred_defs[index]["value"].get("revocation"):
+                    timestamp = pres["identifiers"][index].get("timestamp")
+                    if (timestamp is not None) ^ bool(non_revoc_intervals.get(uuid)):
+                        raise ValueError(
+                            f"Timestamp on sub-proof #{index} "
+                            f"is {'superfluous' if timestamp else 'missing'} "
+                            f"vs. requested attribute group {uuid}"
+                        )
+                    if non_revoc_intervals.get(uuid) and not (
+                        non_revoc_intervals[uuid].get("from", 0)
+                        < timestamp
+                        < non_revoc_intervals[uuid].get("to", now)
+                    ):
+                        msgs.append(
+                            f"{PresVerifyMsg.TSTMP_OUT_NON_REVOC_INTRVAL.value}::"
+                            f"{uuid}"
+                        )
+                        LOGGER.warning(
+                            f"Timestamp {timestamp} from ledger for item"
+                            f"{uuid} falls outside non-revocation interval "
+                            f"{non_revoc_intervals[uuid]}"
+                        )
 
         for (uuid, req_pred) in pres_req["requested_predicates"].items():
             pred_spec = preds.get(uuid)
@@ -213,25 +265,30 @@ class IndyVerifier(ABC, metaclass=ABCMeta):
                     f"Presentation predicates mismatch requested predicate {uuid}"
                 )
             index = pred_spec["sub_proof_index"]
-            timestamp = pres["identifiers"][index].get("timestamp")
-            if (timestamp is not None) ^ bool(non_revoc_intervals.get(uuid)):
-                raise ValueError(
-                    f"Timestamp on sub-proof #{index} "
-                    f"is {'superfluous' if timestamp else 'missing'} "
-                    f"vs. requested predicate {uuid}"
-                )
-            if non_revoc_intervals.get(uuid) and not (
-                non_revoc_intervals[uuid].get("from", 0)
-                < timestamp
-                < non_revoc_intervals[uuid].get("to", now)
-            ):
-                LOGGER.warning(
-                    f"Best-effort timestamp {timestamp} "
-                    "from ledger falls outside non-revocation interval "
-                    f"{non_revoc_intervals[uuid]}"
-                )
+            if cred_defs[index]["value"].get("revocation"):
+                timestamp = pres["identifiers"][index].get("timestamp")
+                if (timestamp is not None) ^ bool(non_revoc_intervals.get(uuid)):
+                    raise ValueError(
+                        f"Timestamp on sub-proof #{index} "
+                        f"is {'superfluous' if timestamp else 'missing'} "
+                        f"vs. requested predicate {uuid}"
+                    )
+                if non_revoc_intervals.get(uuid) and not (
+                    non_revoc_intervals[uuid].get("from", 0)
+                    < timestamp
+                    < non_revoc_intervals[uuid].get("to", now)
+                ):
+                    msgs.append(
+                        f"{PresVerifyMsg.TSTMP_OUT_NON_REVOC_INTRVAL.value}::" f"{uuid}"
+                    )
+                    LOGGER.warning(
+                        f"Best-effort timestamp {timestamp} "
+                        "from ledger falls outside non-revocation interval "
+                        f"{non_revoc_intervals[uuid]}"
+                    )
+        return msgs
 
-    async def pre_verify(self, pres_req: dict, pres: dict):
+    async def pre_verify(self, pres_req: dict, pres: dict) -> list:
         """
         Check for essential components and tampering in presentation.
 
@@ -243,6 +300,7 @@ class IndyVerifier(ABC, metaclass=ABCMeta):
             pres: corresponding presentation
 
         """
+        msgs = []
         if not (
             pres_req
             and "requested_predicates" in pres_req
@@ -279,12 +337,19 @@ class IndyVerifier(ABC, metaclass=ABCMeta):
                 raise ValueError(f"Missing requested predicate '{uuid}'")
 
         revealed_attrs = pres["requested_proof"].get("revealed_attrs", {})
+        unrevealed_attrs = pres["requested_proof"].get("unrevealed_attrs", {})
         revealed_groups = pres["requested_proof"].get("revealed_attr_groups", {})
         self_attested = pres["requested_proof"].get("self_attested_attrs", {})
         for (uuid, req_attr) in pres_req["requested_attributes"].items():
             if "name" in req_attr:
                 if uuid in revealed_attrs:
                     pres_req_attr_spec = {req_attr["name"]: revealed_attrs[uuid]}
+                elif uuid in unrevealed_attrs:
+                    # unrevealed attribute, nothing to do
+                    pres_req_attr_spec = {}
+                    msgs.append(
+                        f"{PresVerifyMsg.CT_UNREVEALED_ATTRIBUTES.value}::" f"{uuid}"
+                    )
                 elif uuid in self_attested:
                     if not req_attr.get("restrictions"):
                         continue
@@ -321,6 +386,7 @@ class IndyVerifier(ABC, metaclass=ABCMeta):
                     raise ValueError(f"Encoded representation mismatch for '{attr}'")
                 if primary_enco != encode(spec["raw"]):
                     raise ValueError(f"Encoded representation mismatch for '{attr}'")
+        return msgs
 
     @abstractmethod
     def verify_presentation(
@@ -331,7 +397,7 @@ class IndyVerifier(ABC, metaclass=ABCMeta):
         credential_definitions,
         rev_reg_defs,
         rev_reg_entries,
-    ):
+    ) -> (bool, list):
         """
         Verify a presentation.
 

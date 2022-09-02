@@ -3,7 +3,7 @@
 import logging
 from collections import OrderedDict
 from types import ModuleType
-from typing import Sequence
+from typing import Sequence, Iterable
 
 from ..config.injection_context import InjectionContext
 from ..core.event_bus import EventBus
@@ -19,9 +19,10 @@ LOGGER = logging.getLogger(__name__)
 class PluginRegistry:
     """Plugin registry for indexing application plugins."""
 
-    def __init__(self):
+    def __init__(self, blocklist: Iterable[str] = []):
         """Initialize a `PluginRegistry` instance."""
         self._plugins = OrderedDict()
+        self._blocklist = set(blocklist)
 
     @property
     def plugin_names(self) -> Sequence[str]:
@@ -119,6 +120,9 @@ class PluginRegistry:
         """Register a plugin module."""
         if module_name in self._plugins:
             mod = self._plugins[module_name]
+        elif module_name in self._blocklist:
+            LOGGER.debug(f"Blocked {module_name} from loading due to blocklist")
+            return None
         else:
             try:
                 mod = ClassLoader.load_module(module_name)
@@ -214,7 +218,7 @@ class PluginRegistry:
     ):
         """Load a particular protocol version."""
         protocol_registry = context.inject(ProtocolRegistry)
-        goal_code_resgistry = context.inject(GoalCodeRegistry)
+        goal_code_registry = context.inject(GoalCodeRegistry)
         if hasattr(mod, "MESSAGE_TYPES"):
             protocol_registry.register_message_types(
                 mod.MESSAGE_TYPES, version_definition=version_definition
@@ -223,7 +227,7 @@ class PluginRegistry:
             protocol_registry.register_controllers(
                 mod.CONTROLLERS, version_definition=version_definition
             )
-            goal_code_resgistry.register_controllers(mod.CONTROLLERS)
+            goal_code_registry.register_controllers(mod.CONTROLLERS)
 
     async def load_protocols(self, context: InjectionContext, plugin: ModuleType):
         """For modules that don't implement setup, register protocols manually."""

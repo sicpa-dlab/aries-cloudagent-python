@@ -28,6 +28,7 @@ from ...ledger.multiple_ledger.ledger_requests_executor import (
     GET_SCHEMA,
     IndyLedgerRequestsExecutor,
 )
+from ...multitenant.base import BaseMultitenantManager
 from ...protocols.endorse_transaction.v1_0.manager import (
     TransactionManager,
     TransactionManagerError,
@@ -183,6 +184,18 @@ async def schemas_send_schema(request: web.BaseRequest):
     schema_version = body.get("schema_version")
     attributes = body.get("attributes")
 
+    tag_query = {"schema_name": schema_name, "schema_version": schema_version}
+    async with profile.session() as session:
+        storage = session.inject(BaseStorage)
+        found = await storage.find_all_records(
+            type_filter=SCHEMA_SENT_RECORD_TYPE,
+            tag_query=tag_query,
+        )
+        if 0 < len(found):
+            raise web.HTTPBadRequest(
+                reason=f"Schema {schema_name} {schema_version} already exists"
+            )
+
     # check if we need to endorse
     if is_author_role(context.profile):
         # authors cannot write to the ledger
@@ -259,8 +272,20 @@ async def schemas_send_schema(request: web.BaseRequest):
     if not create_transaction_for_endorser:
         # Notify event
         await notify_schema_event(context.profile, schema_id, meta_data)
-        return web.json_response({"schema_id": schema_id, "schema": schema_def})
+        return web.json_response(
+            {
+                "sent": {"schema_id": schema_id, "schema": schema_def},
+                "schema_id": schema_id,
+                "schema": schema_def,
+            }
+        )
 
+    # If the transaction is for the endorser, but the schema has already been created,
+    # then we send back the schema since the transaction will fail to be created.
+    elif "signed_txn" not in schema_def:
+        return web.json_response(
+            {"sent": {"schema_id": schema_id, "schema": schema_def}}
+        )
     else:
         transaction_mgr = TransactionManager(context.profile)
         try:
@@ -286,7 +311,12 @@ async def schemas_send_schema(request: web.BaseRequest):
 
             await outbound_handler(transaction_request, connection_id=connection_id)
 
-        return web.json_response({"txn": transaction.serialize()})
+        return web.json_response(
+            {
+                "sent": {"schema_id": schema_id, "schema": schema_def},
+                "txn": transaction.serialize(),
+            }
+        )
 
 
 @docs(
@@ -338,7 +368,11 @@ async def schemas_get_schema(request: web.BaseRequest):
     schema_id = request.match_info["schema_id"]
 
     async with context.profile.session() as session:
-        ledger_exec_inst = session.inject(IndyLedgerRequestsExecutor)
+        multitenant_mgr = session.inject_or(BaseMultitenantManager)
+        if multitenant_mgr:
+            ledger_exec_inst = IndyLedgerRequestsExecutor(context.profile)
+        else:
+            ledger_exec_inst = session.inject(IndyLedgerRequestsExecutor)
     ledger_id, ledger = await ledger_exec_inst.get_ledger_for_identifier(
         schema_id,
         txn_record_type=GET_SCHEMA,
@@ -383,7 +417,11 @@ async def schemas_fix_schema_wallet_record(request: web.BaseRequest):
 
     async with profile.session() as session:
         storage = session.inject(BaseStorage)
-        ledger_exec_inst = session.inject(IndyLedgerRequestsExecutor)
+        multitenant_mgr = session.inject_or(BaseMultitenantManager)
+        if multitenant_mgr:
+            ledger_exec_inst = IndyLedgerRequestsExecutor(context.profile)
+        else:
+            ledger_exec_inst = session.inject(IndyLedgerRequestsExecutor)
     ledger_id, ledger = await ledger_exec_inst.get_ledger_for_identifier(
         schema_id,
         txn_record_type=GET_SCHEMA,

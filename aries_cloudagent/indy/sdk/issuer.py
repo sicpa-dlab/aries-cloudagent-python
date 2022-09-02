@@ -8,10 +8,8 @@ import indy.anoncreds
 import indy.blob_storage
 from indy.error import AnoncredsRevocationRegistryFullError, IndyError, ErrorCode
 
-from ...core.profile import ProfileSession
 from ...indy.sdk.profile import IndySdkProfile
 from ...messaging.util import encode
-from ...revocation.models.issuer_cred_rev_record import IssuerCredRevRecord
 from ...storage.error import StorageError
 
 from ..issuer import (
@@ -163,7 +161,6 @@ class IndySdkIssuer(IndyIssuer):
         credential_offer: dict,
         credential_request: dict,
         credential_values: dict,
-        cred_ex_id: str,
         rev_reg_id: str = None,
         tails_file_path: str = None,
     ) -> Tuple[str, str]:
@@ -175,7 +172,6 @@ class IndySdkIssuer(IndyIssuer):
             credential_offer: Credential Offer to create credential for
             credential_request: Credential request to create credential for
             credential_values: Values to go in credential
-            cred_ex_id: credential exchange identifier to use in issuer cred rev rec
             rev_reg_id: ID of the revocation registry
             tails_file_path: Path to the local tails file
 
@@ -220,22 +216,6 @@ class IndySdkIssuer(IndyIssuer):
                 rev_reg_id,
                 tails_reader_handle,
             )
-
-            if cred_rev_id:
-                issuer_cr_rec = IssuerCredRevRecord(
-                    state=IssuerCredRevRecord.STATE_ISSUED,
-                    cred_ex_id=cred_ex_id,
-                    rev_reg_id=rev_reg_id,
-                    cred_rev_id=cred_rev_id,
-                )
-                async with self.profile.session() as session:
-                    await issuer_cr_rec.save(
-                        session,
-                        reason=(
-                            "Created issuer cred rev record for "
-                            f"rev reg id {rev_reg_id}, {cred_rev_id}"
-                        ),
-                    )
         except AnoncredsRevocationRegistryFullError:
             LOGGER.warning(
                 "Revocation registry %s is full: cannot create credential",
@@ -267,7 +247,6 @@ class IndySdkIssuer(IndyIssuer):
         rev_reg_id: str,
         tails_file_path: str,
         cred_rev_ids: Sequence[str],
-        transaction: ProfileSession = None,
     ) -> Tuple[str, Sequence[str]]:
         """
         Revoke a set of credentials in a revocation registry.
@@ -281,31 +260,21 @@ class IndySdkIssuer(IndyIssuer):
             Tuple with the combined revocation delta, list of cred rev ids not revoked
 
         """
-        failed_crids = []
+        failed_crids = set()
         tails_reader_handle = await create_tails_reader(tails_file_path)
 
         result_json = None
-        for cred_rev_id in cred_rev_ids:
+        for cred_rev_id in set(cred_rev_ids):
             with IndyErrorHandler(
                 "Exception when revoking credential", IndyIssuerError
             ):
                 try:
-                    session = await self.profile.session()
                     delta_json = await indy.anoncreds.issuer_revoke_credential(
                         self.profile.wallet.handle,
                         tails_reader_handle,
                         rev_reg_id,
                         cred_rev_id,
                     )
-                    issuer_cr_rec = await IssuerCredRevRecord.retrieve_by_ids(
-                        session,
-                        rev_reg_id,
-                        cred_rev_id,
-                    )
-                    await issuer_cr_rec.set_state(
-                        session, IssuerCredRevRecord.STATE_REVOKED
-                    )
-
                 except IndyError as err:
                     if err.error_code == ErrorCode.AnoncredsInvalidUserRevocId:
                         LOGGER.error(
@@ -323,7 +292,7 @@ class IndySdkIssuer(IndyIssuer):
                                 err, "Revocation error", IndyIssuerError
                             ).roll_up
                         )
-                    failed_crids.append(cred_rev_id)
+                    failed_crids.add(int(cred_rev_id))
                     continue
                 except StorageError as err:
                     LOGGER.warning(
@@ -344,7 +313,7 @@ class IndySdkIssuer(IndyIssuer):
                 else:
                     result_json = delta_json
 
-        return (result_json, failed_crids)
+        return (result_json, [str(rev_id) for rev_id in sorted(failed_crids)])
 
     async def merge_revocation_registry_deltas(
         self, fro_delta: str, to_delta: str

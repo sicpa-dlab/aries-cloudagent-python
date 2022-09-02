@@ -114,21 +114,26 @@ class IndyPresExchangeHandler(V20PresFormatHandler):
         indy_proof_request = pres_ex_record.pres_proposal.attachment(
             IndyPresExchangeHandler.format
         )
-        indy_proof_request["name"] = request_data.get("name") or "proof-request"
-        indy_proof_request["version"] = request_data.get("version") or "1.0"
-        indy_proof_request["nonce"] = (
-            request_data.get("nonce") or await generate_pr_nonce()
-        )
+        if request_data:
+            indy_proof_request["name"] = request_data.get("name", "proof-request")
+            indy_proof_request["version"] = request_data.get("version", "1.0")
+            indy_proof_request["nonce"] = (
+                request_data.get("nonce") or await generate_pr_nonce()
+            )
+        else:
+            indy_proof_request["name"] = "proof-request"
+            indy_proof_request["version"] = "1.0"
+            indy_proof_request["nonce"] = await generate_pr_nonce()
         return self.get_format_data(PRES_20_REQUEST, indy_proof_request)
 
     async def create_pres(
         self,
         pres_ex_record: V20PresExRecord,
-        request_data: dict = {},
+        request_data: dict = None,
     ) -> Tuple[V20PresFormat, AttachDecorator]:
         """Create a presentation."""
         requested_credentials = {}
-        if request_data == {}:
+        if not request_data:
             try:
                 proof_request = pres_ex_record.pres_request
                 indy_proof_request = proof_request.attachment(
@@ -194,7 +199,10 @@ class IndyPresExchangeHandler(V20PresFormatHandler):
                     f"attr::{name}::value": proof_value,
                 }
 
-                if not any(r.items() <= criteria.items() for r in req_restrictions):
+                if (
+                    not any(r.items() <= criteria.items() for r in req_restrictions)
+                    and len(req_restrictions) != 0
+                ):
                     raise V20PresFormatHandlerError(
                         f"Presented attribute {reft} does not satisfy proof request "
                         f"restrictions {req_restrictions}"
@@ -229,7 +237,10 @@ class IndyPresExchangeHandler(V20PresFormatHandler):
                     },
                 }
 
-                if not any(r.items() <= criteria.items() for r in req_restrictions):
+                if (
+                    not any(r.items() <= criteria.items() for r in req_restrictions)
+                    and len(req_restrictions) != 0
+                ):
                     raise V20PresFormatHandlerError(
                         f"Presented attr group {reft} does not satisfy proof request "
                         f"restrictions {req_restrictions}"
@@ -282,7 +293,10 @@ class IndyPresExchangeHandler(V20PresFormatHandler):
                     "issuer_did": cred_def_id.split(":")[-5],
                 }
 
-                if not any(r.items() <= criteria.items() for r in req_restrictions):
+                if (
+                    not any(r.items() <= criteria.items() for r in req_restrictions)
+                    and len(req_restrictions) != 0
+                ):
                     raise V20PresFormatHandlerError(
                         f"Presented predicate {reft} does not satisfy proof request "
                         f"restrictions {req_restrictions}"
@@ -315,14 +329,14 @@ class IndyPresExchangeHandler(V20PresFormatHandler):
         ) = await indy_handler.process_pres_identifiers(indy_proof["identifiers"])
 
         verifier = self._profile.inject(IndyVerifier)
-        pres_ex_record.verified = json.dumps(  # tag: needs string value
-            await verifier.verify_presentation(
-                indy_proof_request,
-                indy_proof,
-                schemas,
-                cred_defs,
-                rev_reg_defs,
-                rev_reg_entries,
-            )
+        (verified, verified_msgs) = await verifier.verify_presentation(
+            indy_proof_request,
+            indy_proof,
+            schemas,
+            cred_defs,
+            rev_reg_defs,
+            rev_reg_entries,
         )
+        pres_ex_record.verified = json.dumps(verified)
+        pres_ex_record.verified_msgs = list(set(verified_msgs))
         return pres_ex_record

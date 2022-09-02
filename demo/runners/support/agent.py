@@ -195,7 +195,7 @@ class DemoAgent:
             else seed
         )
         self.storage_type = params.get("storage_type")
-        self.wallet_type = params.get("wallet_type") or "indy"
+        self.wallet_type = params.get("wallet_type") or "askar"
         self.wallet_name = (
             params.get("wallet_name") or self.ident.lower().replace(" ", "") + rand_name
         )
@@ -520,6 +520,7 @@ class DemoAgent:
         mediator_agent=None,
         cred_type: str = CRED_FORMAT_INDY,
         endorser_agent=None,
+        taa_accept=False,
     ):
         if webhook_port is not None:
             await self.listen_webhooks(webhook_port)
@@ -534,6 +535,9 @@ class DemoAgent:
             wallet_params = await self.get_id_and_token(self.wallet_name)
             self.managed_wallet_params["wallet_id"] = wallet_params["id"]
             self.managed_wallet_params["token"] = wallet_params["token"]
+
+            if taa_accept:
+                await self.taa_accept()
 
             self.log(f"Switching to AGENCY wallet {target_wallet_name}")
             return False
@@ -554,6 +558,9 @@ class DemoAgent:
                 self.managed_wallet_params["wallet_id"] = wallet_params["id"]
                 self.managed_wallet_params["token"] = wallet_params["token"]
 
+                if taa_accept:
+                    await self.taa_accept()
+
                 self.log(f"Switching to EXISTING wallet {target_wallet_name}")
                 return False
 
@@ -572,6 +579,15 @@ class DemoAgent:
         new_wallet = await self.agency_admin_POST("/multitenancy/wallet", wallet_params)
         self.log("New wallet params:", new_wallet)
         self.managed_wallet_params = new_wallet
+
+        # if endorser, endorse the wallet ledger operations
+        if endorser_agent:
+            if not await connect_wallet_to_endorser(self, endorser_agent):
+                raise Exception("Endorser setup FAILED :-(")
+
+        if taa_accept:
+            await self.taa_accept()
+
         if public_did:
             if cred_type == CRED_FORMAT_INDY:
                 # assign public did
@@ -581,7 +597,11 @@ class DemoAgent:
                     did=new_did["result"]["did"],
                     verkey=new_did["result"]["verkey"],
                 )
-                await self.admin_POST("/wallet/did/public?did=" + self.did)
+                if self.endorser_role and self.endorser_role == "author":
+                    if endorser_agent:
+                        await self.admin_POST("/wallet/did/public?did=" + self.did)
+                else:
+                    await self.admin_POST("/wallet/did/public?did=" + self.did)
             elif cred_type == CRED_FORMAT_JSON_LD:
                 # create did of appropriate type
                 data = {"method": DID_METHOD_KEY, "options": {"key_type": KEY_TYPE_BLS}}
@@ -598,11 +618,6 @@ class DemoAgent:
             if not await connect_wallet_to_mediator(self, mediator_agent):
                 log_msg("Mediation setup FAILED :-(")
                 raise Exception("Mediation setup FAILED :-(")
-
-        # if endorser, endorse the wallet ledger operations
-        if endorser_agent:
-            if not await connect_wallet_to_endorser(self, endorser_agent):
-                raise Exception("Endorser setup FAILED :-(")
 
         self.log(f"Created NEW wallet {target_wallet_name}")
         return True
@@ -715,7 +730,7 @@ class DemoAgent:
         if RUN_MODE == "pwd":
             self.webhook_url = f"http://localhost:{str(webhook_port)}/webhooks"
         else:
-            self.webhook_url = (
+            self.webhook_url = self.external_webhook_target or (
                 f"http://{self.external_host}:{str(webhook_port)}/webhooks"
             )
         app = web.Application()
@@ -764,6 +779,8 @@ class DemoAgent:
             return web.Response(status=404)
         proof_reg_txn = proof_exch["presentation_request_dict"]
         proof_reg_txn["~service"] = await self.service_decorator()
+        if request.headers["Accept"] == "application/json":
+            return web.json_response(proof_reg_txn)
         objJsonStr = json.dumps(proof_reg_txn)
         objJsonB64 = base64.b64encode(objJsonStr.encode("ascii"))
         service_url = self.webhook_url
@@ -804,6 +821,20 @@ class DemoAgent:
     async def handle_revocation_registry(self, message):
         reg_id = message.get("revoc_reg_id", "(undetermined)")
         self.log(f"Revocation registry: {reg_id} state: {message['state']}")
+
+    async def taa_accept(self):
+        taa_info = await self.admin_GET("/ledger/taa")
+        if taa_info["result"]["taa_required"]:
+            taa_accept = {
+                "mechanism": list(taa_info["result"]["aml_record"]["aml"].keys())[0],
+                "version": taa_info["result"]["taa_record"]["version"],
+                "text": taa_info["result"]["taa_record"]["text"],
+            }
+            self.log(f"Accepting TAA with: {taa_accept}")
+            await self.admin_POST(
+                "/ledger/taa/accept",
+                data=taa_accept,
+            )
 
     async def admin_request(
         self, method, path, data=None, text=False, params=None, headers=None

@@ -144,27 +144,6 @@ class TestArgParse(AsyncTestCase):
         with self.assertRaises(argparse.ArgsParseError):
             settings = group.get_settings(result)
 
-    async def test_outbound_queue(self):
-        """Test outbound queue class path string."""
-        parser = argparse.create_argument_parser()
-        group = argparse.TransportGroup()
-        group.add_arguments(parser)
-
-        result = parser.parse_args(
-            [
-                "--inbound-transport",
-                "http",
-                "0.0.0.0",
-                "80",
-                "--outbound-queue",
-                "my_queue.mod.path",
-            ]
-        )
-
-        settings = group.get_settings(result)
-
-        assert settings.get("transport.outbound_queue") == "my_queue.mod.path"
-
     async def test_general_settings_file(self):
         """Test file argument parsing."""
 
@@ -252,7 +231,9 @@ class TestArgParse(AsyncTestCase):
                 "--jwt-secret",
                 "secret",
                 "--multitenancy-config",
-                '{"wallet_type":"askar","wallet_name":"test"}',
+                '{"wallet_type":"askar","wallet_name":"test", "cache_size": 10}',
+                "--base-wallet-routes",
+                "/my_route",
             ]
         )
 
@@ -262,6 +243,29 @@ class TestArgParse(AsyncTestCase):
         assert settings.get("multitenant.jwt_secret") == "secret"
         assert settings.get("multitenant.wallet_type") == "askar"
         assert settings.get("multitenant.wallet_name") == "test"
+        assert settings.get("multitenant.base_wallet_routes") == ["/my_route"]
+
+        result = parser.parse_args(
+            [
+                "--multitenant",
+                "--jwt-secret",
+                "secret",
+                "--multitenancy-config",
+                "wallet_type=askar",
+                "wallet_name=test",
+                "cache_size=10",
+                "--base-wallet-routes",
+                "/my_route",
+            ]
+        )
+
+        settings = group.get_settings(result)
+
+        assert settings.get("multitenant.enabled") == True
+        assert settings.get("multitenant.jwt_secret") == "secret"
+        assert settings.get("multitenant.wallet_type") == "askar"
+        assert settings.get("multitenant.wallet_name") == "test"
+        assert settings.get("multitenant.base_wallet_routes") == ["/my_route"]
 
     async def test_endorser_settings(self):
         """Test required argument parsing."""
@@ -465,3 +469,47 @@ class TestArgParse(AsyncTestCase):
         assert (["test_goal_code_1", "test_goal_code_2"]) == settings.get(
             "disclose_goal_code_list"
         )
+
+    def test_universal_resolver(self):
+        """Test universal resolver flags."""
+        parser = argparse.create_argument_parser()
+        group = argparse.GeneralGroup()
+        group.add_arguments(parser)
+
+        result = parser.parse_args(["-e", "test", "--universal-resolver"])
+        settings = group.get_settings(result)
+        endpoint = settings.get("resolver.universal")
+        assert endpoint
+        assert endpoint == "DEFAULT"
+
+        result = parser.parse_args(
+            ["-e", "test", "--universal-resolver", "https://example.com"]
+        )
+        settings = group.get_settings(result)
+        endpoint = settings.get("resolver.universal")
+        assert endpoint
+        assert endpoint == "https://example.com"
+
+        result = parser.parse_args(
+            [
+                "-e",
+                "test",
+                "--universal-resolver",
+                "https://example.com",
+                "--universal-resolver-regex",
+                "regex",
+            ]
+        )
+        settings = group.get_settings(result)
+        endpoint = settings.get("resolver.universal")
+        assert endpoint
+        assert endpoint == "https://example.com"
+        supported_regex = settings.get("resolver.universal.supported")
+        assert supported_regex
+        assert supported_regex == ["regex"]
+
+        result = parser.parse_args(
+            ["-e", "test", "--universal-resolver-regex", "regex"]
+        )
+        with self.assertRaises(argparse.ArgsParseError):
+            group.get_settings(result)

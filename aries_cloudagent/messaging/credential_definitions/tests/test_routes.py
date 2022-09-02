@@ -8,8 +8,9 @@ from ....ledger.base import BaseLedger
 from ....ledger.multiple_ledger.ledger_requests_executor import (
     IndyLedgerRequestsExecutor,
 )
+from ....multitenant.base import BaseMultitenantManager
+from ....multitenant.manager import MultitenantManager
 from ....storage.base import BaseStorage
-from ....tails.base import BaseTailsServer
 
 from .. import routes as test_module
 from ....connections.models.conn_record import ConnRecord
@@ -81,7 +82,10 @@ class TestCredentialDefinitionRoutes(AsyncTestCase):
             )
             assert result == mock_response.return_value
             mock_response.assert_called_once_with(
-                {"credential_definition_id": CRED_DEF_ID}
+                {
+                    "sent": {"credential_definition_id": CRED_DEF_ID},
+                    "credential_definition_id": CRED_DEF_ID,
+                }
             )
 
     async def test_send_credential_definition_create_transaction_for_endorser(self):
@@ -126,7 +130,12 @@ class TestCredentialDefinitionRoutes(AsyncTestCase):
                 )
             )
             assert result == mock_response.return_value
-            mock_response.assert_called_once_with({"txn": {"...": "..."}})
+            mock_response.assert_called_once_with(
+                {
+                    "sent": {"credential_definition_id": CRED_DEF_ID},
+                    "txn": {"...": "..."},
+                }
+            )
 
     async def test_send_credential_definition_create_transaction_for_endorser_storage_x(
         self,
@@ -335,6 +344,28 @@ class TestCredentialDefinitionRoutes(AsyncTestCase):
         )
         self.request.match_info = {"cred_def_id": CRED_DEF_ID}
         with async_mock.patch.object(test_module.web, "json_response") as mock_response:
+            result = await test_module.credential_definitions_get_credential_definition(
+                self.request
+            )
+            assert result == mock_response.return_value
+            mock_response.assert_called_once_with(
+                {
+                    "ledger_id": "test_ledger_id",
+                    "credential_definition": {"cred": "def", "signed_txn": "..."},
+                }
+            )
+
+    async def test_get_credential_definition_multitenant(self):
+        self.profile_injector.bind_instance(
+            BaseMultitenantManager,
+            async_mock.MagicMock(MultitenantManager, autospec=True),
+        )
+        self.request.match_info = {"cred_def_id": CRED_DEF_ID}
+        with async_mock.patch.object(
+            IndyLedgerRequestsExecutor,
+            "get_ledger_for_identifier",
+            async_mock.CoroutineMock(return_value=("test_ledger_id", self.ledger)),
+        ), async_mock.patch.object(test_module.web, "json_response") as mock_response:
             result = await test_module.credential_definitions_get_credential_definition(
                 self.request
             )

@@ -4,9 +4,10 @@ import asyncio
 from hmac import compare_digest
 import logging
 import re
-from typing import Callable, Coroutine
+from typing import Callable, Coroutine, Optional, Pattern, Sequence, cast
 import uuid
 import warnings
+import weakref
 
 from aiohttp import web
 from aiohttp_apispec import (
@@ -52,6 +53,7 @@ EVENT_WEBHOOK_MAPPING = {
     "acapy::actionmenu::received": "actionmenu",
     "acapy::actionmenu::get-active-menu": "get-active-menu",
     "acapy::actionmenu::perform-menu-action": "perform-menu-action",
+    "acapy::keylist::updated": "keylist",
 }
 
 
@@ -115,7 +117,11 @@ class AdminResponder(BaseResponder):
 
         """
         super().__init__(**kwargs)
-        self._profile = profile
+        # Weakly hold the profile so this reference doesn't prevent profiles
+        # from being cleaned up when appropriate.
+        # Binding this AdminResponder to the profile's context creates a circular
+        # reference.
+        self._profile = weakref.ref(profile)
         self._send = send
 
     async def send_outbound(self, message: OutboundMessage) -> OutboundSendStatus:
@@ -125,7 +131,10 @@ class AdminResponder(BaseResponder):
         Args:
             message: The `OutboundMessage` to be sent
         """
-        return await self._send(self._profile, message)
+        profile = self._profile()
+        if not profile:
+            raise RuntimeError("weakref to profile has expired")
+        return await self._send(profile, message)
 
     async def send_webhook(self, topic: str, payload: dict):
         """
@@ -139,7 +148,10 @@ class AdminResponder(BaseResponder):
             "responder.send_webhook is deprecated; please use the event bus instead.",
             DeprecationWarning,
         )
-        await self._profile.notify("acapy::webhook::" + topic, payload)
+        profile = self._profile()
+        if not profile:
+            raise RuntimeError("weakref to profile has expired")
+        await profile.notify("acapy::webhook::" + topic, payload)
 
     @property
     def send_fn(self) -> Coroutine:
@@ -249,8 +261,31 @@ class AdminServer(BaseAdminServer):
         self.websocket_queues = {}
         self.site = None
         self.multitenant_manager = context.inject_or(BaseMultitenantManager)
+        self._additional_route_pattern: Optional[Pattern] = None
 
         self.server_paths = []
+
+    @property
+    def additional_routes_pattern(self) -> Optional[Pattern]:
+        """Pattern for configured addtional routes to permit base wallet to access."""
+        if self._additional_route_pattern:
+            return self._additional_route_pattern
+
+        base_wallet_routes = self.context.settings.get("multitenant.base_wallet_routes")
+        base_wallet_routes = cast(Sequence[str], base_wallet_routes)
+        if base_wallet_routes:
+            self._additional_route_pattern = re.compile(
+                "^(?:" + "|".join(base_wallet_routes) + ")"
+            )
+        return None
+
+    def _matches_additional_routes(self, path: str) -> bool:
+        """Path matches additional_routes_pattern."""
+        pattern = self.additional_routes_pattern
+        if pattern:
+            return bool(pattern.match(path))
+
+        return False
 
     async def make_application(self) -> web.Application:
         """Get the aiohttp application instance."""
@@ -323,6 +358,8 @@ class AdminServer(BaseAdminServer):
                         f"{UUIDFour.PATTERN}/default-mediator)",
                         path,
                     )
+                    or path.startswith("/mediation/default-mediator")
+                    or self._matches_additional_routes(path)
                 )
 
                 # base wallet is not allowed to perform ssi related actions.

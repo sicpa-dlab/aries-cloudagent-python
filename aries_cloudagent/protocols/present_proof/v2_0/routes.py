@@ -32,6 +32,7 @@ from ....messaging.valid import (
     UUID4,
 )
 from ....storage.error import StorageError, StorageNotFoundError
+from ....storage.base import BaseStorage
 from ....storage.vc_holder.base import VCHolder
 from ....storage.vc_holder.vc_record import VCRecord
 from ....utils.tracing import trace_event, get_timer, AdminAPIMessageTracingSchema
@@ -208,6 +209,11 @@ class V20PresCreateRequestRequestSchema(AdminAPIMessageTracingSchema):
 
     presentation_request = fields.Nested(V20PresRequestByFormatSchema(), required=True)
     comment = fields.Str(required=False, allow_none=True)
+    auto_verify = fields.Bool(
+        description="Verifier choice to auto-verify proof presentation",
+        required=False,
+        example=False,
+    )
     trace = fields.Bool(
         description="Whether to trace event (default false)",
         required=False,
@@ -220,6 +226,21 @@ class V20PresSendRequestRequestSchema(V20PresCreateRequestRequestSchema):
 
     connection_id = fields.UUID(
         description="Connection identifier", required=True, example=UUIDFour.EXAMPLE
+    )
+
+
+class V20PresentationSendRequestToProposalSchema(AdminAPIMessageTracingSchema):
+    """Request schema for sending a proof request bound to a proposal."""
+
+    auto_verify = fields.Bool(
+        description="Verifier choice to auto-verify proof presentation",
+        required=False,
+        example=False,
+    )
+    trace = fields.Bool(
+        description="Whether to trace event (default false)",
+        required=False,
+        example=False,
     )
 
 
@@ -803,6 +824,9 @@ async def present_proof_create_request(request: web.BaseRequest):
         will_confirm=True,
         **_formats_attach(pres_request_spec, PRES_20_REQUEST, "request_presentations"),
     )
+    auto_verify = body.get(
+        "auto_verify", context.settings.get("debug.auto_verify_presentation")
+    )
     trace_msg = body.get("trace")
     pres_request_message.assign_trace_decorator(
         context.settings,
@@ -815,6 +839,7 @@ async def present_proof_create_request(request: web.BaseRequest):
         pres_ex_record = await pres_manager.create_exchange_for_request(
             connection_id=None,
             pres_request_message=pres_request_message,
+            auto_verify=auto_verify,
         )
         result = pres_ex_record.serialize()
     except (BaseModelError, StorageError) as err:
@@ -880,6 +905,9 @@ async def present_proof_send_free_request(request: web.BaseRequest):
         will_confirm=True,
         **_formats_attach(pres_request_spec, PRES_20_REQUEST, "request_presentations"),
     )
+    auto_verify = body.get(
+        "auto_verify", context.settings.get("debug.auto_verify_presentation")
+    )
     trace_msg = body.get("trace")
     pres_request_message.assign_trace_decorator(
         context.settings,
@@ -892,6 +920,7 @@ async def present_proof_send_free_request(request: web.BaseRequest):
         pres_ex_record = await pres_manager.create_exchange_for_request(
             connection_id=connection_id,
             pres_request_message=pres_request_message,
+            auto_verify=auto_verify,
         )
         result = pres_ex_record.serialize()
     except (BaseModelError, StorageError) as err:
@@ -918,7 +947,7 @@ async def present_proof_send_free_request(request: web.BaseRequest):
     summary="Sends a presentation request in reference to a proposal",
 )
 @match_info_schema(V20PresExIdMatchInfoSchema())
-@request_schema(AdminAPIMessageTracingSchema())
+@request_schema(V20PresentationSendRequestToProposalSchema())
 @response_schema(V20PresExRecordSchema(), 200, description="")
 async def present_proof_send_bound_request(request: web.BaseRequest):
     """
@@ -966,6 +995,9 @@ async def present_proof_send_bound_request(request: web.BaseRequest):
     if not conn_record.is_ready:
         raise web.HTTPForbidden(reason=f"Connection {connection_id} not ready")
 
+    pres_ex_record.auto_verify = body.get(
+        "auto_verify", context.settings.get("debug.auto_verify_presentation")
+    )
     pres_manager = V20PresManager(profile)
     try:
         (
@@ -1055,15 +1087,22 @@ async def present_proof_send_presentation(request: web.BaseRequest):
             )
         )
 
-    connection_id = pres_ex_record.connection_id
-    try:
-        async with profile.session() as session:
-            conn_record = await ConnRecord.retrieve_by_id(session, connection_id)
-    except StorageNotFoundError as err:
-        raise web.HTTPBadRequest(reason=err.roll_up) from err
+    # Fetch connection if exchange has record
+    conn_record = None
+    if pres_ex_record.connection_id:
+        try:
+            async with profile.session() as session:
 
-    if not conn_record.is_ready:
-        raise web.HTTPForbidden(reason=f"Connection {connection_id} not ready")
+                conn_record = await ConnRecord.retrieve_by_id(
+                    session, pres_ex_record.connection_id
+                )
+        except StorageNotFoundError as err:
+            raise web.HTTPBadRequest(reason=err.roll_up) from err
+
+    if conn_record and not conn_record.is_ready:
+        raise web.HTTPForbidden(
+            reason=f"Connection {pres_ex_record.connection_id} not ready"
+        )
 
     pres_manager = V20PresManager(profile)
     try:
@@ -1097,7 +1136,7 @@ async def present_proof_send_presentation(request: web.BaseRequest):
         context.settings,
         trace_msg,
     )
-    await outbound_handler(pres_message, connection_id=connection_id)
+    await outbound_handler(pres_message, connection_id=pres_ex_record.connection_id)
 
     trace_event(
         context.settings,
@@ -1197,13 +1236,13 @@ async def present_proof_problem_report(request: web.BaseRequest):
     description = body["description"]
 
     try:
-        async with await context.profile.session() as session:
+        async with context.profile.session() as session:
             pres_ex_record = await V20PresExRecord.retrieve_by_id(session, pres_ex_id)
+            await pres_ex_record.save_error_state(
+                session,
+                reason=f"created problem report: {description}",
+            )
         report = problem_report_for_record(pres_ex_record, description)
-        await pres_ex_record.save_error_state(
-            session,
-            reason=f"created problem report: {description}",
-        )
     except StorageNotFoundError as err:  # other party does not care about meta-problems
         raise web.HTTPNotFound(reason=err.roll_up) from err
     except StorageError as err:
@@ -1234,8 +1273,17 @@ async def present_proof_remove(request: web.BaseRequest):
     pres_ex_record = None
     try:
         async with context.profile.session() as session:
-            pres_ex_record = await V20PresExRecord.retrieve_by_id(session, pres_ex_id)
-            await pres_ex_record.delete_record(session)
+            try:
+                pres_ex_record = await V20PresExRecord.retrieve_by_id(
+                    session, pres_ex_id
+                )
+                await pres_ex_record.delete_record(session)
+            except (BaseModelError, ValidationError):
+                storage = session.inject(BaseStorage)
+                storage_record = await storage.get_record(
+                    record_type=V20PresExRecord.RECORD_TYPE, record_id=pres_ex_id
+                )
+                await storage.delete_record(storage_record)
     except StorageNotFoundError as err:
         raise web.HTTPNotFound(reason=err.roll_up) from err
     except StorageError as err:

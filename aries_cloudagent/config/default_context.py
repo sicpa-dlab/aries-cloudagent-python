@@ -13,7 +13,6 @@ from ..core.profile import ProfileManager, ProfileManagerProvider
 from ..core.protocol_registry import ProtocolRegistry
 from ..core.goal_code_registry import GoalCodeRegistry
 from ..resolver.did_resolver import DIDResolver
-from ..registrar.did_registrars import DIDRegistrars
 from ..tails.base import BaseTailsServer
 
 from ..protocols.actionmenu.v1_0.base_service import BaseMenuService
@@ -52,10 +51,7 @@ class DefaultContextBuilder(ContextBuilder):
         context.injector.bind_instance(EventBus, EventBus())
 
         # Global did resolver
-        context.injector.bind_instance(DIDResolver, DIDResolver())
-
-        # Global did ledger registry
-        context.injector.bind_instance(DIDRegistrars, DIDRegistrars())
+        context.injector.bind_instance(DIDResolver, DIDResolver([]))
 
         await self.bind_providers(context)
         await self.load_plugins(context)
@@ -111,7 +107,9 @@ class DefaultContextBuilder(ContextBuilder):
     async def load_plugins(self, context: InjectionContext):
         """Set up plugin registry and load plugins."""
 
-        plugin_registry = PluginRegistry()
+        plugin_registry = PluginRegistry(
+            blocklist=self.settings.get("blocked_plugins", [])
+        )
         context.injector.bind_instance(PluginRegistry, plugin_registry)
 
         # Register standard protocol plugins

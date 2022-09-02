@@ -1,39 +1,44 @@
 """Wallet admin routes."""
 
-from aiohttp import web
-from aiohttp_apispec import (
-    docs,
-    querystring_schema,
-    request_schema,
-    response_schema,
-)
+import json
 import logging
+from typing import List
+
+from aiohttp import web
+from aiohttp_apispec import docs, querystring_schema, request_schema, response_schema
 from marshmallow import fields, validate
 
 from ..admin.request_context import AdminRequestContext
+from ..connections.models.conn_record import ConnRecord
 from ..core.event_bus import Event, EventBus
 from ..core.profile import Profile
 from ..ledger.base import BaseLedger
 from ..ledger.endpoint_type import EndpointType
 from ..ledger.error import LedgerConfigError, LedgerError
+from ..messaging.models.base import BaseModelError
 from ..messaging.models.openapi import OpenAPISchema
 from ..messaging.valid import (
     DID_POSTURE,
-    INDY_OR_KEY_DID,
-    INDY_DID,
     ENDPOINT,
     ENDPOINT_TYPE,
+    INDY_DID,
+    INDY_OR_KEY_DID,
     INDY_RAW_PUBLIC_KEY,
 )
-from ..multitenant.base import BaseMultitenantManager
+from ..protocols.coordinate_mediation.v1_0.route_manager import RouteManager
+from ..protocols.endorse_transaction.v1_0.manager import (
+    TransactionManager,
+    TransactionManagerError,
+)
 from ..protocols.endorse_transaction.v1_0.util import (
+    get_endorser_connection_id,
     is_author_role,
 )
-
+from ..storage.error import StorageError, StorageNotFoundError
 from .base import BaseWallet
 from .did_info import DIDInfo
-from .did_posture import DIDPosture
 from .did_method import DIDMethod
+from .did_posture import DIDPosture
 from .error import WalletError, WalletNotFoundError
 from .key_type import KeyType
 from .util import EVENT_LISTENER_PATTERN
@@ -177,6 +182,36 @@ class DIDCreateSchema(OpenAPISchema):
         required=False,
         description="To define a key type for a did:key",
     )
+
+    seed = fields.Str(
+        required=False,
+        description=(
+            "Optional seed to use for DID, Must be"
+            "enabled in configuration before use."
+        ),
+        example="000000000000000000000000Trustee1",
+    )
+
+
+class CreateAttribTxnForEndorserOptionSchema(OpenAPISchema):
+    """Class for user to input whether to create a transaction for endorser or not."""
+
+    create_transaction_for_endorser = fields.Boolean(
+        description="Create Transaction For Endorser's signature",
+        required=False,
+    )
+
+
+class AttribConnIdMatchInfoSchema(OpenAPISchema):
+    """Path parameters and validators for request taking connection id."""
+
+    conn_id = fields.Str(description="Connection identifier", required=False)
+
+
+class MediationIDSchema(OpenAPISchema):
+    """Class for user to optionally input a mediation_id."""
+
+    mediation_id = fields.Str(description="Mediation identifier", required=False)
 
 
 def format_did_info(info: DIDInfo):
@@ -330,13 +365,20 @@ async def wallet_create_did(request: web.BaseRequest):
                 f" support key type {key_type.key_type}"
             )
         )
+    seed = body.get("seed") or None
+    if seed and not context.settings.get("wallet.allow_insecure_seed"):
+        raise web.HTTPBadRequest(reason="Seed support is not enabled")
     info = None
     async with context.session() as session:
         wallet = session.inject_or(BaseWallet)
         if not wallet:
             raise web.HTTPForbidden(reason="No wallet available")
         try:
-            info = await wallet.create_local_did(method=method, key_type=key_type)
+            info = await wallet.create_local_did(
+                method=method,
+                key_type=key_type,
+                seed=seed,
+            )
 
         except WalletError as err:
             raise web.HTTPBadRequest(reason=err.roll_up) from err
@@ -373,6 +415,9 @@ async def wallet_get_public_did(request: web.BaseRequest):
 
 @docs(tags=["wallet"], summary="Assign the current public DID")
 @querystring_schema(DIDQueryStringSchema())
+@querystring_schema(CreateAttribTxnForEndorserOptionSchema())
+@querystring_schema(AttribConnIdMatchInfoSchema())
+@querystring_schema(MediationIDSchema())
 @response_schema(DIDResultSchema, 200, description="")
 async def wallet_set_public_did(request: web.BaseRequest):
     """
@@ -386,19 +431,45 @@ async def wallet_set_public_did(request: web.BaseRequest):
 
     """
     context: AdminRequestContext = request["context"]
-    async with context.session() as session:
-        wallet = session.inject_or(BaseWallet)
-        if not wallet:
-            raise web.HTTPForbidden(reason="No wallet available")
+    session = await context.session()
 
+    outbound_handler = request["outbound_message_router"]
+
+    create_transaction_for_endorser = json.loads(
+        request.query.get("create_transaction_for_endorser", "false")
+    )
+    write_ledger = not create_transaction_for_endorser
+    connection_id = request.query.get("conn_id")
+    attrib_def = None
+
+    wallet = session.inject_or(BaseWallet)
+    if not wallet:
+        raise web.HTTPForbidden(reason="No wallet available")
     did = request.query.get("did")
     if not did:
         raise web.HTTPBadRequest(reason="Request query must include DID")
 
     info: DIDInfo = None
+
+    mediation_id = request.query.get("mediation_id")
+    profile = context.profile
+    route_manager = profile.inject(RouteManager)
+    mediation_record = await route_manager.mediation_record_if_id(
+        profile=profile, mediation_id=mediation_id, or_default=True
+    )
+    routing_keys = None
+    if mediation_record:
+        routing_keys = mediation_record.routing_keys
+
     try:
-        info = await promote_wallet_public_did(
-            context.profile, context, context.session, did
+        info, attrib_def = await promote_wallet_public_did(
+            context.profile,
+            context,
+            context.session,
+            did,
+            write_ledger=write_ledger,
+            connection_id=connection_id,
+            routing_keys=routing_keys,
         )
     except LookupError as err:
         raise web.HTTPNotFound(reason=str(err)) from err
@@ -409,18 +480,47 @@ async def wallet_set_public_did(request: web.BaseRequest):
     except (LedgerError, WalletError) as err:
         raise web.HTTPBadRequest(reason=err.roll_up) from err
 
-    return web.json_response({"result": format_did_info(info)})
+    if not create_transaction_for_endorser:
+        return web.json_response({"result": format_did_info(info)})
+
+    else:
+        transaction_mgr = TransactionManager(context.profile)
+        try:
+            transaction = await transaction_mgr.create_record(
+                messages_attach=attrib_def["signed_txn"], connection_id=connection_id
+            )
+        except StorageError as err:
+            raise web.HTTPBadRequest(reason=err.roll_up) from err
+
+        # if auto-request, send the request to the endorser
+        if context.settings.get_value("endorser.auto_request"):
+            try:
+                transaction, transaction_request = await transaction_mgr.create_request(
+                    transaction=transaction,
+                    # TODO see if we need to parameterize these params
+                    # expires_time=expires_time,
+                    # endorser_write_txn=endorser_write_txn,
+                )
+            except (StorageError, TransactionManagerError) as err:
+                raise web.HTTPBadRequest(reason=err.roll_up) from err
+
+            await outbound_handler(transaction_request, connection_id=connection_id)
+
+        return web.json_response({"txn": transaction.serialize()})
 
 
 async def promote_wallet_public_did(
-    profile: Profile, context: AdminRequestContext, session_fn, did: str
+    profile: Profile,
+    context: AdminRequestContext,
+    session_fn,
+    did: str,
+    write_ledger: bool = False,
+    connection_id: str = None,
+    routing_keys: List[str] = None,
 ) -> DIDInfo:
     """Promote supplied DID to the wallet public DID."""
-
-    # if running in multitenant mode this will be the sub-wallet
-    wallet_id = context.settings.get("wallet.id")
-
     info: DIDInfo = None
+    endorser_did = None
     ledger = profile.inject_or(BaseLedger)
     if not ledger:
         reason = "No ledger available"
@@ -431,11 +531,52 @@ async def promote_wallet_public_did(
     async with ledger:
         if not await ledger.get_key_for_did(did):
             raise LookupError(f"DID {did} is not posted to the ledger")
+
+    # check if we need to endorse
+    if is_author_role(context.profile):
+        # authors cannot write to the ledger
+        write_ledger = False
+
+        # author has not provided a connection id, so determine which to use
+        if not connection_id:
+            connection_id = await get_endorser_connection_id(context.profile)
+        if not connection_id:
+            raise web.HTTPBadRequest(reason="No endorser connection found")
+
+    if not write_ledger:
+        try:
+            async with profile.session() as session:
+                connection_record = await ConnRecord.retrieve_by_id(
+                    session, connection_id
+                )
+        except StorageNotFoundError as err:
+            raise web.HTTPNotFound(reason=err.roll_up) from err
+        except BaseModelError as err:
+            raise web.HTTPBadRequest(reason=err.roll_up) from err
+
+        async with profile.session() as session:
+            endorser_info = await connection_record.metadata_get(
+                session, "endorser_info"
+            )
+        if not endorser_info:
+            raise web.HTTPForbidden(
+                reason="Endorser Info is not set up in "
+                "connection metadata for this connection record"
+            )
+        if "endorser_did" not in endorser_info.keys():
+            raise web.HTTPForbidden(
+                reason=' "endorser_did" is not set in "endorser_info"'
+                " in connection metadata for this connection record"
+            )
+        endorser_did = endorser_info["endorser_did"]
+
     did_info: DIDInfo = None
+    attrib_def = None
     async with session_fn() as session:
         wallet = session.inject_or(BaseWallet)
         did_info = await wallet.get_local_did(did)
         info = await wallet.set_public_did(did_info)
+
     if info:
         # Publish endpoint if necessary
         endpoint = did_info.metadata.get("endpoint")
@@ -444,24 +585,33 @@ async def promote_wallet_public_did(
             async with session_fn() as session:
                 wallet = session.inject_or(BaseWallet)
                 endpoint = context.settings.get("default_endpoint")
-                await wallet.set_did_endpoint(info.did, endpoint, ledger)
+                attrib_def = await wallet.set_did_endpoint(
+                    info.did,
+                    endpoint,
+                    ledger,
+                    write_ledger=write_ledger,
+                    endorser_did=endorser_did,
+                    routing_keys=routing_keys,
+                )
 
-        async with ledger:
-            await ledger.update_endpoint_for_did(info.did, endpoint)
+        # Commented the below lines as the function set_did_endpoint
+        # was calling update_endpoint_for_did of ledger
+        # async with ledger:
+        #     await ledger.update_endpoint_for_did(info.did, endpoint)
 
-        # Multitenancy setup
-        multitenant_mgr = profile.inject_or(BaseMultitenantManager)
-        # Add multitenant relay mapping so implicit invitations are still routed
-        if multitenant_mgr and wallet_id:
-            await multitenant_mgr.add_key(wallet_id, info.verkey, skip_if_exists=True)
+        # Route the public DID
+        route_manager = profile.inject(RouteManager)
+        await route_manager.route_public_did(profile, info.verkey)
 
-    return info
+    return info, attrib_def
 
 
 @docs(
     tags=["wallet"], summary="Update endpoint in wallet and on ledger if posted to it"
 )
 @request_schema(DIDEndpointWithTypeSchema)
+@querystring_schema(CreateAttribTxnForEndorserOptionSchema())
+@querystring_schema(AttribConnIdMatchInfoSchema())
 @response_schema(WalletModuleResponseSchema(), description="")
 async def wallet_set_did_endpoint(request: web.BaseRequest):
     """
@@ -471,20 +621,76 @@ async def wallet_set_did_endpoint(request: web.BaseRequest):
         request: aiohttp request object
     """
     context: AdminRequestContext = request["context"]
+
+    outbound_handler = request["outbound_message_router"]
+
     body = await request.json()
     did = body["did"]
     endpoint = body.get("endpoint")
     endpoint_type = EndpointType.get(
         body.get("endpoint_type", EndpointType.ENDPOINT.w3c)
     )
+
+    create_transaction_for_endorser = json.loads(
+        request.query.get("create_transaction_for_endorser", "false")
+    )
+    write_ledger = not create_transaction_for_endorser
+    endorser_did = None
+    connection_id = request.query.get("conn_id")
+    attrib_def = None
+
+    # check if we need to endorse
+    if is_author_role(context.profile):
+        # authors cannot write to the ledger
+        write_ledger = False
+        create_transaction_for_endorser = True
+        if not connection_id:
+            # author has not provided a connection id, so determine which to use
+            connection_id = await get_endorser_connection_id(context.profile)
+            if not connection_id:
+                raise web.HTTPBadRequest(reason="No endorser connection found")
+
+    if not write_ledger:
+        try:
+            async with context.session() as session:
+                connection_record = await ConnRecord.retrieve_by_id(
+                    session, connection_id
+                )
+        except StorageNotFoundError as err:
+            raise web.HTTPNotFound(reason=err.roll_up) from err
+        except BaseModelError as err:
+            raise web.HTTPBadRequest(reason=err.roll_up) from err
+
+        async with context.session() as session:
+            endorser_info = await connection_record.metadata_get(
+                session, "endorser_info"
+            )
+        if not endorser_info:
+            raise web.HTTPForbidden(
+                reason="Endorser Info is not set up in "
+                "connection metadata for this connection record"
+            )
+        if "endorser_did" not in endorser_info.keys():
+            raise web.HTTPForbidden(
+                reason=' "endorser_did" is not set in "endorser_info"'
+                " in connection metadata for this connection record"
+            )
+        endorser_did = endorser_info["endorser_did"]
+
     async with context.session() as session:
         wallet = session.inject_or(BaseWallet)
         if not wallet:
             raise web.HTTPForbidden(reason="No wallet available")
-
         try:
             ledger = context.profile.inject_or(BaseLedger)
-            await wallet.set_did_endpoint(did, endpoint, ledger, endpoint_type)
+            attrib_def = await wallet.set_did_endpoint(
+                did,
+                endpoint,
+                ledger,
+                endpoint_type,
+                write_ledger=write_ledger,
+                endorser_did=endorser_did,
+            )
         except WalletNotFoundError as err:
             raise web.HTTPNotFound(reason=err.roll_up) from err
         except LedgerConfigError as err:
@@ -492,7 +698,32 @@ async def wallet_set_did_endpoint(request: web.BaseRequest):
         except (LedgerError, WalletError) as err:
             raise web.HTTPBadRequest(reason=err.roll_up) from err
 
-    return web.json_response({})
+    if not create_transaction_for_endorser:
+        return web.json_response({})
+    else:
+        transaction_mgr = TransactionManager(context.profile)
+        try:
+            transaction = await transaction_mgr.create_record(
+                messages_attach=attrib_def["signed_txn"], connection_id=connection_id
+            )
+        except StorageError as err:
+            raise web.HTTPBadRequest(reason=err.roll_up) from err
+
+        # if auto-request, send the request to the endorser
+        if context.settings.get_value("endorser.auto_request"):
+            try:
+                transaction, transaction_request = await transaction_mgr.create_request(
+                    transaction=transaction,
+                    # TODO see if we need to parameterize these params
+                    # expires_time=expires_time,
+                    # endorser_write_txn=endorser_write_txn,
+                )
+            except (StorageError, TransactionManagerError) as err:
+                raise web.HTTPBadRequest(reason=err.roll_up) from err
+
+            await outbound_handler(transaction_request, connection_id=connection_id)
+
+        return web.json_response({"txn": transaction.serialize()})
 
 
 @docs(tags=["wallet"], summary="Query DID endpoint in wallet")
@@ -581,9 +812,10 @@ async def on_register_nym_event(profile: Profile, event: Event):
         "endorser.auto_promote_author_did"
     ):
         did = event.payload["did"]
+        connection_id = event.payload.get("connection_id")
         try:
             await promote_wallet_public_did(
-                profile, profile.context, profile.session, did
+                profile, profile.context, profile.session, did, connection_id
             )
         except Exception:
             # log the error, but continue

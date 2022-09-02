@@ -1,5 +1,6 @@
 """Credential request message handler."""
 
+from .....core.oob_processor import OobMessageProcessor
 from .....indy.issuer import IndyIssuerError
 from .....ledger.error import LedgerError
 from .....messaging.base_handler import BaseHandler, HandlerException
@@ -36,12 +37,25 @@ class CredentialRequestHandler(BaseHandler):
             context.message.serialize(as_string=True),
         )
 
-        if not context.connection_ready:
-            raise HandlerException("No connection established for credential request")
+        # If connection is present it must be ready for use
+        if context.connection_record and not context.connection_ready:
+            raise HandlerException("Connection used for credential request not ready")
+
+        # Find associated oob record. If the credential offer was created as an oob
+        # attachment the presentation exchange record won't have a connection id (yet)
+        oob_processor = context.inject(OobMessageProcessor)
+        oob_record = await oob_processor.find_oob_record_for_inbound_message(context)
+
+        # Either connection or oob context must be present
+        if not context.connection_record and not oob_record:
+            raise HandlerException(
+                "No connection or associated connectionless exchange found for credential"
+                " request"
+            )
 
         credential_manager = CredentialManager(profile)
         cred_ex_record = await credential_manager.receive_request(
-            context.message, context.connection_record.connection_id
+            context.message, context.connection_record, oob_record
         )  # mgr only finds, saves record: on exception, saving state null is hopeless
 
         r_time = trace_event(
@@ -52,7 +66,7 @@ class CredentialRequestHandler(BaseHandler):
         )
 
         # If auto_issue is enabled, respond immediately
-        if cred_ex_record.auto_issue:
+        if cred_ex_record and cred_ex_record.auto_issue:
             if (
                 cred_ex_record.credential_proposal_dict
                 and cred_ex_record.credential_proposal_dict.credential_proposal
@@ -74,7 +88,7 @@ class CredentialRequestHandler(BaseHandler):
                     LedgerError,
                     StorageError,
                 ) as err:
-                    self._logger.exception(err)
+                    self._logger.exception("Error responding to credential request")
                     if cred_ex_record:
                         async with profile.session() as session:
                             await cred_ex_record.save_error_state(
