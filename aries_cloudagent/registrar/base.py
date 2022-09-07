@@ -1,7 +1,9 @@
 """Base Class for DID registrars."""
 
 from abc import ABC, abstractmethod, abstractproperty
+from distutils.log import error
 from enum import Enum
+import json
 import logging
 from typing import Optional
 
@@ -21,6 +23,10 @@ class DIDNotFound(RegistrarError):
 
 class DIDMethodNotSupported(RegistrarError):
     """Raised when no registrar is registered for a given did method."""
+
+
+class InvalidInput(RegistrarError):
+    """Raised when invalid input is provided."""
 
 
 class RegistrarType(Enum):
@@ -70,20 +76,47 @@ class BaseDidRegistrar(ABC):
         self,
         profile: Profile,
         method: Optional[str],
-        did: Optional[str] = None,
-        document: Optional[dict] = None,
-        **options: dict
+        did: Optional[str],
+        options: Optional[dict],
+        secret: Optional[dict],
+        document: dict,
+        **kw: dict
     ) -> JobRecord:
         """Create a new DID."""
+        # method check
+        if method and did:
+            raise InvalidInput("method and did must be 'exclusive or'")
+        if not document:
+            raise InvalidInput("document is required")
 
     @abstractmethod
     async def update(
-        self, profile: Profile, did: str, document: dict, **options: dict
+        self,
+        profile: Profile,
+        did: str,
+        options: Optional[dict],
+        operation: list,
+        document: dict,
+        **kw: dict
     ) -> JobRecord:
         """Updates a did."""
-
+        # did check
+        if not did:
+            raise InvalidInput("did is required for updates")
+        if operation and (not operation.isinstance(list)):
+            raise InvalidInput("operations must be a list")
+        else:
+            operation = ["setDidDocument"]
     @abstractmethod
     async def deactivate(
-        self, profile: Profile, did: str, **options: dict
+        self,
+        profile: Profile,
+        did: str,
+        options: Optional[dict],
+        secret: Optional[dict],
+        **kw: dict
     ) -> JobRecord:
         """Deactivates a did."""
+        # did check
+        if not did:
+            raise InvalidInput("did is required for updates")
