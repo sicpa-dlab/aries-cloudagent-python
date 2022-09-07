@@ -9,7 +9,6 @@ import pytest
 from .....core.in_memory import InMemoryProfile
 from .....did.did_key import DIDKey
 from .....resolver.did_resolver import DIDResolver
-from .....resolver import Resolvers
 from .....storage.vc_holder.vc_record import VCRecord
 from .....wallet.base import BaseWallet, DIDInfo
 from .....wallet.crypto import KeyType
