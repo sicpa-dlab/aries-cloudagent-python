@@ -32,17 +32,32 @@ class IndyDIDRegistrar(BaseDidRegistrar):
         self,
         profile: Profile,
         method: Optional[str],
-        did: Optional[str] = None,
-        document: Optional[dict] = None,
-        **options: dict,
+        did: Optional[str],
+        options: Optional[dict],
+        secret: Optional[dict],
+        document: Optional[dict],
     ) -> JobRecord:
         """Create a DID from a given method."""
         raise NotImplementedError()
 
-    async def update(self, did: str, document: dict, **options: dict) -> JobRecord:
+    async def update(
+        self,
+        profile: Profile,
+        did: str,
+        options: Optional[dict],
+        secret: Optional[dict],
+        operation: list,
+        document: dict,
+    ) -> JobRecord:
         """Update DID."""
         raise NotImplementedError()
 
-    async def deactivate(self, did: str, **options: dict) -> JobRecord:
+    async def deactivate(
+        self,
+        profile: Profile,
+        did: str,
+        options: Optional[dict],
+        secret: Optional[dict],
+    ) -> JobRecord:
         """Deactivate DID."""
         raise NotImplementedError()

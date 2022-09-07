@@ -80,14 +80,8 @@ class BaseDidRegistrar(ABC):
         options: Optional[dict],
         secret: Optional[dict],
         document: dict,
-        **kw: dict
     ) -> JobRecord:
         """Create a new DID."""
-        # method check
-        if method and did:
-            raise InvalidInput("method and did must be 'exclusive or'")
-        if not document:
-            raise InvalidInput("document is required")
 
     @abstractmethod
     async def update(
@@ -95,18 +89,11 @@ class BaseDidRegistrar(ABC):
         profile: Profile,
         did: str,
         options: Optional[dict],
+        secret: Optional[dict],
         operation: list,
         document: dict,
-        **kw: dict
     ) -> JobRecord:
         """Updates a did."""
-        # did check
-        if not did:
-            raise InvalidInput("did is required for updates")
-        if operation and (not operation.isinstance(list)):
-            raise InvalidInput("operations must be a list")
-        else:
-            operation = ["setDidDocument"]
 
     @abstractmethod
     async def deactivate(
@@ -115,9 +102,5 @@ class BaseDidRegistrar(ABC):
         did: str,
         options: Optional[dict],
         secret: Optional[dict],
-        **kw: dict
     ) -> JobRecord:
         """Deactivates a did."""
-        # did check
-        if not did:
-            raise InvalidInput("did is required for updates")

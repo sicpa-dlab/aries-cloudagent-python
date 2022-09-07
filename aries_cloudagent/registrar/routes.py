@@ -3,6 +3,7 @@ Manage did and did document admin routes.
 
 """
 
+import secrets
 from aiohttp import web
 from aiohttp_apispec import (
     docs,
@@ -58,11 +59,17 @@ async def create_did(request: web.Request):
     method = body.get("method", "sov")  # TODO: get default method from default
     document = body.get("document")
     options = body.get("options", {})
+    secret = {}  # TODO: support this
     try:
         session = await context.session()
         registrar = session.inject(DIDRegistrars)
         result = await registrar.create(
-            context.profile, method, did, document, **options
+            context.profile,
+            method,
+            did,
+            options,
+            secret,
+            document,
         )
     except DIDMethodNotSupported as err:
         raise web.HTTPNotImplemented(reason=err.roll_up) from err
@@ -82,11 +89,14 @@ async def update_did(request: web.Request):
     did = request.match_info["did"]
     document = body.get("document")
     options = body.get("options", {})
-
+    secret = {}  # TODO: support this
+    operation = []  # TODO: support this
     try:
         session = await context.session()
         registrar = session.inject(DIDRegistrars)
-        result = await registrar.update(context.profile, did, document, **options)
+        result: JobRecord = await registrar.update(
+            context.profile, did, options, secret, operation, document
+        )
     except DIDNotFound as err:
         raise web.HTTPNotFound(reason=err.roll_up) from err
     except DIDMethodNotSupported as err:
@@ -107,11 +117,12 @@ async def deactivate_did(request: web.Request):
     did = request.match_info["did"]
     body = await request.json()
     options = body.get("options", {})
+    secret = {}  # TODO: support this
 
     try:
         session = await context.session()
         registrar = session.inject(DIDRegistrars)
-        result = await registrar.deactivate(context.profile, did, **options)
+        result = await registrar.deactivate(context.profile, did, options, secret)
     except DIDNotFound as err:
         raise web.HTTPNotFound(reason=err.roll_up) from err
     except DIDMethodNotSupported as err:
