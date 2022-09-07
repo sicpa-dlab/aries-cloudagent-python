@@ -107,6 +107,7 @@ class BaseDidRegistrar(ABC):
             raise InvalidInput("operations must be a list")
         else:
             operation = ["setDidDocument"]
+
     @abstractmethod
     async def deactivate(
         self,
