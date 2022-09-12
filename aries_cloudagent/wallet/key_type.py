@@ -25,6 +25,7 @@ class KeyType(Enum):
     BLS12381G1 = KeySpec("bls12381g1", "bls12_381-g1-pub", b"\xea\x01")
     BLS12381G2 = KeySpec("bls12381g2", "bls12_381-g2-pub", b"\xeb\x01")
     BLS12381G1G2 = KeySpec("bls12381g1g2", "bls12_381-g1g2-pub", b"\xee\x01")
+    SECP256K1 = KeySpec("secp256k1", "secp256k1-pub", b"\xe7\x01")
 
     @property
     def key_type(self) -> str:
