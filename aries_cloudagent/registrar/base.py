@@ -7,6 +7,8 @@ import json
 import logging
 from typing import Optional
 
+from aries_cloudagent.registrar.registration_result import RegistrationResult
+
 from ..config.injection_context import InjectionContext
 from ..core.error import BaseError
 from ..core.profile import Profile
@@ -50,15 +52,13 @@ class RegistrarType(Enum):
 class BaseDidRegistrar(ABC):
     """Base Class for DID registrar."""
 
-    def __init__(self, type_: RegistrarType = None, storing=None, returning=None):
+    def __init__(self, type_: RegistrarType = None):
         """Initialize BaseDIDregistrar.
 
         Args:
             type_ (Type): Type of registrar, native or non-native
         """
         self.type = type_ or RegistrarType.EXTERNAL
-        self.default_secret_storing = storing
-        self.default_secret_returning = returning
 
     async def setup(self, context: InjectionContext):
         """Do asynchronous registrar setup."""
@@ -66,10 +66,15 @@ class BaseDidRegistrar(ABC):
             "Setup from %s called with context: %s", self.__class__.__name__, context
         )
 
-    @abstractproperty
+    @property
+    @abstractmethod
     def method(self) -> str:
         """Return method handled by this registrar."""
-        ...
+
+    @property
+    @abstractmethod
+    def supported_key_types(self):
+        """."""
 
     @abstractmethod
     async def create(
@@ -80,7 +85,7 @@ class BaseDidRegistrar(ABC):
         options: Optional[dict],
         secret: Optional[dict],
         document: dict,
-    ) -> JobRecord:
+    ) -> RegistrationResult:
         """Create a new DID."""
 
     @abstractmethod
@@ -92,7 +97,7 @@ class BaseDidRegistrar(ABC):
         secret: Optional[dict],
         operation: list,
         document: dict,
-    ) -> JobRecord:
+    ) -> RegistrationResult:
         """Updates a did."""
 
     @abstractmethod
@@ -102,5 +107,5 @@ class BaseDidRegistrar(ABC):
         did: str,
         options: Optional[dict],
         secret: Optional[dict],
-    ) -> JobRecord:
+    ) -> RegistrationResult:
         """Deactivates a did."""

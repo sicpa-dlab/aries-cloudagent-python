@@ -10,6 +10,8 @@ from typing import Dict, Optional
 
 from pydid.did import DID
 
+from aries_cloudagent.registrar.registration_result import RegistrationResult
+
 from ..core.profile import Profile
 from .base import BaseDidRegistrar, DIDMethodNotSupported, InvalidInput
 from .models.job import JobRecord
@@ -36,7 +38,7 @@ class DIDRegistrars:
         options: Optional[dict],
         secret: Optional[dict],
         document: dict,
-    ) -> JobRecord:
+    ) -> RegistrationResult:
         """Create a DID from a given method."""
         if method and did:
             # TODO: better to check if method matches did method
