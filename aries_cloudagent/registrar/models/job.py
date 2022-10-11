@@ -1,9 +1,9 @@
 """DID Registration job."""
 
-from multiprocessing.sharedctypes import Value
-from aries_cloudagent.registrar.models.registration_state import RegistrationState
+
 from ...core.profile import ProfileSession
 from ...messaging.models.base_record import BaseRecord
+from .did_state import DIDState, RegistrationState
 
 
 class JobRecord(BaseRecord):
@@ -27,7 +27,7 @@ class JobRecord(BaseRecord):
         self,
         *,
         job_id: str = None,
-        state: str = None,
+        state: DIDState = None,
         did: str = None,
         operation: str = None,
         registration_metadata: dict = None,
@@ -35,8 +35,9 @@ class JobRecord(BaseRecord):
         **kwargs,
     ):
         """Initialize Job Record."""
-        super().__init__(job_id, state or self.STATE_WAIT, **kwargs)
+        super().__init__(job_id, state.state.value or self.STATE_WAIT, **kwargs)
         self.did = did
+        self.did_state = state
         self.operation = operation
         self.registration_metadata = registration_metadata
         self.document_metadata = document_metadata
@@ -53,7 +54,8 @@ class JobRecord(BaseRecord):
             "job_id": self.job_id,
             "did": self.did,
             "operation": self.operation,
-            "did_state": self.state,
+            "state": self.state,
+            "did_state": self.did_state.serialize(),
             "registration_metadata": self.registration_metadata,
             "document_metadata": self.document_metadata,
         }

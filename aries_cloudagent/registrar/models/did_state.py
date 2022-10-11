@@ -1,8 +1,18 @@
-from ...messaging.valid import DIDValidation
+from enum import Enum
+
 from marshmallow import EXCLUDE, fields, validate
 
 from ...messaging.models.base import BaseModel, BaseModelSchema
-from .registration_state import RegistrationState
+from ...messaging.valid import DIDValidation
+
+
+class RegistrationState(Enum):
+    """States of registration."""
+
+    FINISHED = "finished"
+    FAILED = "failed"
+    ACTION = "action"
+    WAIT = "wait"
 
 
 class DIDState(BaseModel):

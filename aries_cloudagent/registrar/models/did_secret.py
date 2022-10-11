@@ -1,16 +1,35 @@
+from marshmallow import EXCLUDE, INCLUDE, fields
+
 from ...messaging.models.base import BaseModel, BaseModelSchema
 
-from marshmallow import INCLUDE, EXCLUDE, Schema, fields
 
+class VerificationMethod:
+    """Did verification method."""
 
-class BaseMethod:
-    """Did secret base methods."""
+    class Meta:
+        """Did verification method meta."""
 
-    def __init__(self, id, type, controller, purpose) -> None:
+    schema_class = "VerificationMethodSchema"
+
+    def __init__(
+        self,
+        id=None,
+        type=None,
+        controller=None,
+        purpose=None,
+        public_key_jwk=None,
+        public_key_multibase=None,
+        private_key_jwk=None,
+        private_key_multibase=None,
+    ) -> None:
         self._id = id
         self._type = type
         self._controller = controller
         self._purpose = purpose
+        self._public_key_jwk = public_key_jwk
+        self._public_key_multibase = public_key_multibase
+        self._private_key_jwk = private_key_jwk
+        self._private_key_multibase = private_key_multibase
 
     @property
     def id(self):
@@ -43,55 +62,30 @@ class BaseMethod:
         """
         return self._controller
 
-
-class VerificationMethod(BaseMethod):
-    """Did verification method."""
-
-    class Meta:
-        """Did verification method meta."""
-
-    schema_class = "VerificationMethodSchema"
-
-    def __init__(
-        self,
-        id=None,
-        type=None,
-        controller=None,
-        purpose=None,
-        public_key_jwk=None,
-        public_key_multibase=None,
-        private_key_jwk=None,
-        private_key_multibase=None,
-    ) -> None:
-        super().__init__(id, type, controller, purpose)
-        self._public_key_jwk = public_key_jwk
-        self._public_key_multibase = public_key_multibase
-        self._private_key_jwk = private_key_jwk
-        self._private_key_multibase = private_key_multibase
-
     @property
     def public_key_jwk(self):
-        """."""
+        """Public key jwk."""
         return self._public_key_jwk
 
     @property
     def public_key_multibase(self):
-        """."""
+        """Public key multibase."""
         return self._public_key_multibase
 
     @property
     def private_key_jwk(self):
-        """."""
+        """Private key jwk."""
         return self._private_key_jwk
 
     @property
     def private_key_multibase(self):
-        """."""
+        """Private key multibase."""
         return self._private_key_multibase
 
 
 class VerificationMethodSchema(BaseModelSchema):
-    """"""
+    """Verification method schema."""
+
     class Meta:
         """Did secret schema metadata."""
 
@@ -100,19 +94,19 @@ class VerificationMethodSchema(BaseModelSchema):
 
     public_key_jwk = fields.Str(
         required=False,
-        description="",
+        description="Public key jwk",
     )
     public_key_multibase = fields.Str(
         required=False,
-        description="",
+        description="Public key multibase",
     )
     private_key_jwk = fields.Str(
         required=False,
-        description="",
+        description="Private key jwk",
     )
     private_key_multibase = fields.Str(
         required=False,
-        description="",
+        description="Private key multibase",
     )
 
 
@@ -125,7 +119,7 @@ class DIDSecret(BaseModel):
     schema_class = "DIDSecretSchema"
 
     def __init__(self, did, options, method: VerificationMethod):
-        """"""
+        """Did secret constructor."""
         super().__init__()
         self._did = did
         self._options = options
