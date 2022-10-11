@@ -51,7 +51,7 @@ class DIDRegistrars:
 
         if self.method_to_registrar and method not in self.method_to_registrar:
             raise DIDMethodNotSupported("No registrar for method", method)
-
+        assert method
         return await self.method_to_registrar[method].create(
             profile, method, did, options, secret, document
         )

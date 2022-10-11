@@ -1,10 +1,8 @@
 """Base Class for DID registrars."""
 
-from abc import ABC, abstractmethod, abstractproperty
-from distutils.log import error
-from enum import Enum
-import json
 import logging
+from abc import ABC, abstractmethod
+from enum import Enum
 from typing import Optional
 
 from ..config.injection_context import InjectionContext
@@ -50,15 +48,13 @@ class RegistrarType(Enum):
 class BaseDidRegistrar(ABC):
     """Base Class for DID registrar."""
 
-    def __init__(self, type_: RegistrarType = None, storing=None, returning=None):
+    def __init__(self, type_: RegistrarType = None):
         """Initialize BaseDIDregistrar.
 
         Args:
             type_ (Type): Type of registrar, native or non-native
         """
         self.type = type_ or RegistrarType.EXTERNAL
-        self.default_secret_storing = storing
-        self.default_secret_returning = returning
 
     async def setup(self, context: InjectionContext):
         """Do asynchronous registrar setup."""
@@ -66,10 +62,15 @@ class BaseDidRegistrar(ABC):
             "Setup from %s called with context: %s", self.__class__.__name__, context
         )
 
-    @abstractproperty
+    @property
+    @abstractmethod
     def method(self) -> str:
         """Return method handled by this registrar."""
-        ...
+
+    @property
+    @abstractmethod
+    def supported_key_types(self):
+        """."""
 
     @abstractmethod
     async def create(
