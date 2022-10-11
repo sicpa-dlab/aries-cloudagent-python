@@ -3,7 +3,6 @@ Manage did and did document admin routes.
 
 """
 
-import secrets
 from aiohttp import web
 from aiohttp_apispec import (
     docs,
@@ -11,10 +10,11 @@ from aiohttp_apispec import (
     request_schema,
     response_schema,
 )
-from aries_cloudagent.messaging.models.openapi import OpenAPISchema
-from aries_cloudagent.registrar.models.job import JobRecord
-from aries_cloudagent.storage.error import StorageNotFoundError
+from ..messaging.models.openapi import OpenAPISchema
+from .models.job import JobRecord
+from ..storage.error import StorageNotFoundError
 from marshmallow import fields
+from .registration_result import RegistrationResult
 
 from ..admin.request_context import AdminRequestContext
 from ..resolver.routes import DIDMatchInfoSchema, ResolutionResultSchema, _W3cDID
@@ -63,7 +63,7 @@ async def create_did(request: web.Request):
     try:
         session = await context.session()
         registrar = session.inject(DIDRegistrars)
-        result = await registrar.create(
+        job_record: JobRecord = await registrar.create(
             context.profile,
             method,
             did,
@@ -71,6 +71,9 @@ async def create_did(request: web.Request):
             secret,
             document,
         )
+        result = RegistrationResult(
+            job_record.job_id, job_record.did_state
+        )  # TODO; add meta data
     except DIDMethodNotSupported as err:
         raise web.HTTPNotImplemented(reason=err.roll_up) from err
     except RegistrarError as err:
@@ -94,9 +97,12 @@ async def update_did(request: web.Request):
     try:
         session = await context.session()
         registrar = session.inject(DIDRegistrars)
-        result: JobRecord = await registrar.update(
+        job_record: JobRecord = await registrar.update(
             context.profile, did, options, secret, operation, document
         )
+        result = RegistrationResult(
+            job_record.job_id, job_record.did_state
+        )  # TODO; add meta data
     except DIDNotFound as err:
         raise web.HTTPNotFound(reason=err.roll_up) from err
     except DIDMethodNotSupported as err:
@@ -122,7 +128,10 @@ async def deactivate_did(request: web.Request):
     try:
         session = await context.session()
         registrar = session.inject(DIDRegistrars)
-        result = await registrar.deactivate(context.profile, did, options, secret)
+        job_record = await registrar.deactivate(context.profile, did, options, secret)
+        result = RegistrationResult(
+            job_record.job_id, job_record.did_state
+        )  # TODO; add meta data
     except DIDNotFound as err:
         raise web.HTTPNotFound(reason=err.roll_up) from err
     except DIDMethodNotSupported as err:
@@ -142,7 +151,10 @@ async def status_job(request: web.Request):
 
     try:
         session = await context.session()
-        result = JobRecord.retrieve_by_did(session, did)
+        job_record = await JobRecord.retrieve_by_did(session, did)
+        result = RegistrationResult(
+            job_record.job_id, job_record.did_state
+        )  # TODO; add meta data
 
     except StorageNotFoundError as err:  # TODO: update to include other errors
         raise web.HTTPNotFound(reason=err.roll_up) from err

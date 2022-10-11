@@ -1,13 +1,9 @@
 """Base Class for DID registrars."""
 
-from abc import ABC, abstractmethod, abstractproperty
-from distutils.log import error
-from enum import Enum
-import json
 import logging
+from abc import ABC, abstractmethod
+from enum import Enum
 from typing import Optional
-
-from aries_cloudagent.registrar.registration_result import RegistrationResult
 
 from ..config.injection_context import InjectionContext
 from ..core.error import BaseError
@@ -85,7 +81,7 @@ class BaseDidRegistrar(ABC):
         options: Optional[dict],
         secret: Optional[dict],
         document: dict,
-    ) -> RegistrationResult:
+    ) -> JobRecord:
         """Create a new DID."""
 
     @abstractmethod
@@ -97,7 +93,7 @@ class BaseDidRegistrar(ABC):
         secret: Optional[dict],
         operation: list,
         document: dict,
-    ) -> RegistrationResult:
+    ) -> JobRecord:
         """Updates a did."""
 
     @abstractmethod
@@ -107,5 +103,5 @@ class BaseDidRegistrar(ABC):
         did: str,
         options: Optional[dict],
         secret: Optional[dict],
-    ) -> RegistrationResult:
+    ) -> JobRecord:
         """Deactivates a did."""
