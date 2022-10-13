@@ -3,7 +3,7 @@
 
 from typing import Dict, Sequence, Set
 
-from aries_cloudagent.wallet.key_type import KeyType
+from ....wallet.key_type import KeyType
 from .linked_data_proof import LinkedDataProof
 
 

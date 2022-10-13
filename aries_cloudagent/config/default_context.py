@@ -1,27 +1,31 @@
 """Classes for configuring the default injection context."""
 
-from .base_context import ContextBuilder
-from .injection_context import InjectionContext
-from .provider import CachedProvider, ClassProvider
+from ..vc.ld_proofs.suites.bbs_bls_signature_2020 import BbsBlsSignature2020
+from ..vc.ld_proofs.suites.ed25519_signature_2018 import Ed25519Signature2018
+from ..vc.ld_proofs.suites.registry import LDProofSuiteRegistry
 
 from ..cache.base import BaseCache
 from ..cache.in_memory import InMemoryCache
 from ..core.event_bus import EventBus
+from ..core.goal_code_registry import GoalCodeRegistry
 from ..core.plugin_registry import PluginRegistry
 from ..core.profile import ProfileManager, ProfileManagerProvider
 from ..core.protocol_registry import ProtocolRegistry
-from ..core.goal_code_registry import GoalCodeRegistry
-from ..resolver.did_resolver import DIDResolver
-from ..tails.base import BaseTailsServer
-
 from ..protocols.actionmenu.v1_0.base_service import BaseMenuService
 from ..protocols.actionmenu.v1_0.driver_service import DriverMenuService
 from ..protocols.didcomm_prefix import DIDCommPrefix
 from ..protocols.introduction.v0_1.base_service import BaseIntroductionService
 from ..protocols.introduction.v0_1.demo_service import DemoIntroductionService
+from ..resolver.did_resolver import DIDResolver
+from ..tails.base import BaseTailsServer
 from ..transport.wire_format import BaseWireFormat
+from ..utils.dependencies import (is_indy_sdk_module_installed,
+                                  is_ursa_bbs_signatures_module_installed)
 from ..utils.stats import Collector
-from ..utils.dependencies import is_indy_sdk_module_installed
+from .base_context import ContextBuilder
+from .injection_context import InjectionContext
+from .provider import CachedProvider, ClassProvider
+from .wallet import KeyType
 
 
 class DefaultContextBuilder(ContextBuilder):
@@ -46,6 +50,14 @@ class DefaultContextBuilder(ContextBuilder):
         # Global goal code registry
         context.injector.bind_instance(GoalCodeRegistry, GoalCodeRegistry())
 
+        # Signature suite registry
+        # Register default signatures
+        suite =  LDProofSuiteRegistry()
+        suite.register(Ed25519Signature2018, [KeyType.ED25519], False)
+        if is_ursa_bbs_signatures_module_installed():
+            suite.register(BbsBlsSignature2020, [KeyType.BLS12381G1G2], True)
+        context.injector.bind_instance(LDProofSuiteRegistry,suite)
+
         # Global event bus
         context.injector.bind_instance(EventBus, EventBus())
 
@@ -68,7 +80,8 @@ class DefaultContextBuilder(ContextBuilder):
         # so it can be shared by all wallet instances. If we set it in the indy sdk
         # profile provider it could mean other wallets won't have access to the provider
         if is_indy_sdk_module_installed():
-            from ..ledger.indy import IndySdkLedgerPool, IndySdkLedgerPoolProvider
+            from ..ledger.indy import (IndySdkLedgerPool,
+                                       IndySdkLedgerPoolProvider)
 
             context.injector.bind_provider(
                 IndySdkLedgerPool,

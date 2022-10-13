@@ -7,6 +7,8 @@ from marshmallow import RAISE
 from typing import Mapping, Tuple, Sequence
 from uuid import uuid4
 
+from vc.ld_proofs.suites.registry import LDProofSuiteRegistry
+
 from ......messaging.base_handler import BaseResponder
 from ......messaging.decorators.attach_decorator import AttachDecorator
 from ......storage.error import StorageNotFoundError
@@ -55,20 +57,12 @@ class DIFPresFormatHandler(V20PresFormatHandler):
 
     format = V20PresFormat.Format.DIF
 
-    ISSUE_SIGNATURE_SUITE_KEY_TYPE_MAPPING = {
-        Ed25519Signature2018: KeyType.ED25519,
-    }
-
-    if BbsBlsSignature2020.BBS_SUPPORTED:
-        ISSUE_SIGNATURE_SUITE_KEY_TYPE_MAPPING[BbsBlsSignature2020] = KeyType.BLS12381G2
-        ISSUE_SIGNATURE_SUITE_KEY_TYPE_MAPPING[
-            BbsBlsSignatureProof2020
-        ] = KeyType.BLS12381G2
 
     async def _get_all_suites(self, wallet: BaseWallet):
         """Get all supported suites for verifying presentation."""
+        suite_registry = self.profile.inject(LDProofSuiteRegistry)
         suites = []
-        for suite, key_type in self.ISSUE_SIGNATURE_SUITE_KEY_TYPE_MAPPING.items():
+        for key_type, suite in suite_registry.proof_type_to_suite.items():
             suites.append(
                 suite(
                     key_pair=WalletKeyPair(wallet=wallet, key_type=key_type),
