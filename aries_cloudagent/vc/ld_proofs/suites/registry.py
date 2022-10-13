@@ -51,28 +51,35 @@ class LDProofSuiteRegistry:
         """Return suite by key type."""
         try:
             return self.proof_type_to_suite[proof_type]
-        except KeyError:
+        except KeyError as exc:
             raise UnsupportedProofType(
                 f"Proof type {proof_type} is not supported by currently "
                 "registered LD Proof suites."
-            )
+            ) from exc
 
     def from_derived_proof_type(self, proof_type: str) -> LinkedDataProof:
         """Return derived proof type."""
         try:
             return self.derived_proof_type_to_suite[proof_type]
-        except KeyError:
+        except KeyError as exc:
             raise UnsupportedProofType(
                 f"Proof type {proof_type} is not supported by currently "
                 "registered LD Proof suites."
-            )
+            ) from exc
 
     def from_key_type(self, key_type: KeyType) -> LinkedDataProof:
         """Return suite by key type."""
         try:
             return self.key_type_to_suite[key_type]
-        except KeyError:
+        except KeyError as exc:
             raise UnsupportedProofType(
                 f"Key type {key_type} is not supported by currently "
                 "registered LD Proof suites."
-            )
+            ) from exc
+
+    def is_supported(self, proof_type, key_type):
+        """Check suite support."""
+        return (
+            key_type in self.key_type_to_suite.keys()
+            and proof_type in self.proof_type_to_suite.keys()
+        )
