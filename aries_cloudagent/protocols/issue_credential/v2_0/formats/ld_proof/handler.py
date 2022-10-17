@@ -1,5 +1,6 @@
 """V2.0 issue-credential linked data proof credential format handler."""
 
+from vc.ld_proofs.suites.registry import LDProofSuiteRegistry
 from ......vc.ld_proofs.error import LinkedDataProofException
 from ......vc.ld_proofs.check import get_properties_without_context
 import logging
@@ -27,15 +28,12 @@ from ......vc.ld_proofs import (
     BbsBlsSignature2020,
     CredentialIssuancePurpose,
     DocumentLoader,
-    Ed25519Signature2018,
     LinkedDataProof,
     ProofPurpose,
-    WalletKeyPair,
 )
 from ......vc.ld_proofs.constants import SECURITY_CONTEXT_BBS_URL
 from ......wallet.base import BaseWallet, DIDInfo
 from ......wallet.error import WalletNotFoundError
-from ......wallet.key_type import KeyType
 
 from ...message_types import (
     ATTACHMENT_FORMAT,
@@ -63,24 +61,7 @@ SUPPORTED_ISSUANCE_PROOF_PURPOSES = {
     CredentialIssuancePurpose.term,
     AuthenticationProofPurpose.term,
 }
-SUPPORTED_ISSUANCE_SUITES = {Ed25519Signature2018}
-SIGNATURE_SUITE_KEY_TYPE_MAPPING = {Ed25519Signature2018: KeyType.ED25519}
 
-
-# We only want to add bbs suites to supported if the module is installed
-if BbsBlsSignature2020.BBS_SUPPORTED:
-    SUPPORTED_ISSUANCE_SUITES.add(BbsBlsSignature2020)
-    SIGNATURE_SUITE_KEY_TYPE_MAPPING[BbsBlsSignature2020] = KeyType.BLS12381G2
-
-
-PROOF_TYPE_SIGNATURE_SUITE_MAPPING = {
-    suite.signature_type: suite
-    for suite, key_type in SIGNATURE_SUITE_KEY_TYPE_MAPPING.items()
-}
-
-KEY_TYPE_SIGNATURE_SUITE_MAPPING = {
-    key_type: suite for suite, key_type in SIGNATURE_SUITE_KEY_TYPE_MAPPING.items()
-}
 
 
 class LDProofCredFormatHandler(V20CredFormatHandler):
@@ -194,10 +175,11 @@ class LDProofCredFormatHandler(V20CredFormatHandler):
         """
         try:
             # Check if it is a proof type we can issue with
-            if proof_type not in PROOF_TYPE_SIGNATURE_SUITE_MAPPING.keys():
+            suite_registry = self.profile.inject(LDProofSuiteRegistry)
+            if proof_type not in suite_registry.PROOF_TYPE_SIGNATURE_SUITE_MAPPING.keys():
                 raise V20CredFormatError(
                     f"Unable to sign credential with unsupported proof type {proof_type}."
-                    f" Supported proof types: {PROOF_TYPE_SIGNATURE_SUITE_MAPPING.keys()}"
+                    f" Supported proof types: {suite_registry.PROOF_TYPE_SIGNATURE_SUITE_MAPPING.keys()}"
                 )
 
             if not issuer_id.startswith("did:"):
@@ -211,7 +193,8 @@ class LDProofCredFormatHandler(V20CredFormatHandler):
 
             # Raise error if we cannot issue a credential with this proof type
             # using this DID from
-            did_proof_type = KEY_TYPE_SIGNATURE_SUITE_MAPPING[
+            suite_registry = self.profile.inject(LDProofSuiteRegistry)
+            did_proof_type = suite_registry.KEY_TYPE_SIGNATURE_SUITE_MAPPING[
                 did.key_type
             ].signature_type
             if proof_type != did_proof_type:
@@ -278,31 +261,7 @@ class LDProofCredFormatHandler(V20CredFormatHandler):
 
         return suite
 
-    async def _get_suite(
-        self,
-        *,
-        proof_type: str,
-        verification_method: str = None,
-        proof: dict = None,
-        did_info: DIDInfo = None,
-    ):
-        """Get signature suite for issuance of verification."""
-        session = await self.profile.session()
-        wallet = session.inject(BaseWallet)
 
-        # Get signature class based on proof type
-        SignatureClass = PROOF_TYPE_SIGNATURE_SUITE_MAPPING[proof_type]
-
-        # Generically create signature class
-        return SignatureClass(
-            verification_method=verification_method,
-            proof=proof,
-            key_pair=WalletKeyPair(
-                wallet=wallet,
-                key_type=SIGNATURE_SUITE_KEY_TYPE_MAPPING[SignatureClass],
-                public_key_base58=did_info.verkey if did_info else None,
-            ),
-        )
 
     def _get_verification_method(self, did: str):
         """Get the verification method for a did."""

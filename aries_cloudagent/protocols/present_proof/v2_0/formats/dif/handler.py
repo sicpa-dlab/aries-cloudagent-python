@@ -57,19 +57,6 @@ class DIFPresFormatHandler(V20PresFormatHandler):
 
     format = V20PresFormat.Format.DIF
 
-
-    async def _get_all_suites(self, wallet: BaseWallet):
-        """Get all supported suites for verifying presentation."""
-        suite_registry = self.profile.inject(LDProofSuiteRegistry)
-        suites = []
-        for key_type, suite in suite_registry.proof_type_to_suite.items():
-            suites.append(
-                suite(
-                    key_pair=WalletKeyPair(wallet=wallet, key_type=key_type),
-                )
-            )
-        return suites
-
     @classmethod
     def validate_fields(cls, message_type: str, attachment_data: Mapping):
         """Validate attachment data for a specific message type.
@@ -468,9 +455,10 @@ class DIFPresFormatHandler(V20PresFormatHandler):
                 challenge = pres_request["options"].get("challenge", str(uuid4()))
             if not challenge:
                 challenge = str(uuid4())
+            suite_registry = self.profile.inject(LDProofSuiteRegistry)    
             pres_ver_result = await verify_presentation(
                 presentation=dif_proof,
-                suites=await self._get_all_suites(wallet=wallet),
+                suites=await suite_registry.get_all_suites(wallet=wallet),
                 document_loader=self._profile.inject(DocumentLoader),
                 challenge=challenge,
             )
