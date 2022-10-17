@@ -1,5 +1,6 @@
 """Classes for configuring the default injection context."""
 
+from vc.ld_proofs.suites.bbs_bls_signature_proof_2020 import BbsBlsSignatureProof2020
 from ..vc.ld_proofs.suites.bbs_bls_signature_2020 import BbsBlsSignature2020
 from ..vc.ld_proofs.suites.ed25519_signature_2018 import Ed25519Signature2018
 from ..vc.ld_proofs.suites.registry import LDProofSuiteRegistry
@@ -56,6 +57,7 @@ class DefaultContextBuilder(ContextBuilder):
         suite.register(Ed25519Signature2018, [KeyType.ED25519], False)
         if is_ursa_bbs_signatures_module_installed():
             suite.register(BbsBlsSignature2020, [KeyType.BLS12381G1G2], True)
+        suite.register(BbsBlsSignatureProof2020, [KeyType.BLS12381G2], True)
         context.injector.bind_instance(LDProofSuiteRegistry,suite)
 
         # Global event bus
