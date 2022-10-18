@@ -1,24 +1,27 @@
 """Signature Suite Registry."""
 
 
-from typing import Dict, Sequence, Set
-from vc.ld_proofs.crypto.wallet_key_pair import WalletKeyPair
-from wallet.did_info import DIDInfo
+from typing import Dict, Sequence, Set, Type
+
+from ....vc.ld_proofs.suites.linked_data_signature import LinkedDataSignature
+
+from ....did.did_key import DIDKey
+from ....wallet.did_info import DIDInfo
 from ....vc.ld_proofs import (
     Ed25519Signature2018,
     BbsBlsSignature2020,
     BbsBlsSignatureProof2020,
     WalletKeyPair,
-    DocumentLoader,
 )
-from ....vc.ld_proofs.constants import (
-    SECURITY_CONTEXT_BBS_URL,
-    EXPANDED_TYPE_CREDENTIALS_CONTEXT_V1_VC_TYPE,
-)
-from wallet.base import BaseWallet
+from ....wallet.base import BaseWallet
+from ....core.error import BaseError
 
 from ....wallet.key_type import KeyType
 from .linked_data_proof import LinkedDataProof
+
+
+class CredFormatError(BaseError):
+    """Credential format error under issue-credential protocol v2.0."""
 
 
 class LDProofSuiteRegistryError(Exception):
@@ -46,37 +49,40 @@ class LDProofSuiteRegistry:
         }
 
         if BbsBlsSignature2020.BBS_SUPPORTED:
-            self.ISSUE_SIGNATURE_SUITE_KEY_TYPE_MAPPING[BbsBlsSignature2020] = KeyType.BLS12381G2
+            self.ISSUE_SIGNATURE_SUITE_KEY_TYPE_MAPPING[
+                BbsBlsSignature2020
+            ] = KeyType.BLS12381G2
 
         self.DERIVE_SIGNATURE_SUITE_KEY_TYPE_MAPPING = {
             BbsBlsSignatureProof2020: KeyType.BLS12381G2,
         }
         self.PROOF_TYPE_SIGNATURE_SUITE_MAPPING = {
             suite.signature_type: suite
-            for suite, key_type in self.ISSUE_SIGNATURE_SUITE_KEY_TYPE_MAPPING.items()
+            for suite in self.ISSUE_SIGNATURE_SUITE_KEY_TYPE_MAPPING
         }
-        self.DERIVED_PROOF_TYPE_SIGNATURE_SUITE_MAPPING = {
+        self.derived_proof_type_signature_suite_mapping = {
             suite.signature_type: suite
-            for suite, key_type in self.DERIVE_SIGNATURE_SUITE_KEY_TYPE_MAPPING.items()
+            for suite in self.DERIVE_SIGNATURE_SUITE_KEY_TYPE_MAPPING
         }
         # handler
         self.SUPPORTED_ISSUANCE_SUITES = {Ed25519Signature2018}
         self.SIGNATURE_SUITE_KEY_TYPE_MAPPING = {Ed25519Signature2018: KeyType.ED25519}
 
-
         # We only want to add bbs suites to supported if the module is installed
         if BbsBlsSignature2020.BBS_SUPPORTED:
             self.SUPPORTED_ISSUANCE_SUITES.add(BbsBlsSignature2020)
-            self.SIGNATURE_SUITE_KEY_TYPE_MAPPING[BbsBlsSignature2020] = KeyType.BLS12381G2
-
+            self.SIGNATURE_SUITE_KEY_TYPE_MAPPING[
+                BbsBlsSignature2020
+            ] = KeyType.BLS12381G2
 
         self.PROOF_TYPE_SIGNATURE_SUITE_MAPPING = {
             suite.signature_type: suite
-            for suite, key_type in self.SIGNATURE_SUITE_KEY_TYPE_MAPPING.items()
+            for suite in self.SIGNATURE_SUITE_KEY_TYPE_MAPPING
         }
 
         self.KEY_TYPE_SIGNATURE_SUITE_MAPPING = {
-            key_type: suite for suite, key_type in self.SIGNATURE_SUITE_KEY_TYPE_MAPPING.items()
+            key_type: suite
+            for suite, key_type in self.SIGNATURE_SUITE_KEY_TYPE_MAPPING.items()
         }
 
     def register(
@@ -144,27 +150,48 @@ class LDProofSuiteRegistry:
             )
             for key_type, suite in self.proof_type_to_suite.items()
         ]
-        
+
     # pres_exch_handler
+    def _get_verification_method(self, did: str):
+        """Get the verification method for a did."""
+        if did.startswith("did:key:"):
+            return DIDKey.from_did(did).key_id
+        elif did.startswith("did:sov:"):
+            # key-1 is what uniresolver uses for key id
+            return f"{did}#key-1"
+        else:
+            raise CredFormatError(
+                f"Unable to get retrieve verification method for did {did}"
+            )
+
     async def _get_issue_suite(
         self,
         *,
         wallet: BaseWallet,
-        issuer_id: str,
+        issuer_id: str = None,
+        did_info: DIDInfo = None,
+        proof_type,
+        proof: dict = None,
+        issuer: bool = True,
     ):
         """Get signature suite for signing presentation."""
-        did_info = await self._did_info_for_did(issuer_id)
-        verification_method = self._get_verification_method(issuer_id)
-
+        verification_method = (
+            self._get_verification_method(issuer_id) if issuer_id else ""
+        )
         # Get signature class based on proof type
-        SignatureClass = self.PROOF_TYPE_SIGNATURE_SUITE_MAPPING[self.proof_type]
-
+        SignatureClass = self.PROOF_TYPE_SIGNATURE_SUITE_MAPPING[proof_type]
+        key_type = (
+            self.ISSUE_SIGNATURE_SUITE_KEY_TYPE_MAPPING[SignatureClass]
+            if issuer
+            else self.SIGNATURE_SUITE_KEY_TYPE_MAPPING[SignatureClass]
+        )
         # Generically create signature class
         return SignatureClass(
             verification_method=verification_method,
+            proof=proof,
             key_pair=WalletKeyPair(
                 wallet=wallet,
-                key_type=self.ISSUE_SIGNATURE_SUITE_KEY_TYPE_MAPPING[SignatureClass],
+                key_type=key_type,
                 public_key_base58=did_info.verkey if did_info else None,
             ),
         )
@@ -176,7 +203,7 @@ class LDProofSuiteRegistry:
     ):
         """Get signature suite for deriving credentials."""
         # Get signature class based on proof type
-        SignatureClass = self.DERIVED_PROOF_TYPE_SIGNATURE_SUITE_MAPPING[
+        SignatureClass = self.derived_proof_type_signature_suite_mapping[
             "BbsBlsSignatureProof2020"
         ]
 
@@ -187,28 +214,3 @@ class LDProofSuiteRegistry:
                 key_type=self.DERIVE_SIGNATURE_SUITE_KEY_TYPE_MAPPING[SignatureClass],
             ),
         )
-    async def _get_suite(
-            self,
-            *,
-            proof_type: str,
-            verification_method: str = None,
-            proof: dict = None,
-            did_info: DIDInfo = None,
-        ):
-            """Get signature suite for issuance of verification."""
-            session = await self.profile.session()
-            wallet = session.inject(BaseWallet)
-
-            # Get signature class based on proof type
-            SignatureClass = self.PROOF_TYPE_SIGNATURE_SUITE_MAPPING[proof_type]
-
-            # Generically create signature class
-            return SignatureClass(
-                verification_method=verification_method,
-                proof=proof,
-                key_pair=WalletKeyPair(
-                    wallet=wallet,
-                    key_type=self.SIGNATURE_SUITE_KEY_TYPE_MAPPING[SignatureClass],
-                    public_key_base58=did_info.verkey if did_info else None,
-                ),
-            )

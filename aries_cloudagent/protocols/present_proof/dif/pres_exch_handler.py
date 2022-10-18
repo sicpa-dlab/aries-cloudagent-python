@@ -90,17 +90,6 @@ class DIFPresExchHandler:
         self.is_holder = False
         self.reveal_doc_frame = reveal_doc
 
-    def _get_verification_method(self, did: str):
-        """Get the verification method for a did."""
-        if did.startswith("did:key:"):
-            return DIDKey.from_did(did).key_id
-        elif did.startswith("did:sov:"):
-            # key-1 is what uniresolver uses for key id
-            return did + "#key-1"
-        else:
-            raise DIFPresExchError(
-                f"Unable to get retrieve verification method for did {did}"
-            )
 
     async def _did_info_for_did(self, did: str) -> DIDInfo:
         """Get the did info for specified did.
@@ -1246,9 +1235,12 @@ class DIFPresExchHandler:
         suites_registry = self.profile.inject(LDProofSuiteRegistry)
         async with self.profile.session() as session:
             wallet = session.inject(BaseWallet)
+            did_info = await self._did_info_for_did(issuer_id)
             issue_suite = await suites_registry._get_issue_suite(
                 wallet=wallet,
                 issuer_id=issuer_id,
+                did_info=did_info,
+                proof_type=self.proof_type
             )
             signed_vp = await sign_presentation(
                 presentation=vp,

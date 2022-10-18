@@ -63,7 +63,6 @@ SUPPORTED_ISSUANCE_PROOF_PURPOSES = {
 }
 
 
-
 class LDProofCredFormatHandler(V20CredFormatHandler):
     """Linked data proof credential format handler."""
 
@@ -176,7 +175,10 @@ class LDProofCredFormatHandler(V20CredFormatHandler):
         try:
             # Check if it is a proof type we can issue with
             suite_registry = self.profile.inject(LDProofSuiteRegistry)
-            if proof_type not in suite_registry.PROOF_TYPE_SIGNATURE_SUITE_MAPPING.keys():
+            if (
+                proof_type
+                not in suite_registry.PROOF_TYPE_SIGNATURE_SUITE_MAPPING.keys()
+            ):
                 raise V20CredFormatError(
                     f"Unable to sign credential with unsupported proof type {proof_type}."
                     f" Supported proof types: {suite_registry.PROOF_TYPE_SIGNATURE_SUITE_MAPPING.keys()}"
@@ -250,31 +252,19 @@ class LDProofCredFormatHandler(V20CredFormatHandler):
         )
 
         did_info = await self._did_info_for_did(issuer_id)
-        verification_method = self._get_verification_method(issuer_id)
-
-        suite = await self._get_suite(
-            proof_type=proof_type,
-            verification_method=verification_method,
-            proof=proof.serialize(),
+        suite_registry = self.profile.inject(LDProofSuiteRegistry)
+        wallet = self.profile.inject(BaseWallet)
+        suite = await suite_registry._get_issue_suite(
+            wallet=wallet,
+            issuer_id=issuer_id,
             did_info=did_info,
+            proof_type=proof_type,
+            proof=proof.serialize(),
+            issuer=False,
         )
 
         return suite
 
-
-
-    def _get_verification_method(self, did: str):
-        """Get the verification method for a did."""
-
-        if did.startswith("did:key:"):
-            return DIDKey.from_did(did).key_id
-        elif did.startswith("did:sov:"):
-            # key-1 is what the resolver uses for key id
-            return did + "#key-1"
-        else:
-            raise V20CredFormatError(
-                f"Unable to get retrieve verification method for did {did}"
-            )
 
     def _get_proof_purpose(
         self, *, proof_purpose: str = None, challenge: str = None, domain: str = None
@@ -529,7 +519,13 @@ class LDProofCredFormatHandler(V20CredFormatHandler):
         credential = VerifiableCredential.deserialize(cred_dict, unknown=INCLUDE)
 
         # Get signature suite, proof purpose and document loader
-        suite = await self._get_suite(proof_type=credential.proof.type)
+        suite_registry = self.profile.inject(LDProofSuiteRegistry)
+        wallet = self.profile.inject(BaseWallet)
+        suite = await suite_registry._get_issue_suite(
+            wallet=wallet,
+            proof_type=credential.proof.type,
+            issuer=False,
+        )
 
         purpose = self._get_proof_purpose(
             proof_purpose=credential.proof.proof_purpose,

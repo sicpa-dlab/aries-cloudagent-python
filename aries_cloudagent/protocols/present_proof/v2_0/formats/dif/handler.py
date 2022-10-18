@@ -18,12 +18,9 @@ from ......vc.ld_proofs import (
     DocumentLoader,
     Ed25519Signature2018,
     BbsBlsSignature2020,
-    BbsBlsSignatureProof2020,
-    WalletKeyPair,
 )
 from ......vc.vc_ld.verify import verify_presentation
 from ......wallet.base import BaseWallet
-from ......wallet.key_type import KeyType
 
 from .....problem_report.v1_0.message import ProblemReport
 
