@@ -1,9 +1,8 @@
 """Signature Suite Registry."""
 
 
-from typing import Dict, Sequence, Set, Type
+from typing import Dict, Sequence, Set
 
-from ....vc.ld_proofs.suites.linked_data_signature import LinkedDataSignature
 
 from ....did.did_key import DIDKey
 from ....wallet.did_info import DIDInfo
@@ -44,45 +43,45 @@ class LDProofSuiteRegistry:
         self.proof_type_to_suite: Dict[str, LinkedDataProof] = {}
         self.derived_proof_type_to_suite: Dict[str, LinkedDataProof] = {}
         # pres_exch_handler
-        self.ISSUE_SIGNATURE_SUITE_KEY_TYPE_MAPPING = {
+        self.ISSUE_SIG_STE_2_KEY_TYPE = {
             Ed25519Signature2018: KeyType.ED25519,
         }
 
         if BbsBlsSignature2020.BBS_SUPPORTED:
-            self.ISSUE_SIGNATURE_SUITE_KEY_TYPE_MAPPING[
+            self.ISSUE_SIG_STE_2_KEY_TYPE[
                 BbsBlsSignature2020
             ] = KeyType.BLS12381G2
 
-        self.DERIVE_SIGNATURE_SUITE_KEY_TYPE_MAPPING = {
+        self.DERIVE_SIG_STE_2_KEY_TYPE = {
             BbsBlsSignatureProof2020: KeyType.BLS12381G2,
         }
-        self.PROOF_TYPE_SIGNATURE_SUITE_MAPPING = {
+        self.PROOF_SIG_TYPE_2_STE = {
             suite.signature_type: suite
-            for suite in self.ISSUE_SIGNATURE_SUITE_KEY_TYPE_MAPPING
+            for suite in self.ISSUE_SIG_STE_2_KEY_TYPE
         }
-        self.derived_proof_type_signature_suite_mapping = {
+        self.derived_proof_type_2_ste = {
             suite.signature_type: suite
-            for suite in self.DERIVE_SIGNATURE_SUITE_KEY_TYPE_MAPPING
+            for suite in self.DERIVE_SIG_STE_2_KEY_TYPE
         }
         # handler
-        self.SUPPORTED_ISSUANCE_SUITES = {Ed25519Signature2018}
-        self.SIGNATURE_SUITE_KEY_TYPE_MAPPING = {Ed25519Signature2018: KeyType.ED25519}
+        self.SUP_ISSUE_STES = {Ed25519Signature2018}
+        self.SIG_STE_2_KEY_TYPE = {Ed25519Signature2018: KeyType.ED25519}
 
         # We only want to add bbs suites to supported if the module is installed
         if BbsBlsSignature2020.BBS_SUPPORTED:
-            self.SUPPORTED_ISSUANCE_SUITES.add(BbsBlsSignature2020)
-            self.SIGNATURE_SUITE_KEY_TYPE_MAPPING[
+            self.SUP_ISSUE_STES.add(BbsBlsSignature2020)
+            self.SIG_STE_2_KEY_TYPE[
                 BbsBlsSignature2020
             ] = KeyType.BLS12381G2
 
-        self.PROOF_TYPE_SIGNATURE_SUITE_MAPPING = {
+        self.PROOF_SIG_TYPE_2_STE = {
             suite.signature_type: suite
-            for suite in self.SIGNATURE_SUITE_KEY_TYPE_MAPPING
+            for suite in self.SIG_STE_2_KEY_TYPE
         }
 
-        self.KEY_TYPE_SIGNATURE_SUITE_MAPPING = {
+        self.KEY_TYPE_SIG_2_STE = {
             key_type: suite
-            for suite, key_type in self.SIGNATURE_SUITE_KEY_TYPE_MAPPING.items()
+            for suite, key_type in self.SIG_STE_2_KEY_TYPE.items()
         }
 
     def register(
@@ -179,11 +178,11 @@ class LDProofSuiteRegistry:
             self._get_verification_method(issuer_id) if issuer_id else ""
         )
         # Get signature class based on proof type
-        SignatureClass = self.PROOF_TYPE_SIGNATURE_SUITE_MAPPING[proof_type]
+        SignatureClass = self.PROOF_SIG_TYPE_2_STE[proof_type]
         key_type = (
-            self.ISSUE_SIGNATURE_SUITE_KEY_TYPE_MAPPING[SignatureClass]
+            self.ISSUE_SIG_STE_2_KEY_TYPE[SignatureClass]
             if issuer
-            else self.SIGNATURE_SUITE_KEY_TYPE_MAPPING[SignatureClass]
+            else self.SIG_STE_2_KEY_TYPE[SignatureClass]
         )
         # Generically create signature class
         return SignatureClass(
@@ -203,7 +202,7 @@ class LDProofSuiteRegistry:
     ):
         """Get signature suite for deriving credentials."""
         # Get signature class based on proof type
-        SignatureClass = self.derived_proof_type_signature_suite_mapping[
+        SignatureClass = self.derived_proof_type_2_ste[
             "BbsBlsSignatureProof2020"
         ]
 
@@ -211,6 +210,6 @@ class LDProofSuiteRegistry:
         return SignatureClass(
             key_pair=WalletKeyPair(
                 wallet=wallet,
-                key_type=self.DERIVE_SIGNATURE_SUITE_KEY_TYPE_MAPPING[SignatureClass],
+                key_type=self.DERIVE_SIG_STE_2_KEY_TYPE[SignatureClass],
             ),
         )

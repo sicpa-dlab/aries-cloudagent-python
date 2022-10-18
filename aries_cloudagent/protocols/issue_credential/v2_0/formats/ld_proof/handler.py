@@ -177,11 +177,11 @@ class LDProofCredFormatHandler(V20CredFormatHandler):
             suite_registry = self.profile.inject(LDProofSuiteRegistry)
             if (
                 proof_type
-                not in suite_registry.PROOF_TYPE_SIGNATURE_SUITE_MAPPING.keys()
+                not in suite_registry.PROOF_SIG_TYPE_2_STE.keys()
             ):
                 raise V20CredFormatError(
                     f"Unable to sign credential with unsupported proof type {proof_type}."
-                    f" Supported proof types: {suite_registry.PROOF_TYPE_SIGNATURE_SUITE_MAPPING.keys()}"
+                    f" Supported proof types: {suite_registry.PROOF_SIG_TYPE_2_STE.keys()}"
                 )
 
             if not issuer_id.startswith("did:"):
@@ -196,7 +196,7 @@ class LDProofCredFormatHandler(V20CredFormatHandler):
             # Raise error if we cannot issue a credential with this proof type
             # using this DID from
             suite_registry = self.profile.inject(LDProofSuiteRegistry)
-            did_proof_type = suite_registry.KEY_TYPE_SIGNATURE_SUITE_MAPPING[
+            did_proof_type = suite_registry.KEY_TYPE_SIG_2_STE[
                 did.key_type
             ].signature_type
             if proof_type != did_proof_type:

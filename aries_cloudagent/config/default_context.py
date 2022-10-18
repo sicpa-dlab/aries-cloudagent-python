@@ -53,7 +53,7 @@ class DefaultContextBuilder(ContextBuilder):
 
         # Signature suite registry
         # Register default signatures
-        suite =  LDProofSuiteRegistry()
+        suite: LDProofSuiteRegistry =  LDProofSuiteRegistry()
         suite.register(Ed25519Signature2018, [KeyType.ED25519], False)
         if is_ursa_bbs_signatures_module_installed():
             suite.register(BbsBlsSignature2020, [KeyType.BLS12381G1G2], True)
