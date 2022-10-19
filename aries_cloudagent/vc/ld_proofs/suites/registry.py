@@ -40,12 +40,12 @@ class LDProofSuiteRegistry:
 
     def __init__(self):
         """Initialize registry."""
-        self.suites_proof: set[Type[LinkedDataProof]] = set()
-        self.suites_issue: set[Type[LinkedDataProof]] = {Ed25519Signature2018}
+        self.proof_suites: set[Type[LinkedDataProof]] = set()
+        self.issue_suites: set[Type[LinkedDataProof]] = {Ed25519Signature2018}
         # We only want to add bbs suites to supported if the module is installed
         if BbsBlsSignature2020.BBS_SUPPORTED:
-            self.suites_issue.add(BbsBlsSignature2020)
-            self.suites_proof.add(BbsBlsSignatureProof2020)
+            self.issue_suites.add(BbsBlsSignature2020)
+            self.proof_suites.add(BbsBlsSignatureProof2020)
 
     def register(
         self,
@@ -54,19 +54,19 @@ class LDProofSuiteRegistry:
     ):
         """Register a new suite."""
         if proof:
-            self.suites_proof.add(suite)
+            self.proof_suites.add(suite)
         else:
-            self.suites_issue.add(suite)
+            self.issue_suites.add(suite)
 
     @property
     def registered(self) -> Set[Type[LinkedDataProof]]:
         """Return set of registered suites."""
-        return self.suites_issue | self.suites_proof
+        return self.issue_suites | self.proof_suites
 
     @property
     def signature_type_2_suites(self):
-        return {suite.signature_type: suite for suite in self.suites_issue} | {
-            suite.signature_type: suite for suite in self.suites_proof
+        return {suite.signature_type: suite for suite in self.issue_suites} | {
+            suite.signature_type: suite for suite in self.proof_suites
         }
 
     @property
