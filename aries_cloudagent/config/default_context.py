@@ -56,10 +56,14 @@ class DefaultContextBuilder(ContextBuilder):
         # Signature suite registry
         # Register default signatures
         suite: LDProofSuiteRegistry = LDProofSuiteRegistry()
-        suite.register(Ed25519Signature2018, [KeyType.ED25519], False)
-        if is_ursa_bbs_signatures_module_installed():
-            suite.register(BbsBlsSignature2020, [KeyType.BLS12381G1G2], True)
-        suite.register(BbsBlsSignatureProof2020, [KeyType.BLS12381G2], True)
+        suite.register_suite(Ed25519Signature2018, False)
+        suite.register_signature(Ed25519Signature2018.signature_type, KeyType.ED25519)
+        # We only want to add bbs suites to supported if the module is installed
+        if is_ursa_bbs_signatures_module_installed(): # if BbsBlsSignature2020.BBS_SUPPORTED:
+            suite.register_suite(BbsBlsSignature2020, False)
+            suite.register_signature(BbsBlsSignature2020.signature_type, KeyType.BLS12381G2)
+            suite.register_suite(BbsBlsSignatureProof2020, True)
+            suite.register_signature(BbsBlsSignatureProof2020.signature_type, KeyType.BLS12381G2)
         context.injector.bind_instance(LDProofSuiteRegistry, suite)
 
         # Global event bus

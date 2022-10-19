@@ -41,13 +41,11 @@ class LDProofSuiteRegistry:
     def __init__(self):
         """Initialize registry."""
         self.proof_suites: set[Type[LinkedDataProof]] = set()
-        self.issue_suites: set[Type[LinkedDataProof]] = {Ed25519Signature2018}
-        # We only want to add bbs suites to supported if the module is installed
-        if BbsBlsSignature2020.BBS_SUPPORTED:
-            self.issue_suites.add(BbsBlsSignature2020)
-            self.proof_suites.add(BbsBlsSignatureProof2020)
-
-    def register(
+        self.issue_suites: set[Type[LinkedDataProof]] = set()
+        # assumption, single key type to signature type
+        self.proof_key_types_2_signature = {}
+        self.issue_key_types_2_signature = {}
+    def register_suite(
         self,
         suite: Type[LinkedDataProof],
         proof: bool = False,
@@ -58,6 +56,14 @@ class LDProofSuiteRegistry:
         else:
             self.issue_suites.add(suite)
 
+    def register_signature(
+        self,
+        signature_type,
+        key_type: KeyType,
+    ):
+        """Register a new signature."""
+        self.key_types_2_signature[key_type] = signature_type
+    
     @property
     def registered(self) -> Set[Type[LinkedDataProof]]:
         """Return set of registered suites."""
@@ -70,6 +76,12 @@ class LDProofSuiteRegistry:
         }
 
     @property
+    def signature_type_2_key_types(self,signature):
+        """Returns key types for signature type."""
+        for key_type, value in self.key_types_2_signature:
+            
+
+    @property
     def signature_types(self):
         """Return all signature types."""
         return self.signature_type_2_suites.keys()
@@ -78,14 +90,15 @@ class LDProofSuiteRegistry:
         """Check suite support."""
         return signature_type in self.signature_types
 
-    '''def get_all_suites(self, wallet: BaseWallet):
+    def get_all_suites(self, wallet: BaseWallet):
         """Get all supported suites for verifying presentation."""
+        
         return [
             suite(
                 key_pair=WalletKeyPair(wallet=wallet, key_type=key_type),
             )
-            for key_type, suite in self.proof_type_to_suite.items()
-        ]'''
+            for key_type, suite in self.key_types_2_signature.items()
+        ]
 
     # pres_exch_handler
     def _get_verification_method(self, did: str):
