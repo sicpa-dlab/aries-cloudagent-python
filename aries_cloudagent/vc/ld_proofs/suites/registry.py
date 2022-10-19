@@ -1,7 +1,7 @@
 """Signature Suite Registry."""
 
 
-from typing import Dict, Sequence, Set
+from typing import Dict, Sequence, Set, Type
 
 
 from ....did.did_key import DIDKey
@@ -11,6 +11,7 @@ from ....vc.ld_proofs import (
     BbsBlsSignature2020,
     BbsBlsSignatureProof2020,
     WalletKeyPair,
+    JwsLinkedDataSignature,
 )
 from ....wallet.base import BaseWallet
 from ....core.error import BaseError
@@ -39,116 +40,52 @@ class LDProofSuiteRegistry:
 
     def __init__(self):
         """Initialize registry."""
-        self.key_type_to_suite: Dict[KeyType, LinkedDataProof] = {}
-        self.proof_type_to_suite: Dict[str, LinkedDataProof] = {}
-        self.derived_proof_type_to_suite: Dict[str, LinkedDataProof] = {}
-        # pres_exch_handler
-        self.ISSUE_SIG_STE_2_KEY_TYPE = {
-            Ed25519Signature2018: KeyType.ED25519,
-        }
-
-        if BbsBlsSignature2020.BBS_SUPPORTED:
-            self.ISSUE_SIG_STE_2_KEY_TYPE[
-                BbsBlsSignature2020
-            ] = KeyType.BLS12381G2
-
-        self.DERIVE_SIG_STE_2_KEY_TYPE = {
-            BbsBlsSignatureProof2020: KeyType.BLS12381G2,
-        }
-        self.PROOF_SIG_TYPE_2_STE = {
-            suite.signature_type: suite
-            for suite in self.ISSUE_SIG_STE_2_KEY_TYPE
-        }
-        self.derived_proof_type_2_ste = {
-            suite.signature_type: suite
-            for suite in self.DERIVE_SIG_STE_2_KEY_TYPE
-        }
-        # handler
-        self.SUP_ISSUE_STES = {Ed25519Signature2018}
-        self.SIG_STE_2_KEY_TYPE = {Ed25519Signature2018: KeyType.ED25519}
-
+        self.suites_proof: set[Type[LinkedDataProof]] = set()
+        self.suites_issue: set[Type[LinkedDataProof]] = {Ed25519Signature2018}
         # We only want to add bbs suites to supported if the module is installed
         if BbsBlsSignature2020.BBS_SUPPORTED:
-            self.SUP_ISSUE_STES.add(BbsBlsSignature2020)
-            self.SIG_STE_2_KEY_TYPE[
-                BbsBlsSignature2020
-            ] = KeyType.BLS12381G2
-
-        self.PROOF_SIG_TYPE_2_STE = {
-            suite.signature_type: suite
-            for suite in self.SIG_STE_2_KEY_TYPE
-        }
-
-        self.KEY_TYPE_SIG_2_STE = {
-            key_type: suite
-            for suite, key_type in self.SIG_STE_2_KEY_TYPE.items()
-        }
+            self.suites_issue.add(BbsBlsSignature2020)
+            self.suites_proof.add(BbsBlsSignatureProof2020)
 
     def register(
         self,
-        suite: LinkedDataProof,
-        key_types: Sequence[KeyType],
-        derivable: bool = False,
+        suite: Type[LinkedDataProof],
+        proof: bool = False,
     ):
         """Register a new suite."""
-        self.proof_type_to_suite[suite.signature_type] = suite
-
-        for key_type in key_types:
-            self.key_type_to_suite[key_type] = suite
-
-        if derivable:
-            self.derived_proof_type_to_suite[suite.signature_type] = suite
+        if proof:
+            self.suites_proof.add(suite)
+        else:
+            self.suites_issue.add(suite)
 
     @property
-    def registered(self) -> Set[LinkedDataProof]:
+    def registered(self) -> Set[Type[LinkedDataProof]]:
         """Return set of registered suites."""
-        return set(self.proof_type_to_suite.values())
+        return self.suites_issue | self.suites_proof
 
-    def from_proof_type(self, proof_type: str) -> LinkedDataProof:
-        """Return suite by key type."""
-        try:
-            return self.proof_type_to_suite[proof_type]
-        except KeyError as exc:
-            raise UnsupportedProofType(
-                f"Proof type {proof_type} is not supported by currently "
-                "registered LD Proof suites."
-            ) from exc
+    @property
+    def signature_type_2_suites(self):
+        return {suite.signature_type: suite for suite in self.suites_issue} | {
+            suite.signature_type: suite for suite in self.suites_proof
+        }
 
-    def from_derived_proof_type(self, proof_type: str) -> LinkedDataProof:
-        """Return derived proof type."""
-        try:
-            return self.derived_proof_type_to_suite[proof_type]
-        except KeyError as exc:
-            raise UnsupportedProofType(
-                f"Proof type {proof_type} is not supported by currently "
-                "registered LD Proof suites."
-            ) from exc
+    @property
+    def signature_types(self):
+        """Return all signature types."""
+        return self.signature_type_2_suites.keys()
 
-    def from_key_type(self, key_type: KeyType) -> LinkedDataProof:
-        """Return suite by key type."""
-        try:
-            return self.key_type_to_suite[key_type]
-        except KeyError as exc:
-            raise UnsupportedProofType(
-                f"Key type {key_type} is not supported by currently "
-                "registered LD Proof suites."
-            ) from exc
-
-    def is_supported(self, proof_type, key_type):
+    def is_supported(self, signature_type):
         """Check suite support."""
-        return (
-            key_type in self.key_type_to_suite.keys()
-            and proof_type in self.proof_type_to_suite.keys()
-        )
+        return signature_type in self.signature_types
 
-    async def get_all_suites(self, wallet: BaseWallet):
+    '''def get_all_suites(self, wallet: BaseWallet):
         """Get all supported suites for verifying presentation."""
         return [
             suite(
                 key_pair=WalletKeyPair(wallet=wallet, key_type=key_type),
             )
             for key_type, suite in self.proof_type_to_suite.items()
-        ]
+        ]'''
 
     # pres_exch_handler
     def _get_verification_method(self, did: str):
@@ -163,27 +100,22 @@ class LDProofSuiteRegistry:
                 f"Unable to get retrieve verification method for did {did}"
             )
 
-    async def _get_issue_suite(
+    def get_suite(
         self,
         *,
         wallet: BaseWallet,
         issuer_id: str = None,
         did_info: DIDInfo = None,
-        proof_type,
+        signature_type,
+        key_type: KeyType = None,
         proof: dict = None,
-        issuer: bool = True,
     ):
         """Get signature suite for signing presentation."""
         verification_method = (
             self._get_verification_method(issuer_id) if issuer_id else ""
         )
         # Get signature class based on proof type
-        SignatureClass = self.PROOF_SIG_TYPE_2_STE[proof_type]
-        key_type = (
-            self.ISSUE_SIG_STE_2_KEY_TYPE[SignatureClass]
-            if issuer
-            else self.SIG_STE_2_KEY_TYPE[SignatureClass]
-        )
+        SignatureClass = self.signature_type_2_suites[signature_type]
         # Generically create signature class
         return SignatureClass(
             verification_method=verification_method,
@@ -192,24 +124,5 @@ class LDProofSuiteRegistry:
                 wallet=wallet,
                 key_type=key_type,
                 public_key_base58=did_info.verkey if did_info else None,
-            ),
-        )
-
-    async def _get_derive_suite(
-        self,
-        *,
-        wallet: BaseWallet,
-    ):
-        """Get signature suite for deriving credentials."""
-        # Get signature class based on proof type
-        SignatureClass = self.derived_proof_type_2_ste[
-            "BbsBlsSignatureProof2020"
-        ]
-
-        # Generically create signature class
-        return SignatureClass(
-            key_pair=WalletKeyPair(
-                wallet=wallet,
-                key_type=self.DERIVE_SIG_STE_2_KEY_TYPE[SignatureClass],
             ),
         )

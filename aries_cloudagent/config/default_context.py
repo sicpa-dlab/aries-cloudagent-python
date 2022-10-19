@@ -20,8 +20,10 @@ from ..protocols.introduction.v0_1.demo_service import DemoIntroductionService
 from ..resolver.did_resolver import DIDResolver
 from ..tails.base import BaseTailsServer
 from ..transport.wire_format import BaseWireFormat
-from ..utils.dependencies import (is_indy_sdk_module_installed,
-                                  is_ursa_bbs_signatures_module_installed)
+from ..utils.dependencies import (
+    is_indy_sdk_module_installed,
+    is_ursa_bbs_signatures_module_installed,
+)
 from ..utils.stats import Collector
 from .base_context import ContextBuilder
 from .injection_context import InjectionContext
@@ -53,12 +55,12 @@ class DefaultContextBuilder(ContextBuilder):
 
         # Signature suite registry
         # Register default signatures
-        suite: LDProofSuiteRegistry =  LDProofSuiteRegistry()
+        suite: LDProofSuiteRegistry = LDProofSuiteRegistry()
         suite.register(Ed25519Signature2018, [KeyType.ED25519], False)
         if is_ursa_bbs_signatures_module_installed():
             suite.register(BbsBlsSignature2020, [KeyType.BLS12381G1G2], True)
         suite.register(BbsBlsSignatureProof2020, [KeyType.BLS12381G2], True)
-        context.injector.bind_instance(LDProofSuiteRegistry,suite)
+        context.injector.bind_instance(LDProofSuiteRegistry, suite)
 
         # Global event bus
         context.injector.bind_instance(EventBus, EventBus())
@@ -82,8 +84,7 @@ class DefaultContextBuilder(ContextBuilder):
         # so it can be shared by all wallet instances. If we set it in the indy sdk
         # profile provider it could mean other wallets won't have access to the provider
         if is_indy_sdk_module_installed():
-            from ..ledger.indy import (IndySdkLedgerPool,
-                                       IndySdkLedgerPoolProvider)
+            from ..ledger.indy import IndySdkLedgerPool, IndySdkLedgerPoolProvider
 
             context.injector.bind_provider(
                 IndySdkLedgerPool,

@@ -452,10 +452,10 @@ class DIFPresFormatHandler(V20PresFormatHandler):
                 challenge = pres_request["options"].get("challenge", str(uuid4()))
             if not challenge:
                 challenge = str(uuid4())
-            suite_registry = self.profile.inject(LDProofSuiteRegistry)    
+            suite_registry = self.profile.inject(LDProofSuiteRegistry)
             pres_ver_result = await verify_presentation(
                 presentation=dif_proof,
-                suites=await suite_registry.get_all_suites(wallet=wallet),
+                suites=suite_registry.registered,  # TODO: build suites with correct key types.
                 document_loader=self._profile.inject(DocumentLoader),
                 challenge=challenge,
             )

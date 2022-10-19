@@ -156,13 +156,13 @@ class LDProofCredFormatHandler(V20CredFormatHandler):
         )
 
     async def _assert_can_issue_with_id_and_proof_type(
-        self, issuer_id: str, proof_type: str
+        self, issuer_id: str, proof_signature_type: str
     ):
         """Assert that it is possible to issue using the specified id and proof type.
 
         Args:
             issuer_id (str): The issuer id
-            proof_type (str): the signature suite proof type
+            proof_signature_type (str): the signature suite proof type
 
         Raises:
             V20CredFormatError:
@@ -175,13 +175,10 @@ class LDProofCredFormatHandler(V20CredFormatHandler):
         try:
             # Check if it is a proof type we can issue with
             suite_registry = self.profile.inject(LDProofSuiteRegistry)
-            if (
-                proof_type
-                not in suite_registry.PROOF_SIG_TYPE_2_STE.keys()
-            ):
+            if proof_signature_type not in suite_registry.signature_types:
                 raise V20CredFormatError(
-                    f"Unable to sign credential with unsupported proof type {proof_type}."
-                    f" Supported proof types: {suite_registry.PROOF_SIG_TYPE_2_STE.keys()}"
+                    f"Unable to sign credential with unsupported proof type {proof_signature_type}."
+                    f" Supported proof types: {suite_registry.signature_types}"
                 )
 
             if not issuer_id.startswith("did:"):
@@ -195,15 +192,7 @@ class LDProofCredFormatHandler(V20CredFormatHandler):
 
             # Raise error if we cannot issue a credential with this proof type
             # using this DID from
-            suite_registry = self.profile.inject(LDProofSuiteRegistry)
-            did_proof_type = suite_registry.KEY_TYPE_SIG_2_STE[
-                did.key_type
-            ].signature_type
-            if proof_type != did_proof_type:
-                raise V20CredFormatError(
-                    f"Unable to issue credential with issuer id {issuer_id} and proof "
-                    f"type {proof_type}. DID only supports proof type {did_proof_type}"
-                )
+            # TODO: is a key type support check needed?
 
         except WalletNotFoundError:
             raise V20CredFormatError(
@@ -254,17 +243,16 @@ class LDProofCredFormatHandler(V20CredFormatHandler):
         did_info = await self._did_info_for_did(issuer_id)
         suite_registry = self.profile.inject(LDProofSuiteRegistry)
         wallet = self.profile.inject(BaseWallet)
-        suite = await suite_registry._get_issue_suite(
+        # TODO: get key_type
+        suite = suite_registry.get_suite(
             wallet=wallet,
             issuer_id=issuer_id,
             did_info=did_info,
-            proof_type=proof_type,
+            signature_type=proof_type,
             proof=proof.serialize(),
-            issuer=False,
         )
 
         return suite
-
 
     def _get_proof_purpose(
         self, *, proof_purpose: str = None, challenge: str = None, domain: str = None
@@ -521,10 +509,10 @@ class LDProofCredFormatHandler(V20CredFormatHandler):
         # Get signature suite, proof purpose and document loader
         suite_registry = self.profile.inject(LDProofSuiteRegistry)
         wallet = self.profile.inject(BaseWallet)
-        suite = await suite_registry._get_issue_suite(
+        # TODO: get key_type
+        suite = suite_registry.get_suite(
             wallet=wallet,
-            proof_type=credential.proof.type,
-            issuer=False,
+            signature_type=credential.proof.type,
         )
 
         purpose = self._get_proof_purpose(

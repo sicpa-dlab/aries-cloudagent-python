@@ -90,7 +90,6 @@ class DIFPresExchHandler:
         self.is_holder = False
         self.reveal_doc_frame = reveal_doc
 
-
     async def _did_info_for_did(self, did: str) -> DIDInfo:
         """Get the did info for specified did.
 
@@ -341,8 +340,10 @@ class DIFPresExchHandler:
                 suites_registry = self.profile.inject(LDProofSuiteRegistry)
                 async with self.profile.session() as session:
                     wallet = session.inject(BaseWallet)
-                    derive_suite = await suites_registry._get_derive_suite(
+                    # TODO: get key type and pass it into get suite method
+                    derive_suite = suites_registry.get_suite(
                         wallet=wallet,
+                        signature_type="BbsBlsSignatureProof2020",
                     )
                     signed_new_credential_dict = await derive_credential(
                         credential=credential_dict,
@@ -1236,11 +1237,12 @@ class DIFPresExchHandler:
         async with self.profile.session() as session:
             wallet = session.inject(BaseWallet)
             did_info = await self._did_info_for_did(issuer_id)
-            issue_suite = await suites_registry._get_issue_suite(
+            # TODO: get key_type
+            issue_suite = suites_registry.get_suite(
                 wallet=wallet,
                 issuer_id=issuer_id,
                 did_info=did_info,
-                proof_type=self.proof_type
+                signature_type=self.proof_type,
             )
             signed_vp = await sign_presentation(
                 presentation=vp,
