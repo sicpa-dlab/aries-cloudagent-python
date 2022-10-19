@@ -1,10 +1,27 @@
 """Signature Suite Registry."""
 
 
-from typing import Dict, Sequence, Set
+from typing import Dict, Sequence, Set, Type
+
+
+from ....did.did_key import DIDKey
+from ....wallet.did_info import DIDInfo
+from ....vc.ld_proofs import (
+    Ed25519Signature2018,
+    BbsBlsSignature2020,
+    BbsBlsSignatureProof2020,
+    WalletKeyPair,
+    JwsLinkedDataSignature,
+)
+from ....wallet.base import BaseWallet
+from ....core.error import BaseError
 
 from ....wallet.key_type import KeyType
 from .linked_data_proof import LinkedDataProof
+
+
+class CredFormatError(BaseError):
+    """Credential format error under issue-credential protocol v2.0."""
 
 
 class LDProofSuiteRegistryError(Exception):
@@ -23,63 +40,101 @@ class LDProofSuiteRegistry:
 
     def __init__(self):
         """Initialize registry."""
-        self.key_type_to_suite: Dict[KeyType, LinkedDataProof] = {}
-        self.proof_type_to_suite: Dict[str, LinkedDataProof] = {}
-        self.derived_proof_type_to_suite: Dict[str, LinkedDataProof] = {}
-
-    def register(
+        self.proof_suites: set[Type[LinkedDataProof]] = set()
+        self.issue_suites: set[Type[LinkedDataProof]] = set()
+        # assumption, single key type to signature type
+        self.proof_key_types_2_signature = {}
+        self.issue_key_types_2_signature = {}
+    def register_suite(
         self,
-        suite: LinkedDataProof,
-        key_types: Sequence[KeyType],
-        derivable: bool = False,
+        suite: Type[LinkedDataProof],
+        proof: bool = False,
     ):
         """Register a new suite."""
-        self.proof_type_to_suite[suite.signature_type] = suite
+        if proof:
+            self.proof_suites.add(suite)
+        else:
+            self.issue_suites.add(suite)
 
-        for key_type in key_types:
-            self.key_type_to_suite[key_type] = suite
-
-        if derivable:
-            self.derived_proof_type_to_suite[suite.signature_type] = suite
+    def register_signature(
+        self,
+        signature_type,
+        key_type: KeyType,
+    ):
+        """Register a new signature."""
+        self.key_types_2_signature[key_type] = signature_type
+    
+    @property
+    def registered(self) -> Set[Type[LinkedDataProof]]:
+        """Return set of registered suites."""
+        return self.issue_suites | self.proof_suites
 
     @property
-    def registered(self) -> Set[LinkedDataProof]:
-        """Return set of registered suites."""
-        return set(self.proof_type_to_suite.values())
+    def signature_type_2_suites(self):
+        return {suite.signature_type: suite for suite in self.issue_suites} | {
+            suite.signature_type: suite for suite in self.proof_suites
+        }
 
-    def from_proof_type(self, proof_type: str) -> LinkedDataProof:
-        """Return suite by key type."""
-        try:
-            return self.proof_type_to_suite[proof_type]
-        except KeyError as exc:
-            raise UnsupportedProofType(
-                f"Proof type {proof_type} is not supported by currently "
-                "registered LD Proof suites."
-            ) from exc
+    @property
+    def signature_type_2_key_types(self,signature):
+        """Returns key types for signature type."""
+        return self.signature_type_2_key_types            
 
-    def from_derived_proof_type(self, proof_type: str) -> LinkedDataProof:
-        """Return derived proof type."""
-        try:
-            return self.derived_proof_type_to_suite[proof_type]
-        except KeyError as exc:
-            raise UnsupportedProofType(
-                f"Proof type {proof_type} is not supported by currently "
-                "registered LD Proof suites."
-            ) from exc
+    @property
+    def signature_types(self):
+        """Return all signature types."""
+        return self.signature_type_2_suites.keys()
 
-    def from_key_type(self, key_type: KeyType) -> LinkedDataProof:
-        """Return suite by key type."""
-        try:
-            return self.key_type_to_suite[key_type]
-        except KeyError as exc:
-            raise UnsupportedProofType(
-                f"Key type {key_type} is not supported by currently "
-                "registered LD Proof suites."
-            ) from exc
-
-    def is_supported(self, proof_type, key_type):
+    def is_supported(self, signature_type):
         """Check suite support."""
-        return (
-            key_type in self.key_type_to_suite.keys()
-            and proof_type in self.proof_type_to_suite.keys()
+        return signature_type in self.signature_types
+
+    def get_all_suites(self, wallet: BaseWallet):
+        """Get all supported suites for verifying presentation."""
+        suites = self.registered
+        return [
+            suites[suite](
+                key_pair=WalletKeyPair(wallet=wallet, key_type=key_type),
+            )
+            for key_type, suite in self.key_types_2_signature.items()
+        ]
+
+    # pres_exch_handler
+    def _get_verification_method(self, did: str):
+        """Get the verification method for a did."""
+        if did.startswith("did:key:"):
+            return DIDKey.from_did(did).key_id
+        elif did.startswith("did:sov:"):
+            # key-1 is what uniresolver uses for key id
+            return f"{did}#key-1"
+        else:
+            raise CredFormatError(
+                f"Unable to get retrieve verification method for did {did}"
+            )
+
+    def get_suite(
+        self,
+        *,
+        wallet: BaseWallet,
+        issuer_id: str = None,
+        did_info: DIDInfo = None,
+        signature_type,
+        key_type: KeyType = None,
+        proof: dict = None,
+    ):
+        """Get signature suite for signing presentation."""
+        verification_method = (
+            self._get_verification_method(issuer_id) if issuer_id else ""
+        )
+        # Get signature class based on proof type
+        SignatureClass = self.signature_type_2_suites[signature_type]
+        # Generically create signature class
+        return SignatureClass(
+            verification_method=verification_method,
+            proof=proof,
+            key_pair=WalletKeyPair(
+                wallet=wallet,
+                key_type=key_type,
+                public_key_base58=did_info.verkey if did_info else None,
+            ),
         )

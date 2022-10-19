@@ -1,5 +1,6 @@
 """Classes for configuring the default injection context."""
 
+from vc.ld_proofs.suites.bbs_bls_signature_proof_2020 import BbsBlsSignatureProof2020
 from ..vc.ld_proofs.suites.bbs_bls_signature_2020 import BbsBlsSignature2020
 from ..vc.ld_proofs.suites.ed25519_signature_2018 import Ed25519Signature2018
 from ..vc.ld_proofs.suites.registry import LDProofSuiteRegistry
@@ -19,8 +20,10 @@ from ..protocols.introduction.v0_1.demo_service import DemoIntroductionService
 from ..resolver.did_resolver import DIDResolver
 from ..tails.base import BaseTailsServer
 from ..transport.wire_format import BaseWireFormat
-from ..utils.dependencies import (is_indy_sdk_module_installed,
-                                  is_ursa_bbs_signatures_module_installed)
+from ..utils.dependencies import (
+    is_indy_sdk_module_installed,
+    is_ursa_bbs_signatures_module_installed,
+)
 from ..utils.stats import Collector
 from .base_context import ContextBuilder
 from .injection_context import InjectionContext
@@ -52,11 +55,16 @@ class DefaultContextBuilder(ContextBuilder):
 
         # Signature suite registry
         # Register default signatures
-        suite =  LDProofSuiteRegistry()
-        suite.register(Ed25519Signature2018, [KeyType.ED25519], False)
-        if is_ursa_bbs_signatures_module_installed():
-            suite.register(BbsBlsSignature2020, [KeyType.BLS12381G1G2], True)
-        context.injector.bind_instance(LDProofSuiteRegistry,suite)
+        suite: LDProofSuiteRegistry = LDProofSuiteRegistry()
+        suite.register_suite(Ed25519Signature2018, False)
+        suite.register_signature(Ed25519Signature2018.signature_type, KeyType.ED25519)
+        # We only want to add bbs suites to supported if the module is installed
+        if is_ursa_bbs_signatures_module_installed(): # if BbsBlsSignature2020.BBS_SUPPORTED:
+            suite.register_suite(BbsBlsSignature2020, False)
+            suite.register_signature(BbsBlsSignature2020.signature_type, KeyType.BLS12381G2)
+            suite.register_suite(BbsBlsSignatureProof2020, True)
+            suite.register_signature(BbsBlsSignatureProof2020.signature_type, KeyType.BLS12381G2)
+        context.injector.bind_instance(LDProofSuiteRegistry, suite)
 
         # Global event bus
         context.injector.bind_instance(EventBus, EventBus())
@@ -80,8 +88,7 @@ class DefaultContextBuilder(ContextBuilder):
         # so it can be shared by all wallet instances. If we set it in the indy sdk
         # profile provider it could mean other wallets won't have access to the provider
         if is_indy_sdk_module_installed():
-            from ..ledger.indy import (IndySdkLedgerPool,
-                                       IndySdkLedgerPoolProvider)
+            from ..ledger.indy import IndySdkLedgerPool, IndySdkLedgerPoolProvider
 
             context.injector.bind_provider(
                 IndySdkLedgerPool,

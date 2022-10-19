@@ -22,6 +22,8 @@ from typing import Sequence, Optional, Tuple, Union, Dict, List
 from unflatten import unflatten
 from uuid import uuid4
 
+from vc.ld_proofs.suites.registry import LDProofSuiteRegistry
+
 from ....core.error import BaseError
 from ....core.profile import Profile
 from ....did.did_key import DIDKey
@@ -29,8 +31,6 @@ from ....storage.vc_holder.vc_record import VCRecord
 from ....vc.ld_proofs import (
     Ed25519Signature2018,
     BbsBlsSignature2020,
-    BbsBlsSignatureProof2020,
-    WalletKeyPair,
     DocumentLoader,
 )
 from ....vc.ld_proofs.constants import (
@@ -72,25 +72,6 @@ class DIFPresExchError(BaseError):
 class DIFPresExchHandler:
     """Base Presentation Exchange Handler."""
 
-    ISSUE_SIGNATURE_SUITE_KEY_TYPE_MAPPING = {
-        Ed25519Signature2018: KeyType.ED25519,
-    }
-
-    if BbsBlsSignature2020.BBS_SUPPORTED:
-        ISSUE_SIGNATURE_SUITE_KEY_TYPE_MAPPING[BbsBlsSignature2020] = KeyType.BLS12381G2
-
-    DERIVE_SIGNATURE_SUITE_KEY_TYPE_MAPPING = {
-        BbsBlsSignatureProof2020: KeyType.BLS12381G2,
-    }
-    PROOF_TYPE_SIGNATURE_SUITE_MAPPING = {
-        suite.signature_type: suite
-        for suite, key_type in ISSUE_SIGNATURE_SUITE_KEY_TYPE_MAPPING.items()
-    }
-    DERIVED_PROOF_TYPE_SIGNATURE_SUITE_MAPPING = {
-        suite.signature_type: suite
-        for suite, key_type in DERIVE_SIGNATURE_SUITE_KEY_TYPE_MAPPING.items()
-    }
-
     def __init__(
         self,
         profile: Profile,
@@ -108,60 +89,6 @@ class DIFPresExchHandler:
             self.proof_type = proof_type
         self.is_holder = False
         self.reveal_doc_frame = reveal_doc
-
-    async def _get_issue_suite(
-        self,
-        *,
-        wallet: BaseWallet,
-        issuer_id: str,
-    ):
-        """Get signature suite for signing presentation."""
-        did_info = await self._did_info_for_did(issuer_id)
-        verification_method = self._get_verification_method(issuer_id)
-
-        # Get signature class based on proof type
-        SignatureClass = self.PROOF_TYPE_SIGNATURE_SUITE_MAPPING[self.proof_type]
-
-        # Generically create signature class
-        return SignatureClass(
-            verification_method=verification_method,
-            key_pair=WalletKeyPair(
-                wallet=wallet,
-                key_type=self.ISSUE_SIGNATURE_SUITE_KEY_TYPE_MAPPING[SignatureClass],
-                public_key_base58=did_info.verkey if did_info else None,
-            ),
-        )
-
-    async def _get_derive_suite(
-        self,
-        *,
-        wallet: BaseWallet,
-    ):
-        """Get signature suite for deriving credentials."""
-        # Get signature class based on proof type
-        SignatureClass = self.DERIVED_PROOF_TYPE_SIGNATURE_SUITE_MAPPING[
-            "BbsBlsSignatureProof2020"
-        ]
-
-        # Generically create signature class
-        return SignatureClass(
-            key_pair=WalletKeyPair(
-                wallet=wallet,
-                key_type=self.DERIVE_SIGNATURE_SUITE_KEY_TYPE_MAPPING[SignatureClass],
-            ),
-        )
-
-    def _get_verification_method(self, did: str):
-        """Get the verification method for a did."""
-        if did.startswith("did:key:"):
-            return DIDKey.from_did(did).key_id
-        elif did.startswith("did:sov:"):
-            # key-1 is what uniresolver uses for key id
-            return did + "#key-1"
-        else:
-            raise DIFPresExchError(
-                f"Unable to get retrieve verification method for did {did}"
-            )
 
     async def _did_info_for_did(self, did: str) -> DIDInfo:
         """Get the did info for specified did.
@@ -410,10 +337,13 @@ class DIFPresExchHandler:
                 new_credential_dict = self.reveal_doc(
                     credential_dict=credential_dict, constraints=constraints
                 )
+                suites_registry = self.profile.inject(LDProofSuiteRegistry)
                 async with self.profile.session() as session:
                     wallet = session.inject(BaseWallet)
-                    derive_suite = await self._get_derive_suite(
+                    # TODO: get key type and pass it into get suite method
+                    derive_suite = suites_registry.get_suite(
                         wallet=wallet,
+                        signature_type="BbsBlsSignatureProof2020",
                     )
                     signed_new_credential_dict = await derive_credential(
                         credential=credential_dict,
@@ -1303,11 +1233,16 @@ class DIFPresExchHandler:
         vp["presentation_submission"] = submission_property.serialize()
         if self.proof_type is BbsBlsSignature2020.signature_type:
             vp["@context"].append(SECURITY_CONTEXT_BBS_URL)
+        suites_registry = self.profile.inject(LDProofSuiteRegistry)
         async with self.profile.session() as session:
             wallet = session.inject(BaseWallet)
-            issue_suite = await self._get_issue_suite(
+            did_info = await self._did_info_for_did(issuer_id)
+            # TODO: get key_type
+            issue_suite = suites_registry.get_suite(
                 wallet=wallet,
                 issuer_id=issuer_id,
+                did_info=did_info,
+                signature_type=self.proof_type,
             )
             signed_vp = await sign_presentation(
                 presentation=vp,

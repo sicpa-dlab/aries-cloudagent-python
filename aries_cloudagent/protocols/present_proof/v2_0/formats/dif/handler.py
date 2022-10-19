@@ -18,12 +18,9 @@ from ......vc.ld_proofs import (
     DocumentLoader,
     Ed25519Signature2018,
     BbsBlsSignature2020,
-    BbsBlsSignatureProof2020,
-    WalletKeyPair,
 )
 from ......vc.vc_ld.verify import verify_presentation
 from ......wallet.base import BaseWallet
-from ......wallet.key_type import KeyType
 
 from .....problem_report.v1_0.message import ProblemReport
 
@@ -56,19 +53,6 @@ class DIFPresFormatHandler(V20PresFormatHandler):
     """DIF presentation format handler."""
 
     format = V20PresFormat.Format.DIF
-
-
-    async def _get_all_suites(self, wallet: BaseWallet):
-        """Get all supported suites for verifying presentation."""
-        suite_registry = self.profile.inject(LDProofSuiteRegistry)
-        suites = []
-        for key_type, suite in suite_registry.proof_type_to_suite.items():
-            suites.append(
-                suite(
-                    key_pair=WalletKeyPair(wallet=wallet, key_type=key_type),
-                )
-            )
-        return suites
 
     @classmethod
     def validate_fields(cls, message_type: str, attachment_data: Mapping):
@@ -468,9 +452,12 @@ class DIFPresFormatHandler(V20PresFormatHandler):
                 challenge = pres_request["options"].get("challenge", str(uuid4()))
             if not challenge:
                 challenge = str(uuid4())
+            suite_registry = self.profile.inject(LDProofSuiteRegistry)
             pres_ver_result = await verify_presentation(
                 presentation=dif_proof,
-                suites=await self._get_all_suites(wallet=wallet),
+                suites=suite_registry.get_all_suites(
+                    wallet=wallet
+                ),  # TODO: build suites with correct key types.
                 document_loader=self._profile.inject(DocumentLoader),
                 challenge=challenge,
             )
