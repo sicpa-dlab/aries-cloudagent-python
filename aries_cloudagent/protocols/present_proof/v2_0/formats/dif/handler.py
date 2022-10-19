@@ -455,7 +455,9 @@ class DIFPresFormatHandler(V20PresFormatHandler):
             suite_registry = self.profile.inject(LDProofSuiteRegistry)
             pres_ver_result = await verify_presentation(
                 presentation=dif_proof,
-                suites=suite_registry.registered,  # TODO: build suites with correct key types.
+                suites=suite_registry.get_all_suites(
+                    wallet=wallet
+                ),  # TODO: build suites with correct key types.
                 document_loader=self._profile.inject(DocumentLoader),
                 challenge=challenge,
             )

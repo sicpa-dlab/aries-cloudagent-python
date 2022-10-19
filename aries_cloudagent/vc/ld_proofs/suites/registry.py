@@ -78,8 +78,7 @@ class LDProofSuiteRegistry:
     @property
     def signature_type_2_key_types(self,signature):
         """Returns key types for signature type."""
-        for key_type, value in self.key_types_2_signature:
-            
+        return self.signature_type_2_key_types            
 
     @property
     def signature_types(self):
@@ -92,9 +91,9 @@ class LDProofSuiteRegistry:
 
     def get_all_suites(self, wallet: BaseWallet):
         """Get all supported suites for verifying presentation."""
-        
+        suites = self.registered
         return [
-            suite(
+            suites[suite](
                 key_pair=WalletKeyPair(wallet=wallet, key_type=key_type),
             )
             for key_type, suite in self.key_types_2_signature.items()
