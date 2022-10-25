@@ -17,6 +17,8 @@ from ..tails.base import BaseTailsServer
 from ..transport.wire_format import BaseWireFormat
 from ..utils.dependencies import is_indy_sdk_module_installed
 from ..utils.stats import Collector
+from ..vc.ld_proofs.suites.default_registry import default_registry
+from ..vc.ld_proofs.suites.registry import LDProofSuiteRegistry
 from ..wallet.did_method import DIDMethods
 from ..wallet.key_type import KeyTypes
 from .base_context import ContextBuilder
@@ -53,6 +55,9 @@ class DefaultContextBuilder(ContextBuilder):
         context.injector.bind_instance(DIDResolver, DIDResolver([]))
         context.injector.bind_instance(DIDMethods, DIDMethods())
         context.injector.bind_instance(KeyTypes, KeyTypes())
+
+        # Signature Suite registry
+        context.injector.bind_instance(LDProofSuiteRegistry, default_registry())
 
         await self.bind_providers(context)
         await self.load_plugins(context)

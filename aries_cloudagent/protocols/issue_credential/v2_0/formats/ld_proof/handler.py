@@ -1,14 +1,10 @@
 """V2.0 issue-credential linked data proof credential format handler."""
 
 
-from ......vc.ld_proofs.error import LinkedDataProofException
-from ......vc.ld_proofs.check import get_properties_without_context
 import logging
-
 from typing import Mapping
 
 from marshmallow import EXCLUDE, INCLUDE
-
 from pyld import jsonld
 from pyld.jsonld import JsonLdProcessor
 
@@ -16,13 +12,6 @@ from ......did.did_key import DIDKey
 from ......messaging.decorators.attach_decorator import AttachDecorator
 from ......storage.vc_holder.base import VCHolder
 from ......storage.vc_holder.vc_record import VCRecord
-from ......vc.vc_ld import (
-    issue_vc as issue,
-    verify_credential,
-    VerifiableCredentialSchema,
-    LDProof,
-    VerifiableCredential,
-)
 from ......vc.ld_proofs import (
     AuthenticationProofPurpose,
     BbsBlsSignature2020,
@@ -33,11 +22,20 @@ from ......vc.ld_proofs import (
     ProofPurpose,
     WalletKeyPair,
 )
+from ......vc.ld_proofs.check import get_properties_without_context
 from ......vc.ld_proofs.constants import SECURITY_CONTEXT_BBS_URL
+from ......vc.ld_proofs.error import LinkedDataProofException
+from ......vc.ld_proofs.suites.registry import LDProofSuiteRegistry
+from ......vc.vc_ld import (
+    LDProof,
+    VerifiableCredential,
+    VerifiableCredentialSchema,
+    issue_vc as issue,
+    verify_credential,
+)
 from ......wallet.base import BaseWallet, DIDInfo
 from ......wallet.error import WalletNotFoundError
 from ......wallet.key_type import BLS12381G2, ED25519
-
 from ...message_types import (
     ATTACHMENT_FORMAT,
     CRED_20_ISSUE,
@@ -52,9 +50,7 @@ from ...messages.cred_proposal import V20CredProposal
 from ...messages.cred_request import V20CredRequest
 from ...models.cred_ex_record import V20CredExRecord
 from ...models.detail.ld_proof import V20CredExRecordLDProof
-
 from ..handler import CredFormatAttachment, V20CredFormatError, V20CredFormatHandler
-
 from .models.cred_detail import LDProofVCDetailSchema
 from .models.cred_detail import LDProofVCDetail
 
@@ -193,9 +189,10 @@ class LDProofCredFormatHandler(V20CredFormatHandler):
                 - If the did does not support to create signatures for the proof type
 
         """
+        registry = self._profile.inject(LDProofSuiteRegistry)
         try:
             # Check if it is a proof type we can issue with
-            if proof_type not in PROOF_TYPE_SIGNATURE_SUITE_MAPPING.keys():
+            if proof_type not in registry.registered:
                 raise V20CredFormatError(
                     f"Unable to sign credential with unsupported proof type {proof_type}."
                     f" Supported proof types: {PROOF_TYPE_SIGNATURE_SUITE_MAPPING.keys()}"
