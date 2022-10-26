@@ -8,7 +8,6 @@ from marshmallow import EXCLUDE, INCLUDE
 from pyld import jsonld
 from pyld.jsonld import JsonLdProcessor
 
-from ......did.did_key import DIDKey
 from ......messaging.decorators.attach_decorator import AttachDecorator
 from ......storage.vc_holder.base import VCHolder
 from ......storage.vc_holder.vc_record import VCRecord
@@ -195,7 +194,7 @@ class LDProofCredFormatHandler(V20CredFormatHandler):
             if proof_type not in registry.registered:
                 raise V20CredFormatError(
                     f"Unable to sign credential with unsupported proof type {proof_type}."
-                    f" Supported proof types: {PROOF_TYPE_SIGNATURE_SUITE_MAPPING.keys()}"
+                    f" Supported proof types: {registry.registered}"
                 )
 
             if not issuer_id.startswith("did:"):
@@ -209,9 +208,7 @@ class LDProofCredFormatHandler(V20CredFormatHandler):
 
             # Raise error if we cannot issue a credential with this proof type
             # using this DID from
-            did_proof_type = KEY_TYPE_SIGNATURE_SUITE_MAPPING[
-                did.key_type
-            ].signature_type
+            did_proof_type = registry.from_key_type(did.key_type).signature_type
             if proof_type != did_proof_type:
                 raise V20CredFormatError(
                     f"Unable to issue credential with issuer id {issuer_id} and proof "
@@ -265,7 +262,10 @@ class LDProofCredFormatHandler(V20CredFormatHandler):
         )
 
         did_info = await self._did_info_for_did(issuer_id)
-        verification_method = self._get_verification_method(issuer_id)
+        registry = self._profile.inject(LDProofSuiteRegistry)
+        # TODO Options should include the verificationMethod we want to use to
+        # issue the credential. If not specified, we give a reasonable default.
+        verification_method = registry.get_verification_method(issuer_id)
 
         suite = await self._get_suite(
             proof_type=proof_type,
@@ -288,8 +288,15 @@ class LDProofCredFormatHandler(V20CredFormatHandler):
         session = await self.profile.session()
         wallet = session.inject(BaseWallet)
 
+        registry = self._profile.inject(LDProofSuiteRegistry)
+
         # Get signature class based on proof type
-        SignatureClass = PROOF_TYPE_SIGNATURE_SUITE_MAPPING[proof_type]
+        SignatureClass = registry.from_proof_type(proof_type)
+        # TODO We already know the key, why are we statically looking up what
+        # the key type "should" be based on the proof type? Resolve the
+        # verficiation method and use the explicit key type. Otherwise, this
+        # mandates a one-to-one mapping between key types and signature suites.
+        key_type = registry.key_type_from_suite(SignatureClass)
 
         # Generically create signature class
         return SignatureClass(
@@ -297,23 +304,10 @@ class LDProofCredFormatHandler(V20CredFormatHandler):
             proof=proof,
             key_pair=WalletKeyPair(
                 wallet=wallet,
-                key_type=SIGNATURE_SUITE_KEY_TYPE_MAPPING[SignatureClass],
+                key_type=key_type,
                 public_key_base58=did_info.verkey if did_info else None,
             ),
         )
-
-    def _get_verification_method(self, did: str):
-        """Get the verification method for a did."""
-
-        if did.startswith("did:key:"):
-            return DIDKey.from_did(did).key_id
-        elif did.startswith("did:sov:"):
-            # key-1 is what the resolver uses for key id
-            return did + "#key-1"
-        else:
-            raise V20CredFormatError(
-                f"Unable to get retrieve verification method for did {did}"
-            )
 
     def _get_proof_purpose(
         self, *, proof_purpose: str = None, challenge: str = None, domain: str = None
