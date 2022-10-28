@@ -8,7 +8,7 @@ from pyld import jsonld
 from typing_extensions import TypedDict
 
 from ..check import get_properties_without_context
-from ..constants import SECURITY_CONTEXT_URL
+from ..constants import JWS_SUITE_CONTEXT, SECURITY_CONTEXT_URL
 from ..document_loader import DocumentLoaderMethod
 from ..error import LinkedDataProofException
 from ..purposes import _ProofPurpose as ProofPurpose
@@ -146,7 +146,7 @@ class LinkedDataProof(ABC):
         framed = jsonld.frame(
             verification_method,
             frame={
-                "@context": SECURITY_CONTEXT_URL,
+                "@context": [SECURITY_CONTEXT_URL, JWS_SUITE_CONTEXT],
                 "@embed": "@always",
                 "id": verification_method,
             },
