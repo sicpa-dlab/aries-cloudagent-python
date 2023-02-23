@@ -382,14 +382,12 @@ class DIDXManager(BaseConnectionManager):
                         their_role=ConnRecord.Role.REQUESTER.rfc23,
                     )
             except StorageNotFoundError:
-                pass
-                # if recipient_verkey:
-                #     raise DIDXManagerError(
-                #         "No explicit invitation found for pairwise connection "
-                #         f"in state {ConnRecord.State.INVITATION.rfc23}: "
-                #         "a prior connection request may have updated"
-                #         " the connection state"
-                #     )
+                if recipient_verkey:
+                    raise DIDXManagerError(
+                        "No explicit invitation found for pairwise connection "
+                        f"in state {ConnRecord.State.INVITATION.rfc23}: "
+                        "a prior connection request may have updated the connection state"
+                    )
         else:
             if not self.profile.settings.get("public_invites"):
                 raise DIDXManagerError(
