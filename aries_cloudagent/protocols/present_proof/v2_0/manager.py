@@ -165,6 +165,7 @@ class V20PresManager:
         connection_id: str,
         pres_request_message: V20PresRequest,
         auto_verify: bool = None,
+        verification_method=Optional[str],
     ):
         """
         Create a presentation exchange record for input presentation request.
@@ -187,6 +188,7 @@ class V20PresManager:
             pres_request=pres_request_message,
             auto_verify=auto_verify,
             trace=(pres_request_message._trace is not None),
+            verification_method=verification_method,
         )
         async with self._profile.session() as session:
             await pres_ex_record.save(

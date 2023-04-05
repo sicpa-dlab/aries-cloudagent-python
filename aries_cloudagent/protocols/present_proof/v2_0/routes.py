@@ -219,6 +219,12 @@ class V20PresCreateRequestRequestSchema(AdminAPIMessageTracingSchema):
         required=False,
         example=False,
     )
+    verification_method = fields.Str(
+        required=False,
+        default=None,
+        allow_none=True,
+        description="Verification method for the signature.",
+    )
 
 
 class V20PresSendRequestRequestSchema(V20PresCreateRequestRequestSchema):
@@ -833,6 +839,7 @@ async def present_proof_create_request(request: web.BaseRequest):
         context.settings,
         trace_msg,
     )
+    verification_method = body.get("verification_method")
 
     pres_manager = V20PresManager(profile)
     pres_ex_record = None
@@ -841,6 +848,7 @@ async def present_proof_create_request(request: web.BaseRequest):
             connection_id=None,
             pres_request_message=pres_request_message,
             auto_verify=auto_verify,
+            verification_method=verification_method,
         )
         result = pres_ex_record.serialize()
     except (BaseModelError, StorageError) as err:
@@ -914,6 +922,7 @@ async def present_proof_send_free_request(request: web.BaseRequest):
         context.settings,
         trace_msg,
     )
+    verification_method = body.get("verification_method")
 
     pres_manager = V20PresManager(profile)
     pres_ex_record = None
@@ -922,6 +931,7 @@ async def present_proof_send_free_request(request: web.BaseRequest):
             connection_id=connection_id,
             pres_request_message=pres_request_message,
             auto_verify=auto_verify,
+            verification_method=verification_method,
         )
         result = pres_ex_record.serialize()
     except (BaseModelError, StorageError) as err:

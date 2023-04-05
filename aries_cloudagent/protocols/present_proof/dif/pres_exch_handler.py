@@ -114,10 +114,13 @@ class DIFPresExchHandler:
         *,
         wallet: BaseWallet,
         issuer_id: str,
+        verification_method: Optional[str] = None,
     ):
         """Get signature suite for signing presentation."""
         did_info = await self._did_info_for_did(issuer_id)
-        verification_method = self._get_verification_method(issuer_id)
+        verification_method = verification_method or self._get_verification_method(
+            issuer_id
+        )
 
         # Get signature class based on proof type
         SignatureClass = self.PROOF_TYPE_SIGNATURE_SUITE_MAPPING[self.proof_type]
@@ -1230,6 +1233,7 @@ class DIFPresExchHandler:
         challenge: str = None,
         domain: str = None,
         records_filter: dict = None,
+        verification_method: Optional[str] = None,
     ) -> Union[Sequence[dict], dict]:
         """
         Create VerifiablePresentation.
@@ -1326,6 +1330,7 @@ class DIFPresExchHandler:
                 issue_suite = await self._get_issue_suite(
                     wallet=wallet,
                     issuer_id=issuer_id,
+                    verification_method=verification_method,
                 )
                 signed_vp = await sign_presentation(
                     presentation=vp,

@@ -377,6 +377,7 @@ class DIFPresFormatHandler(V20PresFormatHandler):
                 pd=pres_definition,
                 credentials=credentials_list,
                 records_filter=limit_record_ids,
+                verification_method=pres_ex_record.verification_method,
             )
             return self.get_format_data(PRES_20, pres)
         except DIFPresExchError as err:
