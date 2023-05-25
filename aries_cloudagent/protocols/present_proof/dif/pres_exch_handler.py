@@ -155,7 +155,7 @@ class DIFPresExchHandler:
         """Get the verification method for a did."""
         if did.startswith("did:key:"):
             return DIDKey.from_did(did).key_id
-        elif did.startswith("did:sov:"):
+        elif did.startswith("did:sov:") or did.startswith("did:web:"):
             # key-1 is what uniresolver uses for key id
             return did + "#key-1"
         else:
