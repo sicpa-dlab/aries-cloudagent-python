@@ -163,6 +163,18 @@ class DIFPresExchHandler:
             ),
         )
 
+    def _get_verification_method(self, did: str):
+        """Get the verification method for a did."""
+        if did.startswith("did:key:"):
+            return DIDKey.from_did(did).key_id
+        elif did.startswith("did:sov:") or did.startswith("did:web:"):
+            # key-1 is what uniresolver uses for key id
+            return did + "#key-1"
+        else:
+            raise DIFPresExchError(
+                f"Unable to get retrieve verification method for did {did}"
+            )
+
     async def _did_info_for_did(self, did: str) -> DIDInfo:
         """Get the did info for specified did.
 
