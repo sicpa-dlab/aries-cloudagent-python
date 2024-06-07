@@ -668,6 +668,27 @@
   
   
     <li class="md-nav__item">
+      <a href="../../features/QualifiedDIDs/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Qualified DIDs
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../../features/DIDMethods/" class="md-nav__link">
         
   
@@ -2261,11 +2282,11 @@ always the same that tells the invitee that they can reuse an existing connectio
 <p>For example, to run faber with connection reuse using a non-public DID:</p>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a>./run_demo<span class="w"> </span>faber<span class="w"> </span>--reuse-connections<span class="w"> </span>--events
 </code></pre></div>
-<p>To run faber using a <code>did_peer</code> and reusable connections:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="nv">DEMO_EXTRA_AGENT_ARGS</span><span class="o">=</span><span class="s2">&quot;[\&quot;--emit-did-peer-2\&quot;]&quot;</span><span class="w"> </span>./run_demo<span class="w"> </span>faber<span class="w"> </span>--reuse-connections<span class="w"> </span>--events
+<p>To run faber using a <code>did:peer</code> and reusable connections:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a>./run_demo<span class="w"> </span>faber<span class="w"> </span>--reuse-connections<span class="w"> </span>--emit-did-peer-2<span class="w"> </span>--events
 </code></pre></div>
 <p>To run this demo using a multi-use invitation (from Faber):</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a><span class="nv">DEMO_EXTRA_AGENT_ARGS</span><span class="o">=</span><span class="s2">&quot;[\&quot;--emit-did-peer-2\&quot;]&quot;</span><span class="w"> </span>./run_demo<span class="w"> </span>faber<span class="w"> </span>--reuse-connections<span class="w"> </span>--multi-use-invitations<span class="w"> </span>--events
+<div class="highlight"><pre><span></span><code><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a>./run_demo<span class="w"> </span>faber<span class="w"> </span>--reuse-connections<span class="w"> </span>--emit-did-peer-2<span class="w"> </span>--multi-use-invitations<span class="w"> </span>--events
 </code></pre></div>
 
 
